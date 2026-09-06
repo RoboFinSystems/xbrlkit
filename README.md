@@ -7,11 +7,15 @@ it **once** into a neutral typed model, and project that model into whichever
 portable representation you need.
 
 ```
-EDGAR ──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld   (RDF / JSON-LD)
-                                 ├──▶ Tavi           (compiled model)
-                                 ├──▶ xBRL-JSON      (OIM)
-                                 └──▶ …
+EDGAR ──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
+   │                             ├──▶ Tavi            (compiled model)
+   │                             ├──▶ xBRL-JSON       (OIM)
+   │                             └──▶ property graph  (parquet, .lbug)
+   └──▶ primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 ```
+
+Four projections hang off the model. A fifth surface, the filing's text, reads the
+primary HTML document directly and needs neither Arelle nor the network.
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it does
 not give you is anything ergonomic to *hold*: `ModelXbrl` is a large mutable
@@ -154,7 +158,14 @@ SEC_GOV_USER_AGENT="Your Name your@email.com"
 # Build a holon.jsonld from a specific filing (-> ./output/)
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
-# Fetch the latest filing for a ticker (-> ./output/)
+# The other projections: Tavi (plus its .tavi.gaps.json sidecar), xBRL-JSON,
+# the property graph (needs the lpg extra), or every one of them
+xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
+xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format oim
+xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format lpg
+xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
+
+# Fetch the latest filing for a ticker (-> ./output/); --form and --n filter
 xbrlkit fetch --ticker NVDA
 
 # Query consolidated facts in a built holon (in-memory SPARQL)
@@ -163,6 +174,31 @@ xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:As
 
 From a source checkout, `just` wraps the same CLI as a shorthand:
 `just build 320193 0000320193-23-000106` and `just fetch NVDA`.
+
+## EDGAR
+
+`xbrlkit.edgar` is the fetch layer the CLI uses, exposed for hosts that discover
+and download filings themselves: synchronous `requests`, local-filesystem output,
+and EDGAR's two throttle signatures — a 429, and an empty 200 — ridden out with
+a bounded wait-and-retry (`EdgarThrottled` when the budget is spent).
+
+| | |
+| --- | --- |
+| `EdgarClient` | ticker → CIK, a company's filing list (`list_filings`, by form), `company_info`, one filing by accession (`get_filing_ref`) |
+| `EftsClient` / `query_efts` | bulk discovery through EDGAR full-text search: by form, year or quarter, across every filer |
+| `download_filing` / `fetch` | the XBRL zip for one accession, unpacked to a directory |
+
+```python
+from pathlib import Path
+from xbrlkit.edgar import EdgarClient, download_filing
+
+client = EdgarClient()
+cik = client.ticker_to_cik("MMM")
+latest = client.list_filings(cik, forms=["10-K"])[0]
+package = download_filing(client, cik, latest.accession, Path("data"))  # the Arelle load target
+```
+
+The SEC User-Agent is required here as everywhere (see [SEC User-Agent](#sec-user-agent)).
 
 ## Arelle cache
 
@@ -188,6 +224,28 @@ xbrlkit cache extract --bundle schemas.tar.gz # seed a container's cache at buil
 `XBRLKIT_ARELLE_OFFLINE=1` (or `load_model(..., offline=True)`) never touches the
 network; a miss is then an error, not a fetch. A host that builds its own Arelle
 controller gets the same policy from `xbrlkit.parse.configure_webcache(cntlr, cache_dir)`.
+
+## Where it runs
+
+**RoboSystems.** The platform's SEC pipeline is built on this package: filings are
+parsed with `xbrlkit.parse` (the platform's own Arelle controller, with
+`register_sec_transforms` and the cache policy from `configure_webcache`), projected
+with `to_holon`, `to_tavi_report` and the property-graph tables, the shared `sec`
+graph is declared from `xbrlkit.schema`, and the full-text index behind its document
+search is built from `xbrlkit.text`.
+
+**Filing Ladder.** The [Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder)
+benchmark — one filing handed to the same language model in every representation —
+built its 26-filing corpus of 2024–2025 10-Ks and 10-Qs with this package: the Tavi
+compiled model, the holon, the per-filing property graph, and both text parsers. Each
+projection is a rung of the ladder, so the
+[v0.1 results](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/v0.1-sonnet-5/README.md)
+are also a measurement of what a model can do with each of these outputs. Before that
+run, every text-block section the parsers produce was checked against the filing's own
+text-block facts as Arelle resolves them, on all 26 filings, and the property-graph
+projection was checked row for row against the platform's processor. The two defects
+those checks found in the text layer were fixed in 0.4.1 and are disclosed in the
+benchmark's protocol.
 
 ## View & explore
 
