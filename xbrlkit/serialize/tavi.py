@@ -205,6 +205,7 @@ LABEL_ROLE_TYPES: dict[str, str] = {
   "http://xbrl.us/us-gaap/role/label/negatedTotal": "xbrl:negatedTotal",
 }
 DEFAULT_LABEL_TYPE = "xbrl:label"
+DOCUMENTATION_LABEL_TYPE = "xbrl:documentation"
 
 PRESENTATION_RELATIONSHIP = "xbrl:parent-child"
 CALCULATION_RELATIONSHIP = "xbrl:summation-item"
@@ -1026,9 +1027,12 @@ def _networks_and_groups(
   group_labels: list[dict[str, object]] = []
   group_names: dict[str, str] = {}
   definitions: dict[str, str] = {}
+  documentations: dict[str, str] = {}
   for network in model.networks:
     if network.definition and network.role_uri not in definitions:
       definitions[network.role_uri] = network.definition
+    if network.documentation and network.role_uri not in documentations:
+      documentations[network.role_uri] = network.documentation
 
   def group_for(role_uri: str) -> str:
     group_name = group_names.get(role_uri)
@@ -1047,6 +1051,16 @@ def _networks_and_groups(
             "forObject": group_name,
             "labelType": DEFAULT_LABEL_TYPE,
             "value": definition,
+            "language": default_language,
+          }
+        )
+      documentation = documentations.get(role_uri)
+      if documentation:
+        group_labels.append(
+          {
+            "forObject": group_name,
+            "labelType": DOCUMENTATION_LABEL_TYPE,
+            "value": documentation,
             "language": default_language,
           }
         )

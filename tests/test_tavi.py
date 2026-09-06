@@ -542,6 +542,41 @@ def test_group_definition_is_a_label_with_the_filing_language() -> None:
   assert all("language" in entry for entry in model["labels"])
 
 
+def test_network_documentation_is_a_second_label_on_the_group() -> None:
+  """A role's longer reading rides as an ``xbrl:documentation`` label.
+
+  A producer whose definition is a composed sort key keeps the role's own
+  name in ``documentation``; a network without one adds no label.
+  """
+  model = _model()
+  networks = [
+    n.model_copy(update={"documentation": "Consolidated Balance Sheets"})
+    if n.role_uri == "http://example.com/role/BalanceSheet"
+    else n
+    for n in model.networks
+  ]
+  document, _ = to_tavi_report(model.model_copy(update={"networks": networks}))
+  xbrl_model = document["xbrlModel"]
+  group_name = next(
+    g["name"]
+    for g in xbrl_model["groups"]
+    if g["groupURI"] == "http://example.com/role/BalanceSheet"
+  )
+  labels = {
+    entry["labelType"]: entry["value"]
+    for entry in xbrl_model["labels"]
+    if entry["forObject"] == group_name
+  }
+  assert labels == {
+    "xbrl:label": "Balance Sheet",
+    "xbrl:documentation": "Consolidated Balance Sheets",
+  }
+  plain = _document()["xbrlModel"]
+  assert not [
+    entry for entry in plain["labels"] if entry["labelType"] == "xbrl:documentation"
+  ]
+
+
 def test_shares_map_to_the_accounting_module() -> None:
   """No core datatype types a share count; the xbrla module does."""
   document, gaps = to_tavi_report(_model())
