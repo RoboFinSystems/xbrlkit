@@ -28,8 +28,7 @@ import json
 
 from ..model import Concept, XbrlModel
 from ._values import (
-  CIK_PREFIX,
-  CIK_SCHEME,
+  entity_prefix,
   entity_sqname,
   language_tag,
   period_interval,
@@ -45,7 +44,7 @@ OIM_RESERVED_NAMESPACES: dict[str, str] = {
   "utr": "http://www.xbrl.org/2009/utr",
 }
 
-# The SEC entity scheme (CIK_PREFIX / CIK_SCHEME), the period literal and the
+# The entity SQName and its scheme binding, the period literal and the
 # language form are shared with the Tavi projection — see ``_values``.
 
 # Unit measures that mean "no unit" and are therefore left off the fact.
@@ -75,7 +74,8 @@ def to_oim_document(
 def _namespaces(model: XbrlModel) -> dict[str, str]:
   """Prefix map: the reserved set, the entity scheme, and the filing's own."""
   namespaces = dict(OIM_RESERVED_NAMESPACES)
-  namespaces[CIK_PREFIX] = CIK_SCHEME
+  prefix, scheme = entity_prefix(model.entity)
+  namespaces[prefix] = scheme
 
   by_uri = {uri: prefix for prefix, uri in namespaces.items()}
   for concept in model.concepts.values():
@@ -95,7 +95,7 @@ def _facts(model: XbrlModel, namespaces: dict[str, str]) -> dict[str, object]:
   prefixes = {uri: prefix for prefix, uri in namespaces.items()}
   periods = {period.id: period for period in model.periods}
   units = {unit.id: unit for unit in model.units}
-  entity = entity_sqname(model.entity.cik)
+  entity = entity_sqname(model.entity)
   facts: dict[str, object] = {}
   concepts = model.concepts
 

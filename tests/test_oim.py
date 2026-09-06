@@ -153,6 +153,23 @@ def test_document_envelope() -> None:
   assert info["namespaces"]["cik"] == "http://www.sec.gov/CIK"
 
 
+def test_non_sec_entity_binds_its_own_scheme() -> None:
+  """An entity under any scheme but the SEC's is ``entity:<id>``, scheme bound."""
+  model = _model().model_copy(
+    update={
+      "entity": EntityIdentity(cik="ent_01K3ZQ", scheme="http://robosystems.ai/entity")
+    }
+  )
+  document = to_oim_document(model)
+  namespaces = document["documentInfo"]["namespaces"]
+  assert namespaces["entity"] == "http://robosystems.ai/entity"
+  assert "cik" not in namespaces
+  assert all(
+    fact["dimensions"]["entity"] == "entity:ent_01K3ZQ"
+    for fact in document["facts"].values()
+  )
+
+
 def test_instant_period_is_the_exclusive_next_midnight() -> None:
   """The close of 2024-12-31 is written as the instant after it."""
   assert _by_concept("us-gaap:Assets")["dimensions"]["period"] == "2025-01-01T00:00:00"

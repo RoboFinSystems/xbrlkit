@@ -3,27 +3,41 @@
 xBRL-JSON (REC 2021) and Tavi (PWD 2026-09-01) are two serialisations of the
 same Open Information Model, and the literal forms below are where they agree:
 a period is an ISO 8601 interval of ``xs:dateTime`` values with an exclusive
-end, a language tag is lower case, and the SEC entity scheme is written with
-the ``cik`` prefix. Keeping them in one place means a fact's period or entity
-reads identically in both projections of one filing — which is also what lets
-one be checked against the other.
+end, a language tag is lower case, and an entity is written scheme-first: the
+SEC scheme under the ``cik`` prefix, any other under ``entity``. Keeping them
+in one place means a fact's period or entity reads identically in both
+projections of one filing — which is also what lets one be checked against
+the other.
 """
 
 from __future__ import annotations
 
 from datetime import date, timedelta
 
-from ..model import Period
+from ..model import EntityIdentity, Period
 
 # The SEC's entity scheme, bound to the prefix Arelle uses for it. An entity is
 # identified by scheme + identifier, so the scheme is the namespace and the
 # CIK the local name: ``cik:0000066740``.
 CIK_PREFIX = "cik"
 CIK_SCHEME = "http://www.sec.gov/CIK"
+# Any other scheme binds under a neutral prefix. A model that did not come from
+# an EDGAR filing — a ledger's own report, say — still identifies its entity by
+# scheme + identifier, and writes it ``entity:<identifier>``.
+ENTITY_PREFIX = "entity"
 
 
-def entity_sqname(cik: str) -> str:
-  return f"{CIK_PREFIX}:{cik}"
+def entity_prefix(entity: EntityIdentity) -> tuple[str, str]:
+  """The ``(prefix, scheme)`` pair an entity's SQName is bound under."""
+  if entity.scheme == CIK_SCHEME:
+    return CIK_PREFIX, CIK_SCHEME
+  return ENTITY_PREFIX, entity.scheme
+
+
+def entity_sqname(entity: EntityIdentity) -> str:
+  """``cik:0000066740`` for an SEC filer; ``entity:<id>`` under any other scheme."""
+  prefix, _ = entity_prefix(entity)
+  return f"{prefix}:{entity.cik}"
 
 
 def period_interval(period: Period) -> str:

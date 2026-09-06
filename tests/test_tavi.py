@@ -407,6 +407,85 @@ def test_entity_sqname_keeps_the_scheme() -> None:
   assert _document()["xbrlModel"]["entities"] == [{"name": "cik:0001234567"}]
 
 
+def _ledger_model() -> XbrlModel:
+  """The same model re-homed on an entity that is not an EDGAR filer."""
+  return _model().model_copy(
+    update={
+      "entity": EntityIdentity(
+        cik="ent_01K3ZQ", scheme="http://robosystems.ai/entity", name="Acme LLC"
+      )
+    }
+  )
+
+
+def test_non_sec_entity_binds_its_own_scheme_under_entity() -> None:
+  """Section 8.1 again: the prefix follows the scheme, not the SEC.
+
+  A model built from a ledger's own report has no CIK. Its entity is still
+  scheme + identifier — written ``entity:<id>`` under the scheme it declares,
+  with no ``cik`` binding at all.
+  """
+  document, _ = to_tavi_report(_ledger_model())
+  namespaces = document["documentInfo"]["namespaces"]
+  assert namespaces["entity"] == "http://robosystems.ai/entity"
+  assert "cik" not in namespaces
+  assert document["xbrlModel"]["entities"] == [{"name": "entity:ent_01K3ZQ"}]
+  assert all(
+    fact["factDimensions"]["xbrl:entity"] == "entity:ent_01K3ZQ"
+    for fact in document["xbrlModel"]["facts"]
+  )
+
+
+def test_entity_name_is_a_label_on_the_entity() -> None:
+  """The entity's name is a label object pointing at the entity (5.14).
+
+  A reader holding the compiled model and nothing else — no ``dei`` facts, no
+  EDGAR header — still needs a name to put on the report.
+  """
+  labels = [
+    entry
+    for entry in _document()["xbrlModel"]["labels"]
+    if entry["forObject"] == "cik:0001234567"
+  ]
+  assert labels == [
+    {
+      "forObject": "cik:0001234567",
+      "labelType": "xbrl:label",
+      "value": "Acme Corp",
+      "language": "en-US",
+    }
+  ]
+
+
+def test_entity_without_a_name_has_no_label() -> None:
+  model = _model().model_copy(update={"entity": EntityIdentity(cik="0001234567")})
+  document, _ = to_tavi_report(model)
+  assert not [
+    entry
+    for entry in document["xbrlModel"]["labels"]
+    if entry["forObject"] == "cik:0001234567"
+  ]
+
+
+def test_description_reads_the_filing_unless_one_is_supplied() -> None:
+  assert (
+    _document()["documentInfo"]["description"]
+    == "10-K 0000000000-24-000001 (CIK 0001234567) projected from XBRL by xbrlkit"
+  )
+  document, _ = to_tavi_report(
+    _ledger_model(), description="RoboLedger report r1 g2 (Acme LLC)"
+  )
+  assert document["documentInfo"]["description"] == (
+    "RoboLedger report r1 g2 (Acme LLC)"
+  )
+  assert (
+    json.loads(to_tavi(_ledger_model(), description="custom"))["documentInfo"][
+      "description"
+    ]
+    == "custom"
+  )
+
+
 def test_calculation_relationship_carries_weight_only() -> None:
   """Section 14.3.1: weight is required; reconciliation is a flag, not asserted."""
   networks = _document()["xbrlModel"]["networks"]
