@@ -264,6 +264,10 @@ class Network(BaseModel):
 
   role_uri: str
   definition: str | None = None
+  # A second, longer reading of the role — XBRL's documentation label role.
+  # A producer whose definition is a composed sort key ("0001 - Statement -
+  # Balance Sheet") keeps the role's own name here, so it is not lost.
+  documentation: str | None = None
   kind: NetworkKind
   arcs: list[Arc] = Field(default_factory=list)
   # The ``id`` of the role's ``<link:roleType>`` in the filer's schema, when

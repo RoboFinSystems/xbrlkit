@@ -51,8 +51,7 @@ from dataclasses import dataclass, field
 from ..model import Arc, Concept, Network, Period, XbrlFact, XbrlModel
 from ..namespaces import TAVI_REPORT_BASE
 from ._values import (
-  CIK_PREFIX,
-  CIK_SCHEME,
+  entity_prefix,
   entity_sqname,
   language_tag,
   period_interval,
@@ -206,6 +205,7 @@ LABEL_ROLE_TYPES: dict[str, str] = {
   "http://xbrl.us/us-gaap/role/label/negatedTotal": "xbrl:negatedTotal",
 }
 DEFAULT_LABEL_TYPE = "xbrl:label"
+DOCUMENTATION_LABEL_TYPE = "xbrl:documentation"
 
 PRESENTATION_RELATIONSHIP = "xbrl:parent-child"
 CALCULATION_RELATIONSHIP = "xbrl:summation-item"
@@ -401,16 +401,23 @@ class GapReport:
     }
 
 
-def to_tavi(model: XbrlModel, *, report_id: str | None = None) -> str:
+def to_tavi(
+  model: XbrlModel, *, report_id: str | None = None, description: str | None = None
+) -> str:
   """Project ``model`` into a Tavi compiled-model JSON string."""
-  document, _ = to_tavi_report(model, report_id=report_id)
+  document, _ = to_tavi_report(model, report_id=report_id, description=description)
   return json.dumps(document, indent=2, sort_keys=False, default=str)
 
 
 def to_tavi_report(
-  model: XbrlModel, *, report_id: str | None = None
+  model: XbrlModel, *, report_id: str | None = None, description: str | None = None
 ) -> tuple[dict[str, object], GapReport]:
-  """Project ``model``, returning the document and what it could not express."""
+  """Project ``model``, returning the document and what it could not express.
+
+  ``report_id`` scopes the report's own namespace (the accession by default);
+  ``description`` replaces the ``documentInfo`` sentence, which otherwise
+  reads the model as an EDGAR filing.
+  """
   report_id = report_id or model.filing.accession
   gaps = GapReport()
   namespaces = _namespaces(model, report_id)
@@ -439,7 +446,9 @@ def to_tavi_report(
     "domainNetworks": dimensional.domain_networks,
     "members": dimensional.members,
     "cubes": dimensional.cubes,
-    "labels": _labels(model, gaps, default_language) + group_labels,
+    "labels": _labels(model, gaps, default_language)
+    + _entity_labels(model, default_language)
+    + group_labels,
     "networks": networks,
     "groups": groups,
     "groupContents": group_contents,
@@ -450,7 +459,8 @@ def to_tavi_report(
     "documentInfo": {
       "documentType": DOCTYPE_COMPILED,
       "namespaces": namespaces,
-      "description": (
+      "description": description
+      or (
         f"{model.filing.form or 'filing'} {model.filing.accession} "
         f"(CIK {model.filing.cik}) projected from XBRL by xbrlkit"
       ),
@@ -703,8 +713,10 @@ def _namespaces(model: XbrlModel, report_id: str) -> dict[str, str]:
   """
   namespaces = dict(RESERVED_NAMESPACES)
   namespaces[REPORT_PREFIX] = _report_namespace(report_id)
-  # The entity scheme: the SQName ``cik:0000066740`` needs it bound.
-  namespaces[CIK_PREFIX] = CIK_SCHEME
+  # The entity scheme: the SQName ``cik:0000066740`` (or ``entity:<id>`` under
+  # any other scheme) needs it bound.
+  prefix, scheme = entity_prefix(model.entity)
+  namespaces[prefix] = scheme
 
   by_uri = {uri: prefix for prefix, uri in namespaces.items()}
   for concept in model.concepts.values():
@@ -761,13 +773,33 @@ def _default_language(model: XbrlModel) -> str:
 def _entities(model: XbrlModel) -> list[dict[str, object]]:
   """The reporting entity (section 8.1).
 
-  An entity's SQName "includes the scheme and the identifier", so the SEC
-  scheme is the namespace and the CIK the local name — ``cik:0000066740``, the
-  same name the OIM projection writes and Arelle's converter emits. It was
-  previously minted under this report's own namespace, which dropped the
-  scheme and gave two converters of one filing two different entities.
+  An entity's SQName "includes the scheme and the identifier", so the scheme
+  is the namespace and the identifier the local name — ``cik:0000066740`` for
+  an SEC filer, the same name the OIM projection writes and Arelle's converter
+  emits, and ``entity:<id>`` under any other scheme. It was previously minted
+  under this report's own namespace, which dropped the scheme and gave two
+  converters of one filing two different entities.
   """
-  return [{"name": entity_sqname(model.entity.cik)}]
+  return [{"name": entity_sqname(model.entity)}]
+
+
+def _entity_labels(model: XbrlModel, default_language: str) -> list[dict[str, object]]:
+  """The entity's name as a label object pointing at the entity (section 5.14).
+
+  ``forObject`` is "any", and a reader holding the compiled model and nothing
+  else — no ``dei`` facts, no EDGAR header — still needs a name to put on the
+  report. The entity object itself carries only its SQName.
+  """
+  if not model.entity.name:
+    return []
+  return [
+    {
+      "forObject": entity_sqname(model.entity),
+      "labelType": DEFAULT_LABEL_TYPE,
+      "value": model.entity.name,
+      "language": default_language,
+    }
+  ]
 
 
 def _units(model: XbrlModel) -> list[dict[str, object]]:
@@ -995,9 +1027,12 @@ def _networks_and_groups(
   group_labels: list[dict[str, object]] = []
   group_names: dict[str, str] = {}
   definitions: dict[str, str] = {}
+  documentations: dict[str, str] = {}
   for network in model.networks:
     if network.definition and network.role_uri not in definitions:
       definitions[network.role_uri] = network.definition
+    if network.documentation and network.role_uri not in documentations:
+      documentations[network.role_uri] = network.documentation
 
   def group_for(role_uri: str) -> str:
     group_name = group_names.get(role_uri)
@@ -1016,6 +1051,16 @@ def _networks_and_groups(
             "forObject": group_name,
             "labelType": DEFAULT_LABEL_TYPE,
             "value": definition,
+            "language": default_language,
+          }
+        )
+      documentation = documentations.get(role_uri)
+      if documentation:
+        group_labels.append(
+          {
+            "forObject": group_name,
+            "labelType": DOCUMENTATION_LABEL_TYPE,
+            "value": documentation,
             "language": default_language,
           }
         )
@@ -1089,7 +1134,7 @@ def _facts(
   """
   periods = {period.id: period for period in model.periods}
   units = {unit.id: unit for unit in model.units}
-  entity = entity_sqname(model.entity.cik)
+  entity = entity_sqname(model.entity)
   facts: list[dict[str, object]] = []
 
   for index, fact in enumerate(model.facts):
