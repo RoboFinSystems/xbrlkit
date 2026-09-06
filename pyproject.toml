@@ -1,6 +1,6 @@
 [project]
 name = "xbrlkit"
-version = "0.4.1"
+version = "0.4.2"
 description = "Work with XBRL filings above Arelle: one parse, portable models"
 readme = "README.md"
 requires-python = ">=3.10"
