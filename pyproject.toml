@@ -50,6 +50,10 @@ lpg = [
     "pyarrow>=17",
     "ladybug>=0.18",
 ]
+# The local MCP server over loaded filings (`xbrlkit serve`).
+mcp = [
+    "mcp>=2.1",
+]
 dev = [
     "basedpyright>=1.21",
     "ruff>=0.12",
@@ -59,6 +63,7 @@ dev = [
     "twine>=5.0",
     "pyarrow>=17",
     "ladybug>=0.18",
+    "mcp>=2.1",
 ]
 
 [project.scripts]
