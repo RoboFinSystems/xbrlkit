@@ -665,6 +665,28 @@ def test_session_rejects_unresolvable_source(session: FilingSession) -> None:
     session.load("not a source at all !!")
 
 
+def test_find_load_target_recognises_an_instance_by_its_root(tmp_path: Path) -> None:
+  # A RoboLedger-style package: nothing named after the schema, the
+  # linkbases hyphenated, the instance called instance.xml.
+  (tmp_path / "report.xsd").write_text("<xs:schema/>")
+  for name in ("report-pre.xml", "report-cal.xml", "report-lab.xml"):
+    (tmp_path / name).write_text(
+      '<?xml version="1.0"?><link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase"/>'
+    )
+  (tmp_path / "instance.xml").write_text(
+    '<?xml version="1.0"?>\n<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance">'
+    "</xbrli:xbrl>"
+  )
+  assert _find_load_target(tmp_path).name == "instance.xml"
+  # Wrapped in one directory, the same answer.
+  inner = tmp_path / "wrapped"
+  inner.mkdir()
+  for f in list(tmp_path.iterdir()):
+    if f.is_file():
+      f.rename(inner / f.name)
+  assert _find_load_target(tmp_path).name == "instance.xml"
+
+
 def test_find_load_target_prefers_inline_document(tmp_path: Path) -> None:
   (tmp_path / "acme-20241231.xsd").write_text("<schema/>")
   (tmp_path / "acme-20241231_cal.xml").write_text("<linkbase/>")
@@ -675,7 +697,9 @@ def test_find_load_target_prefers_inline_document(tmp_path: Path) -> None:
   assert _find_load_target(tmp_path).name == "acme-20241231.htm"
   (tmp_path / "acme-20241231.htm").unlink()
   (tmp_path / "exhibit.htm").unlink()
-  (tmp_path / "acme-20241231.xml").write_text("<xbrl/>")
+  (tmp_path / "acme-20241231.xml").write_text(
+    "<xbrl xmlns='http://www.xbrl.org/2003/instance'/>"
+  )
   assert _find_load_target(tmp_path).name == "acme-20241231.xml"
 
 

@@ -436,27 +436,48 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
 # -- filing identity without EDGAR ----------------------------------------------
 
 
+_INSTANCE_ROOT_RE = re.compile(rb"<(?:[A-Za-z0-9_]+:)?xbrl[\s>]")
+
+
 def _find_load_target(package_dir: Path) -> Path:
   """The file Arelle should load from a filing directory: the inline
-  document (the largest ``.htm`` carrying ``ix:`` markup), else the instance
-  ``.xml`` beside the schema."""
+  document (the largest ``.htm`` carrying ``ix:`` markup), else the XBRL
+  instance — recognised by its root element, since a package need not
+  follow EDGAR's naming (an instance called ``instance.xml`` beside
+  ``report.xsd`` and hyphenated linkbases is a valid package too). A
+  package that wraps itself in one directory is looked into."""
+  entries = sorted(p for p in package_dir.iterdir() if not p.name.startswith("."))
+  if len(entries) == 1 and entries[0].is_dir():
+    return _find_load_target(entries[0])
   inline: list[tuple[int, Path]] = []
-  for candidate in sorted(package_dir.iterdir()):
-    if candidate.suffix.lower() not in _INLINE_SUFFIXES or not candidate.is_file():
+  instances: list[Path] = []
+  for candidate in entries:
+    if not candidate.is_file():
+      continue
+    suffix = candidate.suffix.lower()
+    if suffix not in _INLINE_SUFFIXES and suffix not in (".xml", ".xbrl"):
       continue
     with candidate.open("rb") as fh:
       head = fh.read(200_000)
-    if b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head:
-      inline.append((candidate.stat().st_size, candidate))
+    if suffix in _INLINE_SUFFIXES:
+      if b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head:
+        inline.append((candidate.stat().st_size, candidate))
+    elif _INSTANCE_ROOT_RE.search(head[:4000]):
+      instances.append(candidate)
   if inline:
     return max(inline)[1]
-  for schema in sorted(package_dir.glob("*.xsd")):
-    instance = schema.with_suffix(".xml")
-    if instance.exists():
-      return instance
-  instances = sorted(p for p in package_dir.glob("*.xml") if "_" not in p.stem)
   if len(instances) == 1:
     return instances[0]
+  if len(instances) > 1:
+    # Several instances: prefer the one named after a schema, EDGAR-style.
+    for schema in sorted(package_dir.glob("*.xsd")):
+      paired = schema.with_suffix(".xml")
+      if paired in instances:
+        return paired
+    names = [p.name for p in instances]
+    raise SourceError(
+      f"{len(instances)} XBRL instances in {package_dir} ({names}); point at one."
+    )
   raise SourceError(
     f"No inline document or XBRL instance found in {package_dir}; "
     "point at the file to load."
