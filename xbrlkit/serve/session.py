@@ -52,7 +52,14 @@ class TextSection:
 
 @dataclass
 class LoadedFiling:
-  """One filing the server holds: the model plus its readable text."""
+  """One filing the server holds: the model plus its readable text.
+
+  ``text`` / ``sections`` are the whole primary document when the filing
+  came with one, else the tagged text blocks; ``block_text`` /
+  ``block_sections`` are always the tagged text blocks alone — the form's
+  own text, which is what a faithful reading of the serialization searches
+  when the document is held out as a control.
+  """
 
   id: str
   source: str
@@ -61,10 +68,26 @@ class LoadedFiling:
   sections: list[TextSection]
   load_target: Path | None = None
   package_dir: Path | None = None
+  block_text: str = ""
+  block_sections: list[TextSection] = field(default_factory=list)
+  has_document: bool = False
+
+  def __post_init__(self) -> None:
+    # A filing built without a document (a classic instance, a model.json, a
+    # hand-authored model in a test) has one rendering: its text blocks.
+    if not self.has_document and not self.block_text:
+      self.block_text, self.block_sections = self.text, self.sections
 
   @property
   def accession(self) -> str:
     return self.model.filing.accession
+
+  def readable(self, whole: bool = True) -> tuple[str, list[TextSection]]:
+    """The text the text tools read: the whole document when ``whole`` and
+    one is held, else the tagged text blocks."""
+    if whole and self.has_document:
+      return self.text, self.sections
+    return self.block_text, self.block_sections
 
 
 class SourceError(ValueError):
@@ -176,6 +199,8 @@ class FilingSession:
 
   def _load_local(self, path: Path, source: str) -> LoadedFiling:
     package_dir: Path | None = None
+    if path.is_file() and path.suffix.lower() == ".json":
+      return self._load_model_json(path, source)
     if path.is_dir():
       package_dir = path
       target = _find_load_target(path)
@@ -191,6 +216,22 @@ class FilingSession:
       target, accession=_local_accession(path, target), filing=None, entity=None
     )
     return self._finish(_local_id(path, model), source, model, target, package_dir)
+
+  def _load_model_json(self, path: Path, source: str) -> LoadedFiling:
+    """A filing saved by ``export_filing model`` (the parse itself): no
+    Arelle, no network. The primary document is read from beside it when
+    the file named in the model's metadata is there."""
+    try:
+      model = XbrlModel.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+      raise SourceError(f"{path} is not an XbrlModel JSON file: {exc}") from exc
+    target: Path | None = None
+    if model.filing.primary_document:
+      candidate = path.parent / model.filing.primary_document
+      if candidate.is_file():
+        target = candidate
+    model = _enrich_from_dei(model)
+    return self._finish(_local_id(path, model), source, model, target, path.parent)
 
   def _load_url(self, url: str) -> LoadedFiling:
     accession = Path(url.split("?", 1)[0]).stem or url
@@ -265,7 +306,11 @@ class FilingSession:
     html = None
     if target is not None and target.suffix.lower() in _INLINE_SUFFIXES:
       html = target.read_text(encoding="utf-8", errors="replace")
-    text, sections = build_text(model, html)
+    block_text, block_sections = _text_from_text_blocks(model)
+    if html is None:
+      text, sections = block_text, block_sections
+    else:
+      text, sections = build_text(model, html)
     return LoadedFiling(
       id=filing_id,
       source=source,
@@ -274,6 +319,9 @@ class FilingSession:
       sections=sections,
       load_target=target,
       package_dir=package_dir,
+      block_text=block_text,
+      block_sections=block_sections,
+      has_document=html is not None,
     )
 
 
@@ -428,6 +476,8 @@ def _local_id(path: Path, model: XbrlModel) -> str:
   stem = path.stem if path.is_file() else path.name
   if _ACCESSION_RE.match(stem):
     return stem
+  if _ACCESSION_RE.match(model.filing.accession):
+    return model.filing.accession
   if model.entity.ticker:
     return model.entity.ticker.lower()
   return Path(model.filing.primary_document or stem).stem

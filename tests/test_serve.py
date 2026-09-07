@@ -679,7 +679,174 @@ def test_find_load_target_prefers_inline_document(tmp_path: Path) -> None:
   assert _find_load_target(tmp_path).name == "acme-20241231.xml"
 
 
+# -- the pure profile and the document toggle -------------------------------------
+
+
+def _loaded_with_document() -> LoadedFiling:
+  """A filing that holds both renderings: a primary document and its blocks."""
+  model = _model()
+  from xbrlkit.serve.session import _text_from_text_blocks
+
+  block_text, block_sections = _text_from_text_blocks(model)
+  document = (
+    "Cover page. UNITED STATES SECURITIES AND EXCHANGE COMMISSION\n\n"
+    "Item 7. Management's Discussion\nRevenue grew eleven percent on widget volume; "
+    "the untagged body says contract liabilities were $12,000 at year end too.\n\n"
+    + block_text
+  )
+  from xbrlkit.serve.session import TextSection
+
+  sections = [TextSection(id="item_7", label="MD&A", kind="item", chars=120, offset=63)]
+  sections += [
+    TextSection(
+      id=b.id,
+      label=b.label,
+      kind=b.kind,
+      chars=b.chars,
+      offset=(b.offset or 0) + document.index(block_text),
+    )
+    for b in block_sections
+  ]
+  return LoadedFiling(
+    id="acme",
+    source="memory",
+    model=model,
+    text=document,
+    sections=sections,
+    block_text=block_text,
+    block_sections=block_sections,
+    has_document=True,
+  )
+
+
+def test_pure_describe_carries_nothing_the_filing_does_not() -> None:
+  lf = _loaded_with_document()
+  product = tools.describe_filing(lf)
+  pure = tools.describe_filing(lf, pure=True)
+  assert product["profile"] == {"pure": False, "text": "primary document"}
+  assert pure["profile"] == {"pure": True, "text": "tagged text blocks"} or pure[
+    "profile"
+  ] == {"pure": True, "text": "primary document"}
+  # No kinds: every network is listed by the filer's own name, none flagged.
+  assert "statements" not in pure and "kind" not in json.dumps(pure["networks"])
+  assert {n["id"] for n in pure["networks"]} == {
+    "StatementOfIncome",
+    "BalanceSheet",
+    "RevenueDisclosure",
+  }
+  # No duration buckets, no Items map.
+  assert all("duration" not in p for p in pure["periods"])
+  assert "items" not in pure["sections"]
+  assert product["sections"]["items"][0]["id"] == "item_7"
+  assert any("duration" in p for p in product["periods"])
+
+
+def test_pure_statement_knows_only_the_filers_names(loaded: LoadedFiling) -> None:
+  assert (
+    tools.statement(loaded, "income statement")["statement"]["kind"]
+    == "income_statement"
+  )
+  with pytest.raises(tools.ToolError):
+    tools.statement(loaded, "income statement", pure=True)
+  out = tools.statement(loaded, "Statements of Income", pure=True)
+  assert out["statement"] == {
+    "role": IS_ROLE,
+    "name": "1001 - Statement - Consolidated Statements of Income",
+  }
+  assert all("duration" not in c and "calendar" not in c for c in out["columns"])
+  assert (
+    tools.statement(loaded, "StatementOfIncome", pure=True)["statement"]["role"]
+    == IS_ROLE
+  )
+
+
+def test_pure_fact_grid_refuses_buckets_and_drops_them(loaded: LoadedFiling) -> None:
+  with pytest.raises(tools.ToolError):
+    tools.fact_grid(loaded, ["Revenues"], period_type="annual", pure=True)
+  rows = tools.fact_grid(loaded, ["Revenues"], period_type="duration", pure=True)[
+    "rows"
+  ]
+  assert rows and all("duration" not in r for r in rows)
+  assert "duration" in tools.fact_grid(loaded, ["Revenues"])["rows"][0]
+  exact = tools.fact_grid(loaded, ["Revenues"], period_end="2024-12-31", pure=True)
+  assert exact["row_count"] == 1
+
+
+def test_document_toggle_selects_the_text(loaded: LoadedFiling) -> None:
+  lf = _loaded_with_document()
+  whole = tools.search_text(lf, "contract liabilities")
+  blocks = tools.search_text(lf, "contract liabilities", whole=False)
+  assert whole["total"] == 2 and blocks["total"] == 1
+  assert whole["text_chars"] > blocks["text_chars"]
+  assert whole["hits"][0]["section"] == "MD&A"
+  # The pure profile drops the section label; a filing without a document
+  # reads its blocks whichever way it is asked.
+  assert "section" not in tools.search_text(lf, "contract", pure=True)["hits"][0]
+  assert loaded.has_document is False
+  assert tools.search_text(loaded, "contract", whole=True)["text_chars"] == len(
+    loaded.block_text
+  )
+
+
+def test_pure_read_text_uses_the_ladders_cap(loaded: LoadedFiling) -> None:
+  start = loaded.sections[0].offset or 0
+  product = tools.read_text(loaded, offset=start, length=8000)
+  pure = tools.read_text(loaded, offset=start, length=8000, pure=True)
+  assert product["length"] == len(loaded.text) - start  # the fixture is short
+  assert "section" in product and "section" not in pure
+  long_lf = LoadedFiling(
+    id="long",
+    source="memory",
+    model=loaded.model,
+    text="x" * 10_000,
+    sections=[],
+    block_text="x" * 10_000,
+  )
+  assert tools.read_text(long_lf, length=8000)["length"] == 8000
+  assert tools.read_text(long_lf, length=8000, pure=True)["length"] == 4000
+
+
+def test_model_export_reloads_without_arelle(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  out = tools.export_filing(loaded, "model", tmp_path)
+  path = Path(out["path"])
+  assert path.name == "acme.model.json"
+  session = FilingSession()
+  try:
+    again = session.load(str(path))
+    assert again.model.model_dump() == loaded.model.model_dump()
+    assert again.has_document is False
+    assert again.id == loaded.accession  # accession-shaped, so it is the id
+    assert tools.fact_grid(again, ["Revenues"])["rows"][0]["value"] == 1_000_450
+    bad = tmp_path / "not-a-model.json"
+    bad.write_text('{"hello": "world"}')
+    with pytest.raises(SourceError):
+      session.load(str(bad))
+  finally:
+    session.close()
+
+
 # -- the CLI --------------------------------------------------------------------
+
+
+def test_serve_rejects_a_representation_not_in_this_release(capsys) -> None:
+  from xbrlkit.cli import main
+
+  assert main(["serve", "--as", "tavi"]) == 1
+  err = capsys.readouterr().err
+  assert "only `model`" in err and "holon" in err
+
+
+def test_serve_parser_profile_flags() -> None:
+  from xbrlkit.cli import build_parser
+
+  args = build_parser().parse_args(["serve", "--pure"])
+  assert (args.representation, args.pure, args.with_document) == ("model", True, None)
+  args = build_parser().parse_args(["serve", "--pure", "--with-document"])
+  assert args.with_document is True
+  args = build_parser().parse_args(["serve", "--without-document", "--as", "model"])
+  assert (args.pure, args.with_document) == (False, False)
 
 
 def test_serve_without_the_extra_names_it(monkeypatch, capsys) -> None:
@@ -726,6 +893,7 @@ async def test_server_lists_and_calls_tools(
     assert names == {
       "list_filings",
       "load_filing",
+      "unload_filing",
       "describe_filing",
       "resolve_element",
       "fact_grid",
@@ -747,6 +915,39 @@ async def test_server_lists_and_calls_tools(
     assert "error" in json.loads(bad.content[0].text)
     exported = await client.call_tool("export_filing", {"format": "tavi"})
     assert Path(json.loads(exported.content[0].text)["path"]).parent == tmp_path
+    assert "unload_filing" in names
+    dropped = await client.call_tool("unload_filing", {"filing": "acme"})
+    assert json.loads(dropped.content[0].text) == {"unloaded": "acme", "loaded": []}
+    empty = await client.call_tool("list_filings", {})
+    assert json.loads(empty.content[0].text)["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pure_server_profile(loaded: LoadedFiling, tmp_path: Path) -> None:
+  from mcp.client import Client
+
+  from xbrlkit.serve import build_server
+
+  session = FilingSession()
+  session._filings[loaded.id] = loaded
+  try:
+    server = build_server(session, tmp_path, pure=True)
+    async with Client(server) as client:
+      listed = await client.list_tools()
+      read = next(t for t in listed.tools if t.name == "read_text")
+      assert read.input_schema["properties"]["length"]["maximum"] == 4000
+      search = next(t for t in listed.tools if t.name == "search_text")
+      assert "tagged text blocks" in search.description
+      described = json.loads(
+        (await client.call_tool("describe_filing", {})).content[0].text
+      )
+      assert described["profile"]["pure"] is True and "networks" in described
+      grid = await client.call_tool(
+        "fact_grid", {"elements": ["Revenues"], "period_type": "annual"}
+      )
+      assert "error" in json.loads(grid.content[0].text)
+  finally:
+    session.close()
 
 
 # -- a real filing, when one is named --------------------------------------------

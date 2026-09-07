@@ -189,19 +189,44 @@ from the parsed filing.
 
 ```bash
 pip install "xbrlkit[mcp]"
-
-xbrlkit serve NVDA                                   # latest 10-K for a ticker
-xbrlkit serve "NVDA 10-Q"                            # latest 10-Q
-xbrlkit serve 1045810:0001045810-26-000021           # an EDGAR cik:accession
-xbrlkit serve ./mmm-20241231.htm                     # a local inline XBRL document
-xbrlkit serve ./0000066740-25-000006/                # a filing directory, or a .zip
+xbrlkit serve
 # → MCP at http://127.0.0.1:8765/mcp
 ```
 
-Point the client at the URL — no key, no sign-in:
+Point the client at the URL — no key, no sign-in — and load filings from the
+chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
+*"load `~/Downloads/mmm-20241231.htm`"*. The `load_filing` tool takes a ticker
+with an optional form (`NVDA`, `NVDA 10-Q`), an EDGAR `cik:accession`, a URL, an
+inline `.htm`, an instance `.xml`, a filing directory or `.zip`, or a
+`model.json` written by `export_filing`. Several filings can be loaded at once,
+each under an id; `unload_filing` drops one.
 
 ```bash
 claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
+```
+
+Filings named on the command line are loaded before the server starts:
+
+```bash
+xbrlkit serve NVDA                                   # latest 10-K for a ticker
+xbrlkit serve "NVDA 10-Q" MMM                        # two filings, by id afterwards
+xbrlkit serve ./0000066740-25-000006/                # a filing directory, or a .zip
+```
+
+Two switches shape what the tools answer. `--pure` is a faithful reading of the
+filing and nothing more: no statement kinds (networks are listed by the filer's
+own names), no detected Items, no period buckets, the Filing Ladder's read cap —
+the profile a benchmark rung runs under. `--with-document` / `--without-document`
+choose whether the text tools read the whole primary document or only the
+tagged text blocks; the product profile defaults to the document, `--pure` to
+the blocks so the document can be held out as a control. `--as model` names the
+representation served; it is the only one in this release, and `tavi`, `holon`,
+`lpg` and `files` — the tool sets of the ladder's other rungs — are the next
+backends behind the same flag.
+
+```bash
+xbrlkit serve --pure ./0000066740-25-000006/         # the form alone
+xbrlkit serve --pure --with-document ./0000066740-25-000006/   # + the document
 ```
 
 ### Without installing — `uvx`
@@ -242,9 +267,8 @@ startup timeout does better with no source on the command line and a
 `load_filing` call once connected. `SEC_GOV_USER_AGENT` is needed for anything
 EDGAR has to fetch (a ticker, a `cik:accession`); a local file needs none.
 
-Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs — and
-filings can also be loaded after the server starts, through the `load_filing`
-tool. The tools are the shapes a reader needs, not a query language:
+Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs. The tools
+are the shapes a reader needs, not a query language:
 
 | tool | what it answers |
 |---|---|
@@ -253,9 +277,9 @@ tool. The tools are the shapes a reader needs, not a query language:
 | `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
 | `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |
 | `calculation` | what sums to a total: the calculation children with weights, computed against reported, per period |
-| `search_text`, `read_text` | regex search over the whole primary document as plain text — tagged or not — and paging from an offset |
-| `export_filing` | the filing as holon, Tavi, xBRL-JSON or a LadybugDB file, written under `--out-dir` |
-| `list_filings`, `load_filing` | the session |
+| `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset |
+| `export_filing` | the filing as holon, Tavi, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
+| `list_filings`, `load_filing`, `unload_filing` | the session |
 
 The server binds to the loopback interface with the SDK's host- and
 origin-header validation on, so a page in a browser cannot drive it; `--host`

@@ -314,6 +314,26 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     print(f"error: {MCP_EXTRA_HINT}", file=sys.stderr)
     return 1
   from .serve import FilingSession, serve
+  from .serve.server import REPRESENTATIONS
+
+  if args.representation != "model":
+    known = ", ".join(r for r in REPRESENTATIONS if r != "model")
+    print(
+      f"error: --as {args.representation}: only `model` is served in this release; "
+      f"{known} are the next backends (the tools of the Filing Ladder's rungs).",
+      file=sys.stderr,
+    )
+    return 1
+  with_document = args.with_document
+  if with_document is None:
+    with_document = not args.pure
+  profile = "pure" if args.pure else "product"
+  text_source = "the primary document" if with_document else "the tagged text blocks"
+  print(
+    f"xbrlkit serve: --as {args.representation}, {profile} profile, "
+    f"text tools read {text_source}",
+    file=sys.stderr,
+  )
 
   session = FilingSession(config=_config_from_args(args))
   for source in args.sources:
@@ -334,6 +354,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
       transport=args.transport,
       out_dir=Path(args.out_dir),
       path=args.path,
+      pure=args.pure,
+      with_document=with_document,
     )
   except KeyboardInterrupt:
     pass
@@ -483,6 +505,44 @@ def build_parser() -> argparse.ArgumentParser:
     "--out-dir",
     default=str(DEFAULT_OUTPUT_DIR),
     help="Where export_filing writes (default: output/).",
+  )
+  s.add_argument(
+    "--as",
+    dest="representation",
+    default="model",
+    metavar="REPRESENTATION",
+    help=(
+      "The representation to serve: `model` (the parsed filing behind shaped "
+      "tools; the only one in this release). Coming: tavi, holon, lpg, files."
+    ),
+  )
+  s.add_argument(
+    "--pure",
+    action="store_true",
+    help=(
+      "A faithful reading of the filing and nothing more: no statement kinds, "
+      "no detected Items, no period buckets, the ladder's read cap. The "
+      "profile a benchmark rung runs under; the default is the product profile."
+    ),
+  )
+  s.add_argument(
+    "--with-document",
+    dest="with_document",
+    action="store_true",
+    default=None,
+    help=(
+      "search_text / read_text read the whole primary document (default under "
+      "the product profile)."
+    ),
+  )
+  s.add_argument(
+    "--without-document",
+    dest="with_document",
+    action="store_false",
+    help=(
+      "search_text / read_text read only the tagged text blocks — the form's "
+      "own text (default under --pure)."
+    ),
   )
   s.set_defaults(func=_cmd_serve)
   return parser

@@ -5,6 +5,17 @@ No authentication, by design: the server runs on the user's own machine over
 their own filings, and the transport binds to the loopback interface with
 the SDK's host- and origin-header validation on, so a page in a browser
 cannot drive it. Point an MCP client at ``http://127.0.0.1:8765/mcp``.
+
+Two switches shape what the tools return:
+
+- ``pure`` — a faithful reading of the filing and nothing more: no statement
+  kinds, no detected Items, no period buckets, the Filing Ladder's read cap.
+  The profile a benchmark rung runs under; the default is the product
+  profile, which keeps those conveniences.
+- ``with_document`` — whether the text tools read the whole primary document
+  or only the tagged text blocks (the form's own text). On by default for
+  the product profile, off by default under ``pure`` so the document can be
+  held out as a control.
 """
 
 from __future__ import annotations
@@ -26,6 +37,11 @@ DEFAULT_PORT = 8765
 DEFAULT_PATH = "/mcp"
 MAX_RESULT_CHARS = 60_000
 
+# The representations `--as` will serve. Only `model` is in this release; the
+# others are the tool sets of the Filing Ladder's rungs (tavi + jq, holon +
+# SPARQL, lpg + Cypher, the package's files), specced but not yet moved.
+REPRESENTATIONS = ("model", "tavi", "holon", "lpg", "files")
+
 INSTRUCTIONS = """\
 xbrlkit: XBRL filings loaded in memory on this machine — any XBRL or inline \
 XBRL report (SEC 10-K / 10-Q / 20-F, IFRS / ESEF, tagged ACFRs), parsed once \
@@ -34,42 +50,56 @@ no graph and no index behind them: every answer is read from the filing.
 
 START
 - list_filings says what is loaded. Nothing? load_filing takes a local path \
-(an inline .htm, an instance .xml, a filing directory or zip), a URL, an EDGAR \
-`cik:accession`, or a ticker (`NVDA`, `NVDA 10-Q`).
+(an inline .htm, an instance .xml, a filing directory or zip, or a model.json \
+written by export_filing), a URL, an EDGAR `cik:accession`, or a ticker \
+(`NVDA`, `NVDA 10-Q`). unload_filing drops one.
 - describe_filing FIRST for a filing you have not looked at: the entity, the \
-periods with the `key` the other tools use, the statements by role, the axes \
+periods with the `key` the other tools use, the networks by role, the axes \
 present, and the text sections with their offsets. Never guess a concept name \
 or a period key.
 
 NUMBERS
 - resolve_element turns a phrase ("revenue", "operating lease liability") into \
 the concept qnames this filing reports — the filer's own extension concepts \
-included — with fact counts and the statements each sits in.
+included — with fact counts and the networks each sits in.
 - fact_grid returns the consolidated total per concept and period: facts with \
 no dimensional qualifier, the most precise of duplicate tags. Segment and \
 member breakdowns need include_dimensions, axis or member.
-- statement renders one presentation network — the balance sheet, income \
-statement, cash flows, equity, or any disclosure table — as rows in filing \
-order with values per period column.
+- statement renders one presentation network — a primary statement or any \
+disclosure table — as rows in filing order with values per period column.
 - calculation answers "what sums to X": the calculation-linkbase children with \
 their weights, the computed sum against the reported total, per period.
 
 TEXT
-- search_text is a regular-expression search over the whole primary document \
-as plain text — cover, Items, notes, signatures, tagged or not — returning \
-windows with offsets; read_text pages from an offset. The sections in \
-describe_filing give the offsets of the Items and the tagged notes.
+- search_text is a regular-expression search over the readable text — the \
+whole primary document, or the tagged text blocks alone, as the server was \
+started — returning windows with offsets; read_text pages from an offset. \
+describe_filing's `profile.text` says which, and its sections give offsets.
 
 RULES
 - Instants (balances, one date) and durations (flows, start..end) are \
-different period keys; an annual figure is a 12-month duration, a quarter a \
-3-month one. Read the `duration` field before comparing.
+different period keys; compare like with like — a 12-month duration with a \
+12-month duration.
 - Values are as reported, scale applied; `unit` says the measure, `decimals` \
 the precision (-6 = millions). Text-block values come back as a preview and a \
 character count; read the block through search_text / read_text.
 - Cite the concept qname and the period key for every number you report.
 """
 
+PURE_NOTE = """
+PROFILE: pure. This server answers with the filing and nothing more: networks \
+are listed by the filer's own role and definition (no statement kinds — find \
+the balance sheet by its name), periods carry dates and no buckets, and there \
+is no Item map. Everything you read is what the filer tagged or wrote.
+"""
+
+ReadLength = Annotated[
+  int, Field(description="Characters to read (max 8000).", ge=1, le=8000)
+]
+PureReadLength = Annotated[
+  int, Field(description="Characters to read (max 4000).", ge=1, le=4000)
+]
+Offset = Annotated[int, Field(description="Character offset to start at.", ge=0)]
 
 Filing = Annotated[
   str | None,
@@ -93,18 +123,27 @@ def _error(message: str) -> str:
   return json.dumps({"error": message})
 
 
-def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
+def build_server(
+  session: FilingSession,
+  out_dir: Path | None = None,
+  *,
+  pure: bool = False,
+  with_document: bool | None = None,
+) -> Any:
   """The ``MCPServer`` with every tool registered against ``session``.
 
-  ``out_dir`` is the only place ``export_filing`` writes.
+  ``out_dir`` is the only place ``export_filing`` writes. ``with_document``
+  defaults to the profile's own default: on for the product profile, off
+  under ``pure``.
   """
   from mcp.server import MCPServer
 
+  whole = (not pure) if with_document is None else bool(with_document)
   export_dir = Path(out_dir) if out_dir is not None else Path("output")
   server = MCPServer(
     name="xbrlkit",
     title="xbrlkit",
-    instructions=INSTRUCTIONS,
+    instructions=INSTRUCTIONS + (PURE_NOTE if pure else ""),
     version=__version__,
   )
 
@@ -113,6 +152,9 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       return _dumps(fn(*args, **kwargs))
     except (tools.ToolError, SourceError) as exc:
       return _error(str(exc))
+
+  def describe(loaded: Any) -> dict[str, Any]:
+    return tools.describe_filing(loaded, pure=pure, whole=whole)
 
   @server.tool(
     name="list_filings",
@@ -127,11 +169,12 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
     description=(
       "Load a filing into the server and return its description. `source` is "
       "a local path (an inline XBRL .htm, an XBRL instance .xml, a filing "
-      "directory, or a .zip package), an http(s) URL Arelle can load, an EDGAR "
-      "`cik:accession` (e.g. `1045810:0001045810-26-000021`), or a ticker "
-      "with an optional form (`NVDA`, `NVDA 10-Q`) for the latest filing of "
-      "that form. Any XBRL taxonomy loads: US GAAP, IFRS, ESEF, ACFR. Takes "
-      "seconds to a minute; the taxonomy cache makes repeat loads fast."
+      "directory, a .zip package, or a model.json written by export_filing), "
+      "an http(s) URL Arelle can load, an EDGAR `cik:accession` (e.g. "
+      "`1045810:0001045810-26-000021`), or a ticker with an optional form "
+      "(`NVDA`, `NVDA 10-Q`) for the latest filing of that form. Any XBRL "
+      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. Takes seconds to a minute; "
+      "the taxonomy cache makes repeat loads fast, and a model.json loads at once."
     ),
     structured_output=False,
   )
@@ -140,7 +183,9 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
     filing_id: Annotated[
       str | None,
       Field(
-        description="An id to refer to the filing by; defaults to its accession or file name."
+        description=(
+          "An id to refer to the filing by; defaults to its accession or file name."
+        )
       ),
     ] = None,
   ) -> str:
@@ -148,22 +193,39 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       loaded = await anyio.to_thread.run_sync(session.load, source, filing_id)
     except (SourceError, FileNotFoundError, ValueError) as exc:
       return _error(str(exc))
-    return run(tools.describe_filing, loaded)
+    return run(describe, loaded)
+
+  @server.tool(
+    name="unload_filing",
+    description=(
+      "Drop a loaded filing from the server (its id from list_filings). "
+      "Load another with load_filing; nothing else changes."
+    ),
+    structured_output=False,
+  )
+  def unload_filing(
+    filing: Annotated[str, Field(description="The loaded filing's id.")],
+  ) -> str:
+    try:
+      dropped = session.unload(filing)
+    except SourceError as exc:
+      return _error(str(exc))
+    return _dumps({"unloaded": dropped, "loaded": session.ids()})
 
   @server.tool(
     name="describe_filing",
     description=(
       "How a loaded filing is laid out: entity, form and fiscal context; fact "
       "counts; the reporting periods with the `key` fact_grid and statement "
-      "use; units; the presentation networks (statements and disclosures) by "
-      "role, the primary statements flagged; the dimensional axes present; and "
-      "the text sections (10-K Items, tagged notes) with their character "
-      "offsets. Call this first — never guess names or keys."
+      "use; units; the presentation networks by role (statements and "
+      "disclosures — the primary statements flagged under the product "
+      "profile); the dimensional axes present; and the text sections with "
+      "their character offsets. Call this first — never guess names or keys."
     ),
     structured_output=False,
   )
   def describe_filing(filing: Filing = None) -> str:
-    return run(lambda: tools.describe_filing(session.get(filing)))
+    return run(lambda: describe(session.get(filing)))
 
   @server.tool(
     name="resolve_element",
@@ -171,8 +233,8 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       "Find the XBRL concepts a filing reports for a phrase: 'revenue', "
       "'lease liability', 'us-gaap:Assets'. Matches qnames, names and labels, "
       "ranked; each match carries its label, type, period type, balance, how "
-      "many facts the filing reports for it, and the statements it appears "
-      "in. Use the returned qnames in fact_grid and calculation."
+      "many facts the filing reports for it, and the networks it appears in. "
+      "Use the returned qnames in fact_grid and calculation."
     ),
     structured_output=False,
   )
@@ -191,10 +253,11 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       "Values for one or more concepts across the filing's periods. By default "
       "the consolidated total per concept and period (facts with no dimensional "
       "qualifier), keeping the most precise of duplicate tags, newest period "
-      "first. `period_end` (YYYY-MM-DD or YYYY) and `period_type` (instant, "
-      "duration, annual, quarterly) narrow the periods. Set include_dimensions, "
-      "or name an axis / member (substring match), for segment and member "
-      "breakdowns. Concepts may be qnames or bare names (`Revenues`)."
+      "first. `period_end` (YYYY-MM-DD or YYYY) narrows the periods; "
+      "`period_type` takes instant or duration (and, under the product "
+      "profile, annual / quarterly buckets). Set include_dimensions, or name "
+      "an axis / member (substring match), for segment and member breakdowns. "
+      "Concepts may be qnames or bare names (`Revenues`)."
     ),
     structured_output=False,
   )
@@ -202,33 +265,43 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
     elements: Annotated[
       list[str],
       Field(
-        description="Concept qnames or names, e.g. ['us-gaap:Revenues', 'NetIncomeLoss']."
+        description=(
+          "Concept qnames or names, e.g. ['us-gaap:Revenues', 'NetIncomeLoss']."
+        )
       ),
     ],
     filing: Filing = None,
     period_end: Annotated[
-      str | None, Field(description="A period end date (YYYY-MM-DD) or a year (YYYY).")
+      str | None,
+      Field(description="A period end date (YYYY-MM-DD) or a year (YYYY)."),
     ] = None,
     period_type: Annotated[
       str | None,
       Field(
-        description="instant | duration | annual | quarterly | semi_annual | nine_months"
+        description=(
+          "instant | duration; product profile also annual | quarterly | "
+          "semi_annual | nine_months"
+        )
       ),
     ] = None,
     include_dimensions: Annotated[
       bool,
-      Field(description="Return member breakdowns instead of consolidated totals."),
+      Field(description="Return member breakdowns beside the consolidated totals."),
     ] = False,
     axis: Annotated[
       str | None,
       Field(
-        description="Keep facts on an axis whose qname contains this (implies dimensions)."
+        description=(
+          "Keep facts on an axis whose qname contains this (implies dimensions)."
+        )
       ),
     ] = None,
     member: Annotated[
       str | None,
       Field(
-        description="Keep facts whose member qname contains this (implies dimensions)."
+        description=(
+          "Keep facts whose member qname contains this (implies dimensions)."
+        )
       ),
     ] = None,
     limit: Annotated[
@@ -245,6 +318,7 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
         axis=axis,
         member=member,
         limit=limit,
+        pure=pure,
       )
     )
 
@@ -253,20 +327,18 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
     description=(
       "Render one presentation network as a table: rows in the filing's own "
       "order with depth, label and the consolidated value per period column. "
-      "`statement` is a role URI or name from describe_filing, or a primary "
-      "statement by kind: balance_sheet, income_statement, cash_flow_statement, "
-      "equity_statement (plain phrases like 'balance sheet' work). `periods` "
-      "limits the columns to those keys, end dates, or years; otherwise the "
-      "most recent eight."
+      "`statement` is a network id, name (or part of one) or role URI from "
+      "describe_filing; under the product profile a kind also works "
+      "(balance_sheet, income_statement, cash_flow_statement, equity_statement, "
+      "or a phrase like 'balance sheet'). `periods` limits the columns to those "
+      "keys, end dates, or years; otherwise the most recent eight."
     ),
     structured_output=False,
   )
   def statement(
     statement: Annotated[
       str,
-      Field(
-        description="Role URI, network name (or part of one), or a statement kind."
-      ),
+      Field(description="Network id, name (or part of one), role URI, or a kind."),
     ],
     filing: Filing = None,
     periods: Annotated[
@@ -279,7 +351,7 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
   ) -> str:
     return run(
       lambda: tools.statement(
-        session.get(filing), statement, periods=periods, max_rows=max_rows
+        session.get(filing), statement, periods=periods, max_rows=max_rows, pure=pure
       )
     )
 
@@ -308,7 +380,8 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       Field(description="Restrict to calculation networks whose name contains this."),
     ] = None,
     period_end: Annotated[
-      str | None, Field(description="A period end date (YYYY-MM-DD) or a year (YYYY).")
+      str | None,
+      Field(description="A period end date (YYYY-MM-DD) or a year (YYYY)."),
     ] = None,
   ) -> str:
     return run(
@@ -317,15 +390,21 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       )
     )
 
+  text_scope = (
+    "the filing's primary document as plain text — every Item, note, table, "
+    "the cover and the signatures, tagged or not"
+    if whole
+    else "the filing's tagged text blocks as plain text — the notes and "
+    "policies the filer tagged, one after another under their concept names"
+  )
+
   @server.tool(
     name="search_text",
     description=(
-      "Case-insensitive regular-expression search over the filing's primary "
-      "document as plain text — every Item, note, table, the cover and the "
-      "signatures, tagged or not. Returns up to max_hits matches (max 25), "
-      "each with its character offset, the section it falls in, and a window "
-      "of text centred on it (default 300 characters, max 1500), plus the "
-      "total match count. Follow up with read_text at an offset."
+      f"Case-insensitive regular-expression search over {text_scope}. Returns "
+      "up to max_hits matches (max 25), each with its character offset and a "
+      "window of text centred on it (default 300 characters, max 1500), plus "
+      "the total match count. Follow up with read_text at an offset."
     ),
     structured_output=False,
   )
@@ -333,38 +412,58 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
     pattern: Annotated[str, Field(description="A regular expression (Python syntax).")],
     filing: Filing = None,
     window: Annotated[
-      int, Field(description="Characters of context around each match.", ge=40, le=1500)
+      int,
+      Field(description="Characters of context around each match.", ge=40, le=1500),
     ] = 300,
     max_hits: Annotated[int, Field(description="Matches to return.", ge=1, le=25)] = 10,
   ) -> str:
     return run(
       lambda: tools.search_text(
-        session.get(filing), pattern, window=window, max_hits=max_hits
+        session.get(filing),
+        pattern,
+        window=window,
+        max_hits=max_hits,
+        whole=whole,
+        pure=pure,
       )
     )
 
-  @server.tool(
-    name="read_text",
-    description=(
-      "Read up to 8000 characters of the filing's primary document as plain "
-      "text from a character offset (from search_text, or a section offset in "
-      "describe_filing). Returns the text, the section it starts in, and the "
-      "next offset when more follows."
-    ),
-    structured_output=False,
+  read_cap = tools.PURE_MAX_READ if pure else tools.MAX_READ
+  read_description = (
+    f"Read up to {read_cap} characters of {text_scope}, from a character "
+    "offset (from search_text, or a section offset in describe_filing). "
+    "Returns the text and the next offset when more follows."
   )
-  def read_text(
-    filing: Filing = None,
-    offset: Annotated[
-      int, Field(description="Character offset to start at.", ge=0)
-    ] = 0,
-    length: Annotated[
-      int, Field(description="Characters to read (max 8000).", ge=1, le=8000)
-    ] = 4000,
-  ) -> str:
+
+  def _read(filing: str | None, offset: int, length: int) -> str:
     return run(
-      lambda: tools.read_text(session.get(filing), offset=offset, length=length)
+      lambda: tools.read_text(
+        session.get(filing), offset=offset, length=length, whole=whole, pure=pure
+      )
     )
+
+  # Two registrations so the schema's maximum matches the profile's cap: the
+  # SDK evaluates annotations against module globals, so the bound cannot be
+  # computed here.
+  if pure:
+
+    @server.tool(
+      name="read_text", description=read_description, structured_output=False
+    )
+    def read_text_pure(
+      filing: Filing = None, offset: Offset = 0, length: PureReadLength = 4000
+    ) -> str:
+      return _read(filing, offset, length)
+
+  else:
+
+    @server.tool(
+      name="read_text", description=read_description, structured_output=False
+    )
+    def read_text(
+      filing: Filing = None, offset: Offset = 0, length: ReadLength = 4000
+    ) -> str:
+      return _read(filing, offset, length)
 
   @server.tool(
     name="export_filing",
@@ -372,14 +471,15 @@ def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
       "Write the loaded filing as one of xbrlkit's projections into the "
       "server's output directory and return the path: `holon` (RDF / JSON-LD, "
       "opens in the RoboSystems holon viewer), `tavi` (the Project Tavi "
-      "compiled model, JSON), `oim` (xBRL-JSON), or `lpg` (a single-filing "
-      "LadybugDB graph; needs the lpg extra)."
+      "compiled model, JSON), `oim` (xBRL-JSON), `lpg` (a single-filing "
+      "LadybugDB graph; needs the lpg extra), or `model` (the parse itself as "
+      "JSON — load_filing reloads it without Arelle)."
     ),
     structured_output=False,
   )
   def export_filing(
     format: Annotated[
-      Literal["holon", "tavi", "oim", "lpg"],
+      Literal["holon", "tavi", "oim", "lpg", "model"],
       Field(description="The projection to write."),
     ],
     filing: Filing = None,
@@ -397,9 +497,11 @@ def serve(
   transport: Literal["http", "stdio"] = "http",
   out_dir: Path | None = None,
   path: str = DEFAULT_PATH,
+  pure: bool = False,
+  with_document: bool | None = None,
 ) -> None:
   """Run the server until interrupted."""
-  server = build_server(session, out_dir)
+  server = build_server(session, out_dir, pure=pure, with_document=with_document)
   if transport == "stdio":
     server.run("stdio")
     return
