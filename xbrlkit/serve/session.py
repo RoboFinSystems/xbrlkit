@@ -199,8 +199,8 @@ class FilingSession:
 
   def _load_local(self, path: Path, source: str) -> LoadedFiling:
     package_dir: Path | None = None
-    if path.is_file() and path.suffix.lower() == ".json":
-      return self._load_model_json(path, source)
+    if path.is_file() and path.suffix.lower() in (".json", ".jsonld"):
+      return self._load_json(path, source)
     if path.is_dir():
       package_dir = path
       target = _find_load_target(path)
@@ -217,10 +217,18 @@ class FilingSession:
     )
     return self._finish(_local_id(path, model), source, model, target, package_dir)
 
-  def _load_model_json(self, path: Path, source: str) -> LoadedFiling:
-    """A filing saved by ``export_filing model`` (the parse itself): no
-    Arelle, no network. The primary document is read from beside it when
-    the file named in the model's metadata is there."""
+  def _load_json(self, path: Path, source: str) -> LoadedFiling:
+    """A JSON file: the parse saved by ``export_filing model`` loads at
+    once; the serializations xbrlkit writes (Tavi, holon, xBRL-JSON) are
+    named and refused until each has an importer into the model."""
+    head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    kind = _json_kind(head)
+    if kind != "model":
+      raise SourceError(
+        f"{path.name} is {kind}; this server reads the parse (a model.json from "
+        "export_filing) and XBRL packages. An importer for that serialization "
+        "into the model is the next lane."
+      )
     try:
       model = XbrlModel.model_validate_json(path.read_text(encoding="utf-8"))
     except ValueError as exc:
@@ -280,19 +288,32 @@ class FilingSession:
     from xbrlkit.parse import close, load_model, to_xbrl_model
 
     with _ARELLE_LOCK:
-      mx = load_model(
-        target,
-        cache_dir=self.config.arelle_cache_dir,
-        offline=self.config.arelle_offline,
-        timeout=self.config.arelle_timeout,
-        config=self.config,
-      )
+      try:
+        mx = load_model(
+          target,
+          cache_dir=self.config.arelle_cache_dir,
+          offline=self.config.arelle_offline,
+          timeout=self.config.arelle_timeout,
+          config=self.config,
+        )
+      except RuntimeError as exc:
+        raise SourceError(
+          f"Arelle could not load {target}: not an XBRL or inline XBRL document "
+          "it recognises (a Tavi, holon or OIM file needs its importer)."
+        ) from exc
       try:
         if filing is None:
           filing = _filing_meta_from_instance(mx, target, accession)
         model = to_xbrl_model(mx, filing, entity=entity)
       finally:
         close(mx.modelManager.cntlr)
+    if not model.facts and not model.concepts:
+      # Arelle accepts any HTML as an empty document; a filing with nothing
+      # tagged is not one this server can answer for.
+      raise SourceError(
+        f"{target} holds no XBRL facts or concepts: not an XBRL or inline XBRL "
+        "document (a Tavi, holon or OIM file needs its importer)."
+      )
     return _enrich_from_dei(model)
 
   def _finish(
@@ -431,6 +452,19 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
   )
   m = re.search(pattern, text, re.DOTALL)
   return m.start() if m else None
+
+
+def _json_kind(head: str) -> str:
+  """Which JSON xbrlkit is looking at, from its first few kilobytes."""
+  if '"@context"' in head or '"@graph"' in head:
+    return "a holon (JSON-LD)"
+  if "/compiled" in head and '"documentInfo"' in head:
+    return "a Tavi compiled model"
+  if "xbrl-json" in head or "https://xbrl.org/2021" in head:
+    return "an xBRL-JSON (OIM) report"
+  if '"filing"' in head and '"entity"' in head:
+    return "model"
+  return "not a JSON file xbrlkit recognises"
 
 
 # -- filing identity without EDGAR ----------------------------------------------

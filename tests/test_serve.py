@@ -845,8 +845,22 @@ def test_model_export_reloads_without_arelle(
     assert tools.fact_grid(again, ["Revenues"])["rows"][0]["value"] == 1_000_450
     bad = tmp_path / "not-a-model.json"
     bad.write_text('{"hello": "world"}')
-    with pytest.raises(SourceError):
+    with pytest.raises(SourceError, match="not a JSON file xbrlkit recognises"):
       session.load(str(bad))
+    tavi = tmp_path / "x.tavi.json"
+    tavi.write_text(
+      '{"documentInfo": {"documentType": "https://xbrl.org/PWD/2026-09-01/compiled"}}'
+    )
+    with pytest.raises(SourceError, match="Tavi compiled model"):
+      session.load(str(tavi))
+    holon = tmp_path / "x.holon.jsonld"
+    holon.write_text('{"@context": {}, "@graph": []}')
+    with pytest.raises(SourceError, match="holon"):
+      session.load(str(holon))
+    notxbrl = tmp_path / "page.htm"
+    notxbrl.write_text("<html><body>not a filing</body></html>")
+    with pytest.raises(SourceError, match="no XBRL facts|Arelle could not load"):
+      session.load(str(notxbrl))
   finally:
     session.close()
 
