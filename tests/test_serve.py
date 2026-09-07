@@ -679,6 +679,35 @@ def test_find_load_target_prefers_inline_document(tmp_path: Path) -> None:
   assert _find_load_target(tmp_path).name == "acme-20241231.xml"
 
 
+# -- the CLI --------------------------------------------------------------------
+
+
+def test_serve_without_the_extra_names_it(monkeypatch, capsys) -> None:
+  import sys
+
+  from xbrlkit.cli import main
+
+  monkeypatch.setitem(sys.modules, "mcp", None)  # `import mcp` now raises
+  assert main(["serve"]) == 1
+  err = capsys.readouterr().err
+  assert "xbrlkit[mcp]" in err and "uvx --from" in err
+
+
+def test_serve_parser_shape() -> None:
+  from xbrlkit.cli import build_parser
+
+  args = build_parser().parse_args(
+    ["serve", "NVDA", "./x.htm", "--port", "9000", "--transport", "stdio"]
+  )
+  assert args.sources == ["NVDA", "./x.htm"]
+  assert (args.host, args.port, args.transport, args.path) == (
+    "127.0.0.1",
+    9000,
+    "stdio",
+    "/mcp",
+  )
+
+
 # -- the MCP layer --------------------------------------------------------------
 
 

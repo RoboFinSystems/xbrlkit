@@ -204,6 +204,42 @@ Point the client at the URL — no key, no sign-in:
 claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 ```
 
+### Without installing — `uvx`
+
+`uvx` runs the server straight from PyPI in its own environment, nothing added to
+yours. The `--from "xbrlkit[mcp]"` is the whole trick: `uvx xbrlkit` alone resolves
+the package without the extra, and `serve` stops with a message naming it.
+
+```bash
+uvx --from "xbrlkit[mcp]" xbrlkit serve NVDA          # pin: --from "xbrlkit[mcp]==0.5.0"
+```
+
+Clients that launch a server themselves — Claude Desktop, Claude Code's stdio
+entries, Cursor — run the same command over stdio:
+
+```json
+{
+  "mcpServers": {
+    "xbrlkit": {
+      "command": "uvx",
+      "args": ["--from", "xbrlkit[mcp]", "xbrlkit", "serve", "--transport", "stdio", "NVDA"],
+      "env": { "SEC_GOV_USER_AGENT": "Your Name your@email.example" }
+    }
+  }
+}
+```
+
+```bash
+claude mcp add xbrlkit -e SEC_GOV_USER_AGENT="Your Name your@email.example" \
+  -- uvx --from "xbrlkit[mcp]" xbrlkit serve --transport stdio NVDA
+```
+
+The filings named on the command line load before the server answers its first
+request — a cold taxonomy cache can take a minute — so a client with a short
+startup timeout does better with no source on the command line and a
+`load_filing` call once connected. `SEC_GOV_USER_AGENT` is needed for anything
+EDGAR has to fetch (a ticker, a `cik:accession`); a local file needs none.
+
 Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs — and
 filings can also be loaded after the server starts, through the `load_filing`
 tool. The tools are the shapes a reader needs, not a query language:

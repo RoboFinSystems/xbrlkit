@@ -299,15 +299,21 @@ def _cmd_cache(args: argparse.Namespace) -> int:
   raise ValueError(f"unknown cache command: {args.cache_command}")
 
 
+MCP_EXTRA_HINT = (
+  "xbrlkit serve needs the mcp extra: pip install 'xbrlkit[mcp]'  "
+  "(or, without installing: uvx --from 'xbrlkit[mcp]' xbrlkit serve …)"
+)
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
+  # The session imports without the SDK; the server does not. Check for the
+  # SDK up front so the message names the extra rather than a module.
   try:
-    from .serve import FilingSession, serve
-  except ImportError as exc:  # the mcp extra is not installed
-    print(
-      f"error: {exc}\nxbrlkit serve needs the mcp extra: pip install 'xbrlkit[mcp]'",
-      file=sys.stderr,
-    )
+    import mcp  # noqa: F401  # pyright: ignore[reportUnusedImport]
+  except ImportError:
+    print(f"error: {MCP_EXTRA_HINT}", file=sys.stderr)
     return 1
+  from .serve import FilingSession, serve
 
   session = FilingSession(config=_config_from_args(args))
   for source in args.sources:
