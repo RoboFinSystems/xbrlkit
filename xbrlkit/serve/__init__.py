@@ -35,11 +35,16 @@ __all__ = (
 )
 
 
-def build_server(session: FilingSession, out_dir: Path | None = None) -> Any:
-  """The ``MCPServer`` with every tool registered (imports the mcp extra)."""
+def build_server(
+  session: FilingSession, out_dir: Path | None = None, **kwargs: Any
+) -> Any:
+  """The ``MCPServer`` with every tool registered (imports the mcp extra).
+
+  ``pure`` and ``with_document`` pass through — see :mod:`xbrlkit.serve.server`.
+  """
   from .server import build_server as _build
 
-  return _build(session, out_dir)
+  return _build(session, out_dir, **kwargs)
 
 
 def serve(session: FilingSession, **kwargs: Any) -> None:

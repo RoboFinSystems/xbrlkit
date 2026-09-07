@@ -52,7 +52,14 @@ class TextSection:
 
 @dataclass
 class LoadedFiling:
-  """One filing the server holds: the model plus its readable text."""
+  """One filing the server holds: the model plus its readable text.
+
+  ``text`` / ``sections`` are the whole primary document when the filing
+  came with one, else the tagged text blocks; ``block_text`` /
+  ``block_sections`` are always the tagged text blocks alone — the form's
+  own text, which is what a faithful reading of the serialization searches
+  when the document is held out as a control.
+  """
 
   id: str
   source: str
@@ -61,10 +68,26 @@ class LoadedFiling:
   sections: list[TextSection]
   load_target: Path | None = None
   package_dir: Path | None = None
+  block_text: str = ""
+  block_sections: list[TextSection] = field(default_factory=list)
+  has_document: bool = False
+
+  def __post_init__(self) -> None:
+    # A filing built without a document (a classic instance, a model.json, a
+    # hand-authored model in a test) has one rendering: its text blocks.
+    if not self.has_document and not self.block_text:
+      self.block_text, self.block_sections = self.text, self.sections
 
   @property
   def accession(self) -> str:
     return self.model.filing.accession
+
+  def readable(self, whole: bool = True) -> tuple[str, list[TextSection]]:
+    """The text the text tools read: the whole document when ``whole`` and
+    one is held, else the tagged text blocks."""
+    if whole and self.has_document:
+      return self.text, self.sections
+    return self.block_text, self.block_sections
 
 
 class SourceError(ValueError):
@@ -176,6 +199,8 @@ class FilingSession:
 
   def _load_local(self, path: Path, source: str) -> LoadedFiling:
     package_dir: Path | None = None
+    if path.is_file() and path.suffix.lower() in (".json", ".jsonld"):
+      return self._load_json(path, source)
     if path.is_dir():
       package_dir = path
       target = _find_load_target(path)
@@ -191,6 +216,30 @@ class FilingSession:
       target, accession=_local_accession(path, target), filing=None, entity=None
     )
     return self._finish(_local_id(path, model), source, model, target, package_dir)
+
+  def _load_json(self, path: Path, source: str) -> LoadedFiling:
+    """A JSON file: the parse saved by ``export_filing model`` loads at
+    once; the serializations xbrlkit writes (Tavi, holon, xBRL-JSON) are
+    named and refused until each has an importer into the model."""
+    head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    kind = _json_kind(head)
+    if kind != "model":
+      raise SourceError(
+        f"{path.name} is {kind}; this server reads the parse (a model.json from "
+        "export_filing) and XBRL packages. An importer for that serialization "
+        "into the model is the next lane."
+      )
+    try:
+      model = XbrlModel.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+      raise SourceError(f"{path} is not an XbrlModel JSON file: {exc}") from exc
+    target: Path | None = None
+    if model.filing.primary_document:
+      candidate = path.parent / model.filing.primary_document
+      if candidate.is_file():
+        target = candidate
+    model = _enrich_from_dei(model)
+    return self._finish(_local_id(path, model), source, model, target, path.parent)
 
   def _load_url(self, url: str) -> LoadedFiling:
     accession = Path(url.split("?", 1)[0]).stem or url
@@ -239,19 +288,32 @@ class FilingSession:
     from xbrlkit.parse import close, load_model, to_xbrl_model
 
     with _ARELLE_LOCK:
-      mx = load_model(
-        target,
-        cache_dir=self.config.arelle_cache_dir,
-        offline=self.config.arelle_offline,
-        timeout=self.config.arelle_timeout,
-        config=self.config,
-      )
+      try:
+        mx = load_model(
+          target,
+          cache_dir=self.config.arelle_cache_dir,
+          offline=self.config.arelle_offline,
+          timeout=self.config.arelle_timeout,
+          config=self.config,
+        )
+      except RuntimeError as exc:
+        raise SourceError(
+          f"Arelle could not load {target}: not an XBRL or inline XBRL document "
+          "it recognises (a Tavi, holon or OIM file needs its importer)."
+        ) from exc
       try:
         if filing is None:
           filing = _filing_meta_from_instance(mx, target, accession)
         model = to_xbrl_model(mx, filing, entity=entity)
       finally:
         close(mx.modelManager.cntlr)
+    if not model.facts and not model.concepts:
+      # Arelle accepts any HTML as an empty document; a filing with nothing
+      # tagged is not one this server can answer for.
+      raise SourceError(
+        f"{target} holds no XBRL facts or concepts: not an XBRL or inline XBRL "
+        "document (a Tavi, holon or OIM file needs its importer)."
+      )
     return _enrich_from_dei(model)
 
   def _finish(
@@ -265,7 +327,11 @@ class FilingSession:
     html = None
     if target is not None and target.suffix.lower() in _INLINE_SUFFIXES:
       html = target.read_text(encoding="utf-8", errors="replace")
-    text, sections = build_text(model, html)
+    block_text, block_sections = _text_from_text_blocks(model)
+    if html is None:
+      text, sections = block_text, block_sections
+    else:
+      text, sections = build_text(model, html)
     return LoadedFiling(
       id=filing_id,
       source=source,
@@ -274,6 +340,9 @@ class FilingSession:
       sections=sections,
       load_target=target,
       package_dir=package_dir,
+      block_text=block_text,
+      block_sections=block_sections,
+      has_document=html is not None,
     )
 
 
@@ -385,30 +454,64 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
   return m.start() if m else None
 
 
+def _json_kind(head: str) -> str:
+  """Which JSON xbrlkit is looking at, from its first few kilobytes."""
+  if '"@context"' in head or '"@graph"' in head:
+    return "a holon (JSON-LD)"
+  if "/compiled" in head and '"documentInfo"' in head:
+    return "a Tavi compiled model"
+  if "xbrl-json" in head or "https://xbrl.org/2021" in head:
+    return "an xBRL-JSON (OIM) report"
+  if '"filing"' in head and '"entity"' in head:
+    return "model"
+  return "not a JSON file xbrlkit recognises"
+
+
 # -- filing identity without EDGAR ----------------------------------------------
+
+
+_INSTANCE_ROOT_RE = re.compile(rb"<(?:[A-Za-z0-9_]+:)?xbrl[\s>]")
 
 
 def _find_load_target(package_dir: Path) -> Path:
   """The file Arelle should load from a filing directory: the inline
-  document (the largest ``.htm`` carrying ``ix:`` markup), else the instance
-  ``.xml`` beside the schema."""
+  document (the largest ``.htm`` carrying ``ix:`` markup), else the XBRL
+  instance — recognised by its root element, since a package need not
+  follow EDGAR's naming (an instance called ``instance.xml`` beside
+  ``report.xsd`` and hyphenated linkbases is a valid package too). A
+  package that wraps itself in one directory is looked into."""
+  entries = sorted(p for p in package_dir.iterdir() if not p.name.startswith("."))
+  if len(entries) == 1 and entries[0].is_dir():
+    return _find_load_target(entries[0])
   inline: list[tuple[int, Path]] = []
-  for candidate in sorted(package_dir.iterdir()):
-    if candidate.suffix.lower() not in _INLINE_SUFFIXES or not candidate.is_file():
+  instances: list[Path] = []
+  for candidate in entries:
+    if not candidate.is_file():
+      continue
+    suffix = candidate.suffix.lower()
+    if suffix not in _INLINE_SUFFIXES and suffix not in (".xml", ".xbrl"):
       continue
     with candidate.open("rb") as fh:
       head = fh.read(200_000)
-    if b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head:
-      inline.append((candidate.stat().st_size, candidate))
+    if suffix in _INLINE_SUFFIXES:
+      if b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head:
+        inline.append((candidate.stat().st_size, candidate))
+    elif _INSTANCE_ROOT_RE.search(head[:4000]):
+      instances.append(candidate)
   if inline:
     return max(inline)[1]
-  for schema in sorted(package_dir.glob("*.xsd")):
-    instance = schema.with_suffix(".xml")
-    if instance.exists():
-      return instance
-  instances = sorted(p for p in package_dir.glob("*.xml") if "_" not in p.stem)
   if len(instances) == 1:
     return instances[0]
+  if len(instances) > 1:
+    # Several instances: prefer the one named after a schema, EDGAR-style.
+    for schema in sorted(package_dir.glob("*.xsd")):
+      paired = schema.with_suffix(".xml")
+      if paired in instances:
+        return paired
+    names = [p.name for p in instances]
+    raise SourceError(
+      f"{len(instances)} XBRL instances in {package_dir} ({names}); point at one."
+    )
   raise SourceError(
     f"No inline document or XBRL instance found in {package_dir}; "
     "point at the file to load."
@@ -428,6 +531,8 @@ def _local_id(path: Path, model: XbrlModel) -> str:
   stem = path.stem if path.is_file() else path.name
   if _ACCESSION_RE.match(stem):
     return stem
+  if _ACCESSION_RE.match(model.filing.accession):
+    return model.filing.accession
   if model.entity.ticker:
     return model.entity.ticker.lower()
   return Path(model.filing.primary_document or stem).stem

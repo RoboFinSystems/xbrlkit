@@ -71,7 +71,10 @@ EXPORT_FORMATS = {
   "tavi": "tavi.json",
   "oim": "oim.json",
   "lpg": "lbug",
+  "model": "model.json",
 }
+PURE_MAX_READ = 4000
+BUCKET_PERIOD_TYPES = ("annual", "quarterly", "semi_annual", "nine_months")
 
 
 class ToolError(ValueError):
@@ -424,8 +427,19 @@ def list_filings(session: FilingSession) -> dict[str, Any]:
   return {"filings": rows, "count": len(rows)}
 
 
-def describe_filing(lf: LoadedFiling) -> dict[str, Any]:
+def describe_filing(
+  lf: LoadedFiling, *, pure: bool = False, whole: bool = True
+) -> dict[str, Any]:
+  """How the filing is laid out.
+
+  ``pure`` is the faithful-reading profile: nothing the filing does not
+  carry — no statement kinds (the networks are listed by the filer's own
+  role and definition), no detected Items, no duration buckets on periods.
+  ``whole`` selects the primary document as the text the sections and the
+  counts describe; ``False`` describes the tagged text blocks alone.
+  """
   model, idx = lf.model, index_for(lf)
+  text, sections = lf.readable(whole)
   facts = model.facts
   numeric = [f for f in facts if f.value_kind == "numeric"]
   text_blocks = [
@@ -445,12 +459,14 @@ def describe_filing(lf: LoadedFiling) -> dict[str, Any]:
     key=lambda p: (-period_counts[p.id], _end_of(p)),
   )[:DESCRIBE_PERIODS]
   periods.sort(key=lambda p: (_end_of(p), p.period_type == "instant"), reverse=True)
-  period_rows = [
-    {"key": _period_key(p), "duration": p.duration_type, "facts": period_counts[p.id]}
-    if p.period_type != "instant"
-    else {"key": _period_key(p), "instant": True, "facts": period_counts[p.id]}
-    for p in periods
-  ]
+  period_rows: list[dict[str, Any]] = []
+  for p in periods:
+    row: dict[str, Any] = {"key": _period_key(p), "facts": period_counts[p.id]}
+    if p.period_type == "instant":
+      row["instant"] = True
+    elif p.duration_type and not pure:
+      row["duration"] = p.duration_type
+    period_rows.append(row)
 
   axes: dict[str, dict[str, Any]] = {}
   for f in dimensional:
@@ -470,7 +486,7 @@ def describe_filing(lf: LoadedFiling) -> dict[str, Any]:
   disclosures: list[dict[str, Any]] = []
   for n in idx.presentation:
     concepts = {q for a in n.arcs for q in (a.from_qname, a.to_qname)}
-    kind = idx.classification.get(n.role_uri)
+    kind = None if pure else idx.classification.get(n.role_uri)
     if kind:
       statements.append(
         {
@@ -490,14 +506,43 @@ def describe_filing(lf: LoadedFiling) -> dict[str, Any]:
         }
       )
 
-  items = [s for s in lf.sections if s.kind == "item"]
+  items = [] if pure else [s for s in sections if s.kind == "item"]
   blocks = sorted(
-    (s for s in lf.sections if s.kind == "text_block"), key=lambda s: -s.chars
+    (s for s in sections if s.kind == "text_block"), key=lambda s: -s.chars
   )[:DESCRIBE_TEXT_BLOCKS]
+
+  if pure:
+    networks_view: dict[str, Any] = {
+      "networks": disclosures,
+      "networks_note": (
+        "presentation networks by the filer's own role and definition; "
+        "`statement` takes an id, a name (or part of one), or a role"
+      ),
+    }
+    section_items: dict[str, Any] = {}
+  else:
+    networks_view = {
+      "statements": statements,
+      "disclosures": disclosures,
+      "networks_note": (
+        "`statement` takes an id, a name (or part of one), a role, or a kind "
+        "(balance_sheet, income_statement, cash_flow_statement, equity_statement)"
+      ),
+    }
+    section_items = {
+      "items": [
+        {"id": s.id, "label": s.label, "offset": s.offset, "chars": s.chars}
+        for s in items
+      ]
+    }
 
   filing = model.filing
   entity = model.entity
   return {
+    "profile": {
+      "pure": pure,
+      "text": "primary document" if whole and lf.has_document else "tagged text blocks",
+    },
     "filing": {
       "id": lf.id,
       "source": lf.source,
@@ -537,7 +582,7 @@ def describe_filing(lf: LoadedFiling) -> dict[str, Any]:
         "calculation": len(idx.calculation),
         "definition": len(idx.definition),
       },
-      "text_chars": len(lf.text),
+      "text_chars": len(text),
     },
     "periods": period_rows,
     "periods_note": (
@@ -546,28 +591,20 @@ def describe_filing(lf: LoadedFiling) -> dict[str, Any]:
       "(start..end for a flow, one date for a balance)."
     ),
     "units": [u.measure for u in model.units],
-    "statements": statements,
-    "disclosures": disclosures,
-    "networks_note": (
-      "`statement` takes an id, a name (or part of one), a role, or a kind "
-      "(balance_sheet, income_statement, cash_flow_statement, equity_statement)"
-    ),
+    **networks_view,
     "axes": axis_rows,
     "sections": {
-      "items": [
-        {"id": s.id, "label": s.label, "offset": s.offset, "chars": s.chars}
-        for s in items
-      ],
+      **section_items,
       "text_blocks": [
         {"id": s.id, "offset": s.offset, "chars": s.chars} for s in blocks
       ],
-      "text_block_count": len([s for s in lf.sections if s.kind == "text_block"]),
+      "text_block_count": len([s for s in sections if s.kind == "text_block"]),
       "note": "offsets index into the plain text that search_text and read_text read",
     },
     "next": [
       "resolve_element to turn a phrase into the concepts this filing reports",
       "fact_grid for consolidated values by concept and period",
-      "statement with a `statement` value from `statements` above",
+      "statement with a network from the list above",
       "calculation for what sums to a total",
       "search_text for anything in the document text, read_text to page it",
     ],
@@ -641,10 +678,16 @@ def fact_grid(
   axis: str | None = None,
   member: str | None = None,
   limit: int = 200,
+  pure: bool = False,
 ) -> dict[str, Any]:
   model, idx = lf.model, index_for(lf)
   if not elements:
     raise ToolError("elements is required: one or more concept names")
+  if pure and (period_type or "").strip().lower() in BUCKET_PERIOD_TYPES:
+    raise ToolError(
+      "period_type buckets (annual, quarterly, …) are not part of the filing; "
+      "under the pure profile filter by period_end or by instant / duration"
+    )
   qnames, unresolved = _resolve_concepts(model, elements)
   keep = _period_filter(idx, period_end, period_type)
   limit = max(1, min(int(limit or 200), MAX_GRID_ROWS))
@@ -683,6 +726,9 @@ def fact_grid(
     )
   )
   rows = [_fact_view(f, lf, idx) for f in facts[:limit]]
+  if pure:
+    for row in rows:
+      row.pop("duration", None)
   out: dict[str, Any] = {
     "rows": rows,
     "row_count": len(rows),
@@ -702,7 +748,7 @@ def fact_grid(
   return out
 
 
-def _find_network(idx: Index, statement: str) -> Network:
+def _find_network(idx: Index, statement: str, *, pure: bool = False) -> Network:
   s = (statement or "").strip()
   if not s:
     raise ToolError("statement is required: a role, a statement name, or part of one")
@@ -713,8 +759,10 @@ def _find_network(idx: Index, statement: str) -> Network:
   for n in idx.presentation:
     if _network_id(n).lower() == sl or _network_name(n).lower() == sl:
       return n
-  kind = _PRIMARY_ALIASES.get(sl)
-  if kind is None:
+  # Kinds are our classification, not the filing's; the pure profile only
+  # knows the filer's own names.
+  kind = None if pure else _PRIMARY_ALIASES.get(sl)
+  if kind is None and not pure:
     for alias, k in _PRIMARY_ALIASES.items():
       if alias in sl and ("parenthetical" not in sl):
         kind = k
@@ -759,9 +807,10 @@ def statement(
   statement: str,
   periods: list[str] | None = None,
   max_rows: int = MAX_STATEMENT_ROWS,
+  pure: bool = False,
 ) -> dict[str, Any]:
   model, idx = lf.model, index_for(lf)
-  network = _find_network(idx, statement)
+  network = _find_network(idx, statement, pure=pure)
   max_rows = max(1, min(int(max_rows or MAX_STATEMENT_ROWS), MAX_STATEMENT_ROWS))
 
   children: dict[str, list[Arc]] = defaultdict(list)
@@ -848,13 +897,17 @@ def statement(
       if not row["values"]:
         del row["values"]
 
+  head: dict[str, Any] = {"role": network.role_uri, "name": network.definition}
+  if not pure:
+    head["kind"] = idx.classification.get(network.role_uri)
+  columns = [_period_view(period_by_key[k]) for k in keys]
+  if pure:
+    for column in columns:
+      column.pop("duration", None)
+      column.pop("calendar", None)
   return {
-    "statement": {
-      "role": network.role_uri,
-      "name": network.definition,
-      "kind": idx.classification.get(network.role_uri),
-    },
-    "columns": [_period_view(period_by_key[k]) for k in keys],
+    "statement": head,
+    "columns": columns,
     "rows": rows,
     "row_count": len(rows),
     "truncated": truncated,
@@ -995,7 +1048,14 @@ def search_text(
   pattern: str,
   window: int = DEFAULT_WINDOW,
   max_hits: int = DEFAULT_HITS,
+  *,
+  whole: bool = True,
+  pure: bool = False,
 ) -> dict[str, Any]:
+  """Regex search over the readable text: the whole primary document when
+  ``whole`` (and one is held), else the tagged text blocks. ``pure`` drops
+  the section label on hits — the ladder's exact hit shape."""
+  text, sections = lf.readable(whole)
   if not (pattern or "").strip():
     raise ToolError("pattern is required")
   try:
@@ -1007,18 +1067,18 @@ def search_text(
   half = window // 2
   hits: list[dict[str, Any]] = []
   total = 0
-  for m in rx.finditer(lf.text):
+  for m in rx.finditer(text):
     total += 1
     if len(hits) >= max_hits:
       continue
     start = max(0, m.start() - half)
-    end = min(len(lf.text), m.end() + half)
+    end = min(len(text), m.end() + half)
     hit: dict[str, Any] = {
       "offset": m.start(),
       "match": m.group(0)[:200],
-      "text": lf.text[start:end],
+      "text": text[start:end],
     }
-    section = _section_at(lf.sections, m.start())
+    section = None if pure else _section_at(sections, m.start())
     if section:
       hit["section"] = section
     hits.append(hit)
@@ -1026,30 +1086,37 @@ def search_text(
     "pattern": pattern,
     "total": total,
     "hits": hits,
-    "text_chars": len(lf.text),
+    "text_chars": len(text),
     "note": "offsets index the plain text; read_text pages from one",
   }
 
 
 def read_text(
-  lf: LoadedFiling, offset: int = 0, length: int = DEFAULT_READ
+  lf: LoadedFiling,
+  offset: int = 0,
+  length: int = DEFAULT_READ,
+  *,
+  whole: bool = True,
+  pure: bool = False,
 ) -> dict[str, Any]:
+  """Page the readable text from an offset. ``pure`` caps a read at the
+  ladder's 4,000 characters and omits the section label."""
+  text, sections = lf.readable(whole)
+  cap = PURE_MAX_READ if pure else MAX_READ
   offset = max(0, int(offset or 0))
-  length = max(1, min(int(length or DEFAULT_READ), MAX_READ))
-  if offset >= len(lf.text):
-    raise ToolError(
-      f"offset {offset} is past the end of the text ({len(lf.text)} chars)"
-    )
-  end = min(len(lf.text), offset + length)
+  length = max(1, min(int(length or DEFAULT_READ), cap))
+  if offset >= len(text):
+    raise ToolError(f"offset {offset} is past the end of the text ({len(text)} chars)")
+  end = min(len(text), offset + length)
   out: dict[str, Any] = {
     "offset": offset,
     "length": end - offset,
-    "text": lf.text[offset:end],
-    "text_chars": len(lf.text),
+    "text": text[offset:end],
+    "text_chars": len(text),
   }
-  if end < len(lf.text):
+  if end < len(text):
     out["next_offset"] = end
-  section = _section_at(lf.sections, offset)
+  section = None if pure else _section_at(sections, offset)
   if section:
     out["section"] = section
   return out
@@ -1081,6 +1148,9 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
     from xbrlkit.serialize import to_oim
 
     target.write_text(to_oim(model))
+  elif fmt == "model":
+    # The parse itself: reloadable by load_filing without Arelle.
+    target.write_text(model.model_dump_json(indent=2))
   else:
     try:
       from xbrlkit.serialize import build_lbug, to_graph_tables
