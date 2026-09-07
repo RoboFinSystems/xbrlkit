@@ -207,11 +207,13 @@ claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 ### Without installing — `uvx`
 
 `uvx` runs the server straight from PyPI in its own environment, nothing added to
-yours. The `--from "xbrlkit[mcp]"` is the whole trick: `uvx xbrlkit` alone resolves
-the package without the extra, and `serve` stops with a message naming it.
+yours. Two things in the `--from` matter: the `[mcp]` extra — `uvx xbrlkit` alone
+resolves the package without it, and `serve` stops with a message naming it — and
+`@latest`, without which `uvx` keeps reusing the environment it built the first
+time and never sees a new release.
 
 ```bash
-uvx --from "xbrlkit[mcp]" xbrlkit serve NVDA          # pin: --from "xbrlkit[mcp]==0.5.0"
+uvx --from "xbrlkit[mcp]@latest" xbrlkit serve NVDA   # pin instead: --from "xbrlkit[mcp]==0.5.0"
 ```
 
 Clients that launch a server themselves — Claude Desktop, Claude Code's stdio
@@ -222,7 +224,7 @@ entries, Cursor — run the same command over stdio:
   "mcpServers": {
     "xbrlkit": {
       "command": "uvx",
-      "args": ["--from", "xbrlkit[mcp]", "xbrlkit", "serve", "--transport", "stdio", "NVDA"],
+      "args": ["--from", "xbrlkit[mcp]@latest", "xbrlkit", "serve", "--transport", "stdio", "NVDA"],
       "env": { "SEC_GOV_USER_AGENT": "Your Name your@email.example" }
     }
   }
@@ -231,7 +233,7 @@ entries, Cursor — run the same command over stdio:
 
 ```bash
 claude mcp add xbrlkit -e SEC_GOV_USER_AGENT="Your Name your@email.example" \
-  -- uvx --from "xbrlkit[mcp]" xbrlkit serve --transport stdio NVDA
+  -- uvx --from "xbrlkit[mcp]@latest" xbrlkit serve --transport stdio NVDA
 ```
 
 The filings named on the command line load before the server answers its first

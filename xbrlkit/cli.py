@@ -301,7 +301,7 @@ def _cmd_cache(args: argparse.Namespace) -> int:
 
 MCP_EXTRA_HINT = (
   "xbrlkit serve needs the mcp extra: pip install 'xbrlkit[mcp]'  "
-  "(or, without installing: uvx --from 'xbrlkit[mcp]' xbrlkit serve …)"
+  "(or, without installing: uvx --from 'xbrlkit[mcp]@latest' xbrlkit serve …)"
 )
 
 
