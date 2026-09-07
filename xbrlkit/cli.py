@@ -299,6 +299,43 @@ def _cmd_cache(args: argparse.Namespace) -> int:
   raise ValueError(f"unknown cache command: {args.cache_command}")
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+  try:
+    from .serve import FilingSession, serve
+  except ImportError as exc:  # the mcp extra is not installed
+    print(
+      f"error: {exc}\nxbrlkit serve needs the mcp extra: pip install 'xbrlkit[mcp]'",
+      file=sys.stderr,
+    )
+    return 1
+
+  session = FilingSession(config=_config_from_args(args))
+  for source in args.sources:
+    print(f"loading {source} …", file=sys.stderr)
+    loaded = session.load(source)
+    model = loaded.model
+    print(
+      f"  {loaded.id}: {model.entity.name or model.entity.cik} {model.filing.form or ''} "
+      f"({len(model.facts)} facts, {len(model.networks)} networks, "
+      f"{len(loaded.text):,} chars of text)",
+      file=sys.stderr,
+    )
+  try:
+    serve(
+      session,
+      host=args.host,
+      port=args.port,
+      transport=args.transport,
+      out_dir=Path(args.out_dir),
+      path=args.path,
+    )
+  except KeyboardInterrupt:
+    pass
+  finally:
+    session.close()
+  return 0
+
+
 def _parse_years(text: str) -> tuple[int, ...]:
   """``2022-2026`` or ``2023,2024`` → a tuple of years."""
   if "-" in text:
@@ -410,6 +447,38 @@ def build_parser() -> argparse.ArgumentParser:
     "--host", action="append", help="Only these hosts (repeatable; default: all)."
   )
   c.set_defaults(func=_cmd_cache)
+
+  s = sub.add_parser(
+    "serve",
+    help="Serve loaded filings to an MCP client over Streamable HTTP (needs the mcp extra).",
+    description=(
+      "Load filings into memory and serve them over MCP with no authentication, "
+      "bound to localhost. Each SOURCE is a local path (an inline .htm, an "
+      "instance .xml, a filing directory or .zip), an http(s) URL, an EDGAR "
+      "cik:accession, or a ticker with an optional form ('NVDA', 'NVDA 10-Q'). "
+      "Filings can also be loaded later through the load_filing tool."
+    ),
+  )
+  s.add_argument("sources", nargs="*", help="Filings to load at start (see above).")
+  s.add_argument(
+    "--host", default="127.0.0.1", help="Interface to bind (default: 127.0.0.1)."
+  )
+  s.add_argument("--port", type=int, default=8765, help="Port (default: 8765).")
+  s.add_argument(
+    "--path", default="/mcp", help="URL path of the MCP endpoint (default: /mcp)."
+  )
+  s.add_argument(
+    "--transport",
+    choices=["http", "stdio"],
+    default="http",
+    help="Streamable HTTP on --host:--port (default), or stdio for clients that speak nothing else.",
+  )
+  s.add_argument(
+    "--out-dir",
+    default=str(DEFAULT_OUTPUT_DIR),
+    help="Where export_filing writes (default: output/).",
+  )
+  s.set_defaults(func=_cmd_serve)
   return parser
 
 

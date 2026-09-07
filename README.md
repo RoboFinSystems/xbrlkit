@@ -15,7 +15,9 @@ EDGAR ──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (R
 ```
 
 Four projections hang off the model. A fifth surface, the filing's text, reads the
-primary HTML document directly and needs neither Arelle nor the network.
+primary HTML document directly and needs neither Arelle nor the network. And the
+model itself can be served: `xbrlkit serve` holds a filing in memory and exposes it
+to an MCP client through shaped tools (see [Serve](#serve-to-an-mcp-client)).
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it does
 not give you is anything ergonomic to *hold*: `ModelXbrl` is a large mutable
@@ -121,9 +123,12 @@ pip install xbrlkit
 ```
 
 Exposes the `xbrlkit` CLI (`xbrlkit build …`, `xbrlkit fetch …`, `xbrlkit query …`,
-`xbrlkit cache …`)
+`xbrlkit cache …`, `xbrlkit serve …`)
 and the library — use this to consume it from another project. Set your SEC
 User-Agent via the environment (see [SEC User-Agent](#sec-user-agent)).
+
+Two optional extras: `xbrlkit[lpg]` for the property-graph projection (pyarrow,
+LadybugDB) and `xbrlkit[mcp]` for the local MCP server.
 
 ### From source (development)
 
@@ -174,6 +179,51 @@ xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:As
 
 From a source checkout, `just` wraps the same CLI as a shorthand:
 `just build 320193 0000320193-23-000106` and `just fetch NVDA`.
+
+## Serve to an MCP client
+
+`xbrlkit serve` loads filings into memory and serves them to any MCP client over
+Streamable HTTP — Claude Code, Claude Desktop, Cursor, VS Code, or a script with
+the MCP SDK. There is no graph and no index behind the tools: every answer is read
+from the parsed filing.
+
+```bash
+pip install "xbrlkit[mcp]"
+
+xbrlkit serve NVDA                                   # latest 10-K for a ticker
+xbrlkit serve "NVDA 10-Q"                            # latest 10-Q
+xbrlkit serve 1045810:0001045810-26-000021           # an EDGAR cik:accession
+xbrlkit serve ./mmm-20241231.htm                     # a local inline XBRL document
+xbrlkit serve ./0000066740-25-000006/                # a filing directory, or a .zip
+# → MCP at http://127.0.0.1:8765/mcp
+```
+
+Point the client at the URL — no key, no sign-in:
+
+```bash
+claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
+```
+
+Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs — and
+filings can also be loaded after the server starts, through the `load_filing`
+tool. The tools are the shapes a reader needs, not a query language:
+
+| tool | what it answers |
+|---|---|
+| `describe_filing` | how the filing is laid out: entity, periods (with the keys the other tools use), statements and disclosures by role, dimensional axes, text sections with offsets — call it first |
+| `resolve_element` | which concepts the filing reports for a phrase ("revenue", "lease liability"), ranked, with fact counts and where they appear |
+| `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
+| `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |
+| `calculation` | what sums to a total: the calculation children with weights, computed against reported, per period |
+| `search_text`, `read_text` | regex search over the whole primary document as plain text — tagged or not — and paging from an offset |
+| `export_filing` | the filing as holon, Tavi, xBRL-JSON or a LadybugDB file, written under `--out-dir` |
+| `list_filings`, `load_filing` | the session |
+
+The server binds to the loopback interface with the SDK's host- and
+origin-header validation on, so a page in a browser cannot drive it; `--host`
+opens it to a network you trust, and `--transport stdio` serves clients that
+speak nothing else. The same tool functions are importable without MCP
+(`xbrlkit.serve.tools`) for tests and notebooks.
 
 ## EDGAR
 
@@ -259,7 +309,9 @@ with AI:
   it locally or self-host.
 
 The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
-complete, portable, self-describing report.
+complete, portable, self-describing report. The viewer's chat asks the report raw
+questions (jq over a Tavi model, SPARQL over a holon); `xbrlkit serve` is the other
+side of that pair — the same filing behind shaped tools, on your own machine.
 
 ## License
 
