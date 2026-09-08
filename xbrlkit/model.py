@@ -55,6 +55,11 @@ class FilingMeta(BaseModel):
   # The filer's own taxonomy namespace — the schema shipped in the filing
   # package — as distinct from the standard taxonomies it imports.
   extension_namespace: str | None = None
+  # The readable primary document as EDGAR names it (`form10-k.htm`). The same
+  # file as `primary_document` for inline XBRL; a *sibling* of the instance for
+  # a classic filing, where the narrative lives outside the XBRL package
+  # entirely; and the whole filing for a form that carries no XBRL.
+  document_name: str | None = None
 
 
 class EntityIdentity(BaseModel):

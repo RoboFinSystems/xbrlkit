@@ -486,6 +486,10 @@ class NarrativeExtractor:
         Sections in document order, each split into parts when long
     """
     form_upper = form_type.upper().replace("/A", "")
+    # `10-K405` is a 10-K whose Rule 405 box is ticked — the common form
+    # through the 1990s, and the same document with the same Items.
+    if form_upper.endswith("405"):
+      form_upper = form_upper[: -len("405")]
     if form_upper in ("10-K", "10-KSB", "20-F", "40-F"):
       target_items = SECTIONS_10K
     elif form_upper in ("10-Q", "10-QSB"):

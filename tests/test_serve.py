@@ -747,10 +747,12 @@ def test_pure_describe_carries_nothing_the_filing_does_not() -> None:
   lf = _loaded_with_document()
   product = tools.describe_filing(lf)
   pure = tools.describe_filing(lf, pure=True)
-  assert product["profile"] == {"pure": False, "text": "primary document"}
-  assert pure["profile"] == {"pure": True, "text": "tagged text blocks"} or pure[
-    "profile"
-  ] == {"pure": True, "text": "primary document"}
+  assert product["profile"] == {
+    "pure": False,
+    "text": "primary document",
+    "xbrl": True,
+  }
+  assert pure["profile"]["pure"] is True and pure["profile"]["xbrl"] is True
   # No kinds: every network is listed by the filer's own name, none flagged.
   assert "statements" not in pure and "kind" not in json.dumps(pure["networks"])
   assert {n["id"] for n in pure["networks"]} == {
@@ -857,10 +859,11 @@ def test_model_export_reloads_without_arelle(
     holon.write_text('{"@context": {}, "@graph": []}')
     with pytest.raises(SourceError, match="holon"):
       session.load(str(holon))
+    # An HTML document with no XBRL is not an error: most of EDGAR is one.
     notxbrl = tmp_path / "page.htm"
     notxbrl.write_text("<html><body>not a filing</body></html>")
-    with pytest.raises(SourceError, match="no XBRL facts|Arelle could not load"):
-      session.load(str(notxbrl))
+    document = session.load(str(notxbrl))
+    assert document.has_xbrl is False and document.has_document is True
   finally:
     session.close()
 
@@ -939,6 +942,9 @@ async def test_server_lists_and_calls_tools(
       "calculation",
       "search_text",
       "read_text",
+      "records",
+      "documents",
+      "read_document",
       "export_filing",
     }
     described = await client.call_tool("describe_filing", {})

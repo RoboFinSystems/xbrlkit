@@ -41,6 +41,7 @@ import os
 import sys
 import time
 import urllib.error
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -137,6 +138,7 @@ def load_model(
   *,
   offline: bool | None = None,
   timeout: int | None = None,
+  packages: Sequence[str | Path] = (),
   config: Config = CONFIG,
 ) -> ModelXbrl:
   """Load an XBRL (inline or classic) document and return its ``ModelXbrl``.
@@ -145,6 +147,13 @@ def load_model(
   from ``cache_dir`` (default :attr:`Config.arelle_cache_dir`) and fetched on
   a miss unless ``offline`` (default :attr:`Config.arelle_offline`), each fetch
   bounded by ``timeout`` seconds (default :attr:`Config.arelle_timeout`).
+
+  ``packages`` are XBRL taxonomy packages to register before loading. A
+  filing outside EDGAR usually ships as one: the report references the filer's
+  extension taxonomy at *their own domain*, which does not resolve over HTTP,
+  and the package's ``META-INF/catalog.xml`` remaps that URL to the copy
+  travelling beside it. Without registering it, every ESEF filing fails DTS
+  resolution on a URL that was never meant to be fetched.
 
   Raises :class:`DtsResolutionError` if any DTS document could not be
   resolved, and ``RuntimeError`` if Arelle produced no document at all.
@@ -158,6 +167,7 @@ def load_model(
     timeout=config.arelle_timeout if timeout is None else timeout,
     config=config,
   )
+  _register_packages(cntlr, packages)
   mx = cntlr.modelManager.load(str(source))
   if mx is None or getattr(mx, "modelDocument", None) is None:
     close(cntlr)
@@ -168,6 +178,26 @@ def load_model(
     close(cntlr)
     raise DtsResolutionError(str(source), unresolved)
   return mx
+
+
+def _register_packages(cntlr: Any, packages: Sequence[str | Path]) -> None:
+  """Register taxonomy packages so their catalogs remap the URLs they own."""
+  if not packages:
+    return
+  from arelle import PackageManager
+
+  PackageManager.init(cntlr, loadPackagesConfig=False)
+  added = False
+  for package in packages:
+    try:
+      if PackageManager.addPackage(cntlr, str(package)):
+        added = True
+      else:
+        logger.warning("not a taxonomy package: %s", package)
+    except Exception as exc:  # a malformed package must not sink the load
+      logger.warning("could not register taxonomy package %s: %s", package, exc)
+  if added:
+    PackageManager.rebuildRemappings(cntlr)
 
 
 def load_state(cntlr: Any) -> LoadState:
