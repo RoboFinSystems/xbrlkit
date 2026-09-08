@@ -150,8 +150,8 @@ behind its document search is built from `xbrlkit.text`.
 [Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark —
 one filing handed to the same language model in every representation — built
 its 26-filing corpus of 2024–2025 10-Ks and 10-Qs with this package. Each
-projection is a rung of the ladder, so the
-[v0.1 results](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/v0.1-sonnet-5/README.md)
+projection is a rung of the ladder, so its
+[published results](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/README.md)
 are also a measurement of what a model can do with each of these outputs. That
 corpus is this package's test bench too: the text sections were checked against
 the filing's own text-block facts on all 26 filings, the property graph row for
