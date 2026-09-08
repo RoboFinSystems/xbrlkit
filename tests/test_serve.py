@@ -849,16 +849,24 @@ def test_model_export_reloads_without_arelle(
     bad.write_text('{"hello": "world"}')
     with pytest.raises(SourceError, match="not a JSON file xbrlkit recognises"):
       session.load(str(bad))
+    # A serialization xbrlkit recognises but cannot read is named as itself,
+    # not as a broken model: an empty Tavi is a Tavi.
     tavi = tmp_path / "x.tavi.json"
     tavi.write_text(
       '{"documentInfo": {"documentType": "https://xbrl.org/PWD/2026-09-01/compiled"}}'
     )
-    with pytest.raises(SourceError, match="Tavi compiled model"):
+    with pytest.raises(SourceError, match="as tavi"):
       session.load(str(tavi))
     holon = tmp_path / "x.holon.jsonld"
     holon.write_text('{"@context": {}, "@graph": []}')
-    with pytest.raises(SourceError, match="holon"):
+    with pytest.raises(SourceError, match="as holon"):
       session.load(str(holon))
+    oim = tmp_path / "x.oim.json"
+    oim.write_text(
+      '{"documentInfo": {"documentType": "https://xbrl.org/2021/xbrl-json"}}'
+    )
+    with pytest.raises(SourceError, match="xBRL-JSON"):
+      session.load(str(oim))
     # An HTML document with no XBRL is not an error: most of EDGAR is one.
     notxbrl = tmp_path / "page.htm"
     notxbrl.write_text("<html><body>not a filing</body></html>")

@@ -46,7 +46,10 @@ class FilingMeta(BaseModel):
   # Arelle loaded (the inline primary document, or the classic instance).
   report_date: date | None = None
   acceptance_datetime: str | None = None
-  is_inline_xbrl: bool = True
+  # ``None`` when the source cannot say: a model imported from a Tavi
+  # document or a holon describes a report, and neither records whether the
+  # filing behind it was inline XBRL.
+  is_inline_xbrl: bool | None = True
   primary_document: str | None = None
   # The primary document's EDGAR URL. The property-graph projection scopes
   # report-level ids (the report, its facts, its dimensions) on it, exactly as

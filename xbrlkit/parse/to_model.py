@@ -36,14 +36,11 @@ from xbrlkit.model import (
   XbrlFact,
   XbrlModel,
 )
-from xbrlkit.parse.ids import fact_id, period_id, unit_id
+from xbrlkit.parse.ids import fact_id, unit_id
+from xbrlkit.periods import duration_period, forever_period, instant_period
 
 if TYPE_CHECKING:
   from arelle.ModelXbrl import ModelXbrl
-
-# Content-URI stem for period ids (matches the adapter's ISO 8601 stem so the
-# derived period ids are stable/portable).
-ISO_8601_URI = "http://www.w3.org/2001/XMLSchema#dateTime"
 
 # Extended-link roles that carry no statement/disclosure network — the label
 # and reference linkbases (standard link role) plus the enumeration-list roles.
@@ -357,41 +354,13 @@ def _make_period(context: Any) -> Period | None:
   """
   if context.isInstantPeriod:
     end = _to_date(context.instantDatetime - timedelta(1))
-    if end is None:
-      return None
-    year, quarter, key = _instant_calendar(end)
-    return Period(
-      id=period_id(f"{ISO_8601_URI}#{end.isoformat()}"),
-      period_type="instant",
-      start=None,
-      end=end,
-      calendar_year=year,
-      calendar_quarter=quarter,
-      calendar_period_key=key,
-    )
+    return instant_period(end) if end else None
   if context.isStartEndPeriod:
     start = _to_date(context.startDatetime)
     end = _to_date(context.endDatetime - timedelta(1))
-    if start is None or end is None:
-      return None
-    dtype, year, quarter, key = _duration_calendar(start, end)
-    return Period(
-      id=period_id(f"{ISO_8601_URI}#{start.isoformat()}/{end.isoformat()}"),
-      period_type="duration",
-      start=start,
-      end=end,
-      duration_type=dtype,
-      calendar_year=year,
-      calendar_quarter=quarter,
-      calendar_period_key=key,
-    )
+    return duration_period(start, end) if start and end else None
   if context.isForeverPeriod:
-    return Period(
-      id=period_id(f"{ISO_8601_URI}#Forever"),
-      period_type="forever",
-      start=None,
-      end=None,
-    )
+    return forever_period()
   return None
 
 
@@ -609,52 +578,6 @@ def _normalize_cik(raw: Any) -> str:
 def _period_type(value: Any) -> str | None:
   """Guard an Arelle period type to the model's allowed literals."""
   return value if value in ("instant", "duration", "forever") else None
-
-
-def _quarter_of_month(month: int) -> str:
-  """Calendar quarter (Q1-Q4) for a month — calendar, not fiscal."""
-  if month <= 3:
-    return "Q1"
-  if month <= 6:
-    return "Q2"
-  if month <= 9:
-    return "Q3"
-  return "Q4"
-
-
-def _instant_calendar(end: date) -> tuple[int, str, str]:
-  """Calendar enrichment for an instant period: (year, quarter, key)."""
-  return end.year, _quarter_of_month(end.month), end.isoformat()
-
-
-def _duration_calendar(start: date, end: date) -> tuple[str, int, str | None, str]:
-  """Calendar enrichment for a duration: (duration_type, year, quarter, key).
-
-  Mirrors the SEC adapter's ``make_period`` day-count buckets (``end`` is the
-  inclusive reported end, so the span is ``(end - start).days + 1``) so the
-  values match the graph: quarterly ≈ 13 wk, semi_annual ≈ 6 mo, nine_months ≈
-  9 mo, annual ≈ 52/53 wk, else ``other``. ``calendar_period_key`` is a compact
-  label — ``2026`` (annual), ``2026Q1`` (else a quarter), or ``start/end``.
-  """
-  days = (end - start).days + 1
-  year = end.year
-  if 80 <= days <= 100:
-    dtype, quarter = "quarterly", _quarter_of_month(end.month)
-  elif 170 <= days <= 190:
-    dtype, quarter = "semi_annual", ("H1" if end.month in (4, 5, 6, 7) else "H2")
-  elif 260 <= days <= 280:
-    dtype, quarter = "nine_months", "M9"
-  elif 350 <= days <= 380:
-    dtype, quarter = "annual", "FY"
-  else:
-    dtype, quarter = "other", None
-  if dtype == "annual":
-    key = str(year)
-  elif quarter is not None:
-    key = f"{year}{quarter}"
-  else:
-    key = f"{start.isoformat()}/{end.isoformat()}"
-  return dtype, year, quarter, key
 
 
 def _balance(value: Any) -> str | None:

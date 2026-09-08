@@ -206,9 +206,11 @@ def test_normalize_cik_passes_non_numeric():
 
 
 def test_calendar_enrichment():
-  from xbrlkit.parse.to_model import (
-    _duration_calendar,
-    _instant_calendar,
+  from xbrlkit.periods import (
+    duration_calendar as _duration_calendar,
+  )
+  from xbrlkit.periods import (
+    instant_calendar as _instant_calendar,
   )
 
   assert _instant_calendar(date(2026, 1, 25)) == (2026, "Q1", "2026-01-25")

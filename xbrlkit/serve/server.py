@@ -57,11 +57,14 @@ SC 13D/G. Read as fields and record tables through `records`, and as text.
 
 START
 - list_filings says what is loaded. Nothing? load_filing takes a local path \
-(an inline .htm, an instance .xml, a filing directory or zip, or a model.json \
-written by export_filing), a URL, an EDGAR `cik:accession`, or a ticker \
-(`NVDA`, `NVDA 10-Q`). Outside the SEC it takes `lei:<LEI>` for a filer's \
-latest filing on filings.xbrl.org, or that index's own filing id — ESEF and \
-the national regimes, identified by LEI rather than by ticker or CIK. \
+(an inline .htm, an instance .xml, a filing directory or zip), a URL, an \
+EDGAR `cik:accession`, or a ticker (`NVDA`, `NVDA 10-Q`). Outside the SEC it \
+takes `lei:<LEI>` for a filer's latest filing on filings.xbrl.org, or that \
+index's own filing id — ESEF and the national regimes, identified by LEI \
+rather than by ticker or CIK. XBRL is not the only source: a Tavi compiled \
+model (`.tavi.json`), a holon (`.holon.jsonld`) or a model.json written by \
+export_filing loads at once and answers everything below — so a report that \
+was never an SEC filing, a ledger's own output included, uses the same tools. \
 unload_filing drops one.
 - describe_filing FIRST for a filing you have not looked at: the entity, the \
 periods with the `key` the other tools use, the networks by role, the axes \
@@ -190,7 +193,8 @@ def build_server(
     description=(
       "Load a filing into the server and return its description. `source` is "
       "a local path (an inline XBRL .htm, an XBRL instance .xml, a filing "
-      "directory, a .zip package, or a model.json written by export_filing), "
+      "directory, a .zip package, or a JSON report: a Tavi compiled model, a "
+      "holon, or a model.json written by export_filing), "
       "an http(s) URL Arelle can load, an EDGAR `cik:accession` (e.g. "
       "`1045810:0001045810-26-000021`), a ticker with an optional form "
       "(`NVDA`, `NVDA 10-Q`) for the latest filing of that form, or — outside "
@@ -198,7 +202,8 @@ def build_server(
       "filings.xbrl.org, or one of that index's filing ids (e.g. "
       "`213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0`). Any XBRL "
       "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. Takes seconds to a minute; "
-      "the taxonomy cache makes repeat loads fast, and a model.json loads at once."
+      "the taxonomy cache makes repeat loads fast, and a JSON report loads at "
+      "once, with no Arelle and no taxonomy fetch."
     ),
     structured_output=False,
   )
