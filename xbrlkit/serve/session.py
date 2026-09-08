@@ -573,6 +573,7 @@ class FilingSession:
           cache_dir=self.config.arelle_cache_dir,
           offline=self.config.arelle_offline,
           timeout=self.config.arelle_timeout,
+          packages=_taxonomy_packages(target),
           config=self.config,
         )
       except RuntimeError as exc:
@@ -902,6 +903,40 @@ def _json_kind(head: str) -> str:
 
 
 _INSTANCE_ROOT_RE = re.compile(rb"<(?:[A-Za-z0-9_]+:)?xbrl[\s>]")
+# An inline document declares the inline-XBRL namespace on its root element,
+# whatever prefix it binds it to. Looking for `ix:` *elements* instead misses
+# real reports: an ESEF filing opens with megabytes of stylesheet, and the
+# first tagged fact in one sampled here sits 2.9 MB in.
+_INLINE_NAMESPACES = (
+  b"http://www.xbrl.org/2013/inlineXBRL",
+  b"http://www.xbrl.org/2008/inlineXBRL",
+)
+
+
+def _taxonomy_packages(target: Path | str) -> list[Path]:
+  """The taxonomy package a load target sits inside, if it sits in one.
+
+  A conformant package marks itself with ``META-INF/taxonomyPackage.xml``, and
+  that manifest is what gets registered: Arelle takes the package as a zip or
+  as its manifest, but not as an unpacked directory, and by this point the zip
+  has already been unpacked. Registering it lets the catalog remap the filer's
+  own domain to the schema travelling beside the report.
+  """
+  path = Path(target)
+  if not path.is_file():
+    return []
+  for parent in path.parents:
+    manifest = parent / "META-INF" / "taxonomyPackage.xml"
+    if manifest.is_file():
+      return [manifest]
+  return []
+
+
+def _is_inline(head: bytes) -> bool:
+  """Whether a document's opening bytes declare inline XBRL."""
+  if any(namespace in head for namespace in _INLINE_NAMESPACES):
+    return True
+  return b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head
 
 
 def _find_load_target(package_dir: Path) -> Path:
@@ -909,15 +944,18 @@ def _find_load_target(package_dir: Path) -> Path:
   document (the largest ``.htm`` carrying ``ix:`` markup), else the XBRL
   instance — recognised by its root element, since a package need not
   follow EDGAR's naming (an instance called ``instance.xml`` beside
-  ``report.xsd`` and hyphenated linkbases is a valid package too). A
-  package that wraps itself in one directory is looked into."""
-  entries = sorted(p for p in package_dir.iterdir() if not p.name.startswith("."))
-  if len(entries) == 1 and entries[0].is_dir():
-    return _find_load_target(entries[0])
+  ``report.xsd`` and hyphenated linkbases is a valid package too).
+
+  The whole tree is searched, not just the top level. A conformant XBRL
+  taxonomy package puts nothing at its root: an ESEF report sits under
+  ``reports/`` beside a ``META-INF/`` and the filer's own taxonomy in a
+  directory named for their domain. Looking only at the top level found
+  those packages empty, which is most of Europe.
+  """
   inline: list[tuple[int, Path]] = []
   instances: list[Path] = []
-  for candidate in entries:
-    if not candidate.is_file():
+  for candidate in sorted(package_dir.rglob("*")):
+    if not candidate.is_file() or candidate.name.startswith("."):
       continue
     suffix = candidate.suffix.lower()
     if suffix not in _INLINE_SUFFIXES and suffix not in (".xml", ".xbrl"):
@@ -925,7 +963,7 @@ def _find_load_target(package_dir: Path) -> Path:
     with candidate.open("rb") as fh:
       head = fh.read(200_000)
     if suffix in _INLINE_SUFFIXES:
-      if b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head:
+      if _is_inline(head):
         inline.append((candidate.stat().st_size, candidate))
     elif _INSTANCE_ROOT_RE.search(head[:4000]):
       instances.append(candidate)
@@ -935,7 +973,7 @@ def _find_load_target(package_dir: Path) -> Path:
     return instances[0]
   if len(instances) > 1:
     # Several instances: prefer the one named after a schema, EDGAR-style.
-    for schema in sorted(package_dir.glob("*.xsd")):
+    for schema in sorted(package_dir.rglob("*.xsd")):
       paired = schema.with_suffix(".xml")
       if paired in instances:
         return paired

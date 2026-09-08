@@ -597,3 +597,71 @@ def test_a_plain_text_document_loads_without_arelle(tmp_path: Path) -> None:
     assert "The Company sells widgets." in lf.text
   finally:
     session.close()
+
+
+# -- packages from outside EDGAR ---------------------------------------------------
+
+
+def _esef_package(root: Path) -> Path:
+  """A taxonomy package laid out the way ESEF ships one: nothing at the root,
+  the report under ``reports/``, the filer's taxonomy under their own domain."""
+  (root / "META-INF").mkdir(parents=True)
+  (root / "META-INF" / "taxonomyPackage.xml").write_text(
+    '<taxonomyPackage xmlns="http://xbrl.org/2016/taxonomy-package"/>'
+  )
+  (root / "META-INF" / "catalog.xml").write_text("<catalog/>")
+  (root / "acme.example" / "xbrl").mkdir(parents=True)
+  (root / "acme.example" / "xbrl" / "acme-2024.xsd").write_text("<xs:schema/>")
+  reports = root / "reports"
+  reports.mkdir()
+  report = reports / "acme-2024.xhtml"
+  # Megabytes of stylesheet before the first tagged fact, as a real one has.
+  report.write_text(
+    '<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL">\n<style>'
+    + ("/* padding */ " * 20000)
+    + "</style>\n<ix:nonNumeric name='x'>y</ix:nonNumeric>\n</html>"
+  )
+  return report
+
+
+def test_a_package_is_found_however_deep_the_report_sits(tmp_path: Path) -> None:
+  from xbrlkit.serve.session import _find_load_target
+
+  report = _esef_package(tmp_path / "pkg")
+  # Nothing is at the package root; looking only there found these empty,
+  # which is most of Europe.
+  assert _find_load_target(tmp_path / "pkg") == report
+
+
+def test_inline_is_recognised_by_namespace_not_by_a_tag_near_the_top(
+  tmp_path: Path,
+) -> None:
+  """A real ESEF report opens with megabytes of stylesheet — the first tagged
+  fact in one sampled here sits 2.9 MB in — so a sniff of the opening bytes
+  has to match the namespace declaration on the root element."""
+  from xbrlkit.serve.session import _is_inline
+
+  report = _esef_package(tmp_path / "pkg")
+  head = report.read_bytes()[:200_000]
+  assert b"ix:nonNumeric" not in head  # the fixture reproduces the problem
+  assert _is_inline(head) is True
+  assert _is_inline(b"<html><body>an ordinary page</body></html>") is False
+  # Any prefix, and the older namespace, both count.
+  assert _is_inline(b'<html xmlns:inline="http://www.xbrl.org/2008/inlineXBRL">')
+
+
+def test_the_taxonomy_package_manifest_is_what_gets_registered(
+  tmp_path: Path,
+) -> None:
+  """Arelle takes a package as a zip or as its manifest, but not as an
+  unpacked directory — and by load time the zip is already unpacked."""
+  from xbrlkit.serve.session import _taxonomy_packages
+
+  report = _esef_package(tmp_path / "pkg")
+  assert _taxonomy_packages(report) == [
+    tmp_path / "pkg" / "META-INF" / "taxonomyPackage.xml"
+  ]
+  # A filing that is not in a package registers nothing.
+  loose = tmp_path / "loose.htm"
+  loose.write_text("<html/>")
+  assert _taxonomy_packages(loose) == []

@@ -268,7 +268,12 @@ startup timeout does better with no source on the command line and a
 EDGAR has to fetch (a ticker, a `cik:accession`); a local file needs none.
 
 Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs — and so
-does the rest of EDGAR. Three kinds of filing load, and `describe_filing`'s
+does the rest of EDGAR. A filing from outside the SEC usually ships as a
+**taxonomy package**, because it references the filer's extension taxonomy at
+their own domain: point at the `.zip` or the unpacked directory and the
+package's catalog is registered, so those URLs resolve to the schema travelling
+beside the report. ESEF filings identify their entity by LEI rather than CIK,
+and that is what comes back. Three kinds of filing load, and `describe_filing`'s
 `profile` says which one you have:
 
 | kind | what it is | how it reads |
