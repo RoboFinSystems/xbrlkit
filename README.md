@@ -69,18 +69,28 @@ just install     # dependencies, and .env from the template
 
 ### SEC User-Agent
 
-SEC EDGAR requires a descriptive `User-Agent` on every request, or it throttles
-you (empty responses / HTTP 429). `just install` already created your `.env` —
-set your details there:
+SEC fair access asks for a `User-Agent` identifying you with contact info.
+EDGAR works out of the box under a default that names the project, and the
+first unattributed fetch says so once — SEC rate limits per IP, so the shared
+default costs nobody else their budget. Identifying yourself is a courtesy,
+and one worth extending. `just install` already created your `.env`:
 
 ```bash
 # .env
 SEC_GOV_USER_AGENT="Your Name your@email.com"
 ```
 
-`.env` is loaded automatically by every command. Outside the `just` workflow,
-`export SEC_GOV_USER_AGENT=…` or pass `--user-agent`. Nothing outside EDGAR
+`.env` is loaded automatically by every command **run from a checkout of this
+repo** — the lookup is relative to the installed code, not your working
+directory, so a `uvx` or `pip` install never picks one up. There, use
+`export SEC_GOV_USER_AGENT=…`, `--user-agent`, or an MCP `env` block (see
+[Serve to an MCP client](#serve-to-an-mcp-client)). Nothing outside EDGAR
 needs it — a local file, a JSON report and filings.xbrl.org all load without.
+
+> **Do not put a GitHub URL in it.** EDGAR answers `403` to any `User-Agent`
+> containing `github.com`, whatever else the header says, and the failure
+> looks like a permissions problem rather than a header problem. A name and
+> an email is the shape that works.
 
 ## Usage
 
@@ -116,19 +126,61 @@ model = from_holon_json(holon)          # and back again
 
 ## Serve to an MCP client
 
+Two ways to run it. They differ in which process does the fetching, and so in
+where your SEC identity goes.
+
+**stdio — the client launches the server.** The identity belongs in the
+server's own `env` block:
+
+```json
+{
+  "mcpServers": {
+    "xbrlkit": {
+      "command": "uvx",
+      "args": [
+        "--from", "xbrlkit[mcp]@latest",
+        "xbrlkit", "serve", "--transport", "stdio"
+      ],
+      "env": { "SEC_GOV_USER_AGENT": "Your Name you@example.com" }
+    }
+  }
+}
+```
+
+**HTTP — you start the server, the client only points at a URL.** An `env`
+block in the client config would reach nothing here; set it on the command:
+
 ```bash
 pip install "xbrlkit[mcp]"
-xbrlkit serve
+SEC_GOV_USER_AGENT="Your Name you@example.com" xbrlkit serve
 # → MCP at http://127.0.0.1:8765/mcp
 
+# or without installing anything
+SEC_GOV_USER_AGENT="Your Name you@example.com" \
+  uvx --from "xbrlkit[mcp]@latest" xbrlkit serve
+```
+
+```json
+{
+  "mcpServers": {
+    "xbrlkit": { "type": "http", "url": "http://127.0.0.1:8765/mcp" }
+  }
+}
+```
+
+or, equivalently:
+
+```bash
 claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 ```
 
-Or without installing anything:
+A `.env` file is **not** a channel for either of these. The lookup is relative
+to the installed code rather than your working directory, so it resolves only
+inside a checkout of this repo — a `uvx` or `pip` install never sees one. Use
+the environment, the `env` block, or `--user-agent`.
 
-```bash
-uvx --from "xbrlkit[mcp]@latest" xbrlkit serve
-```
+Both are optional: EDGAR works unattributed under the default, saying so once.
+And filings.xbrl.org, local packages and Tavi/holon JSON need no identity at all.
 
 Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
 `lei:`, a local package, or a holon or Tavi by path or URL — and ask for

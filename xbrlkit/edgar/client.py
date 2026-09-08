@@ -83,7 +83,7 @@ class EdgarClient:
   def __init__(self, config: Config = CONFIG) -> None:
     self.config: Config = config
     self._session: requests.Session = requests.Session()
-    self._session.headers.update(config.headers)
+    self._session.headers.update(config.sec_headers)
     self._limiter: RateLimiter = RateLimiter(config.rate_limit_per_sec)
     self._ticker_map: dict[str, str] | None = None
 

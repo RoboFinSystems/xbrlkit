@@ -82,7 +82,7 @@ class EftsClient:
   def __init__(self, config: Config = CONFIG, per_sec: float | None = None) -> None:
     self.config: Config = config
     self._session: requests.Session = requests.Session()
-    self._session.headers.update(config.headers)
+    self._session.headers.update(config.sec_headers)
     self._limiter: RateLimiter = RateLimiter(
       config.rate_limit_per_sec if per_sec is None else per_sec
     )
