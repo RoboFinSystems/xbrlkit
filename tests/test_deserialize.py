@@ -43,7 +43,10 @@ from xbrlkit.model import (
 )
 from xbrlkit.parse.ids import unit_id
 from xbrlkit.periods import duration_period, instant_period, period_from_interval
+from xbrlkit.deserialize.holon import _scheme_for
+from xbrlkit.namespaces import ENTITY_SCHEME
 from xbrlkit.serialize import to_holon, to_tavi
+from xbrlkit.serialize._values import CIK_SCHEME
 from xbrlkit.serve import tools
 from xbrlkit.serve.session import FilingSession, SourceError
 
@@ -588,6 +591,43 @@ def test_a_holon_tells_a_nil_fact_from_an_empty_one(model: XbrlModel) -> None:
   assert len(nil) == 1
   assert nil[0].concept_qname == "us-gaap:Cash"
   assert nil[0].value_str is None
+
+
+def test_a_report_that_is_not_an_sec_filing_keeps_its_identity(
+  model: XbrlModel,
+) -> None:
+  """A ledger's own report identifies its entity under its own scheme.
+
+  Both importers used to lose half of that: Tavi looked for the entity's label
+  under a `cik:` name it had reconstructed rather than the SQName the document
+  wrote, and the holon called any entity an SEC CIK because that is the model's
+  default. Found on a real RoboLedger report, whose two files disagreed about
+  the same company.
+  """
+  model.entity = EntityIdentity(
+    cik="entity_kg19ed34f81c37ba3f31fa",
+    scheme=ENTITY_SCHEME,
+    name="Harbinger Consultants LLC",
+  )
+  for got in (from_tavi_json(to_tavi(model)), from_holon_json(to_holon(model))):
+    assert got.entity.name == "Harbinger Consultants LLC"
+    assert got.entity.cik == "entity_kg19ed34f81c37ba3f31fa"
+    assert got.entity.scheme == ENTITY_SCHEME
+
+
+def test_a_holon_with_no_scheme_does_not_invent_an_sec_one(model: XbrlModel) -> None:
+  """A holon written from a `StatementBundle` carries no scheme at all — the
+  bundle has no field for one — so the identifier has to answer for it."""
+  model.entity = EntityIdentity(cik="entity_kg1", scheme=ENTITY_SCHEME, name="Acme")
+  document = json.loads(to_holon(model))
+  for graph in document["@graph"]:
+    for node in graph["@graph"]:
+      if "Entity" in str(node.get("@type")):
+        node.pop("scheme", None)
+  got = from_holon_json(json.dumps(document))
+  assert got.entity.scheme == ENTITY_SCHEME
+  # A ten-digit identifier still reads as what it is.
+  assert _scheme_for("0001234567") == CIK_SCHEME
 
 
 # -- the two agree ---------------------------------------------------------------

@@ -55,7 +55,8 @@ from ..model import (
   XbrlFact,
   XbrlModel,
 )
-from ..namespaces import CONCEPT_BASE, HOLON_VOCAB
+from ..namespaces import CONCEPT_BASE, ENTITY_SCHEME, HOLON_VOCAB
+from ..serialize._values import CIK_SCHEME
 from ..serialize.tavi import LABEL_ROLE_TYPES
 from ..parse.ids import unit_id
 from ..periods import duration_period, forever_period, instant_period
@@ -306,15 +307,29 @@ def _reference(value: Any) -> str:
 
 def _entity(nodes: Sequence[Mapping[str, Any]]) -> EntityIdentity:
   node = _mapping(nodes[0]) if nodes else {}
+  identifier = _text(node.get("internalId")) or ""
   return EntityIdentity(
-    cik=_text(node.get("internalId")) or "",
-    scheme=_text(node.get("scheme")) or "http://www.sec.gov/CIK",
+    cik=identifier,
+    scheme=_text(node.get("scheme")) or _scheme_for(identifier),
     name=_text(node.get("prefLabel")),
     legal_name=_text(node.get("legalName")),
     ein=_text(node.get("ein")),
     ticker=_text(node.get("ticker")),
     sic=_text(node.get("sic")),
   )
+
+
+def _scheme_for(identifier: str) -> str:
+  """The scheme an entity is identified under when the holon does not say.
+
+  A holon written from a `StatementBundle` carries no scheme — the bundle has
+  no field for one — and calling a ledger's entity an SEC CIK because that is
+  the model's default is a false statement about the report. A ten-digit
+  identifier is a CIK; anything else is read under the neutral entity scheme,
+  which is the same convention the OIM-family projections write it under.
+  """
+  digits = identifier.isdigit() and len(identifier) == 10
+  return CIK_SCHEME if digits else ENTITY_SCHEME
 
 
 def _filing(
