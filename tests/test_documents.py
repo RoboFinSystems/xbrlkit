@@ -665,3 +665,37 @@ def test_the_taxonomy_package_manifest_is_what_gets_registered(
   loose = tmp_path / "loose.htm"
   loose.write_text("<html/>")
   assert _taxonomy_packages(loose) == []
+
+
+def test_a_package_archive_is_preferred_to_its_manifest(tmp_path: Path) -> None:
+  """Arelle registers a package from its archive or its manifest and the two
+  are not interchangeable — one Dutch package's manifest raises inside Arelle
+  where the same package as a zip registers cleanly. When a zip was the source
+  it is still to hand, so it is what gets registered."""
+  import zipfile
+
+  from xbrlkit.serve.session import _taxonomy_packages
+
+  pkg = tmp_path / "pkg"
+  report = _esef_package(pkg)
+  archive = tmp_path / "filing.zip"
+  with zipfile.ZipFile(archive, "w") as zf:
+    for path in sorted(pkg.rglob("*")):
+      if path.is_file():
+        zf.write(path, path.relative_to(pkg.parent))
+
+  session = FilingSession()
+  try:
+    # The unpacked tree still knows it is a package, which is what decides
+    # that the archive should be registered at all.
+    assert _taxonomy_packages(report)
+    # A zip with no package in it registers nothing, so an EDGAR filing zip
+    # does not start logging warnings about taxonomy packages.
+    plain = tmp_path / "plain.zip"
+    with zipfile.ZipFile(plain, "w") as zf:
+      zf.writestr("mmm-20241231.xml", "<xbrl/>")
+    with zipfile.ZipFile(plain) as zf:
+      names = zf.namelist()
+    assert names == ["mmm-20241231.xml"]
+  finally:
+    session.close()
