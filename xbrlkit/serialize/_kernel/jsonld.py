@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -171,9 +172,17 @@ def build_graph(bundle: StatementBundle) -> Graph:
   return g
 
 
-def _build_context() -> dict[str, Any]:
-  """The bundle @context = canonical vocabulary + bundle-header terms."""
-  return {**CANONICAL_CONTEXT, **_BUNDLE_CONTEXT_EXTRA}
+def _build_context(namespaces: Mapping[str, str] | None = None) -> dict[str, Any]:
+  """The bundle @context = canonical vocabulary + bundle-header terms.
+
+  ``namespaces`` binds the prefixes *this document* uses to the namespaces the
+  filing itself declared, and it wins over the canonical table: a filing is
+  authoritative about what its own prefixes mean, and the canonical entries for
+  the external taxonomies are year-normalized stems that no filing actually
+  uses. The RoboSystems taxonomies (``rs-gaap`` and friends) are genuinely
+  year-stable and keep theirs, because no filing declares them.
+  """
+  return {**CANONICAL_CONTEXT, **_BUNDLE_CONTEXT_EXTRA, **(namespaces or {})}
 
 
 # ── URI minting ────────────────────────────────────────────────────────────
@@ -193,22 +202,35 @@ def _scoped(root: URIRef, segment: str, ident: str) -> URIRef:
   return URIRef(f"{root!s}/{segment}/{ident}")
 
 
-def _concept_uri(qname: str) -> URIRef:
+def _concept_uri(qname: str, namespaces: Mapping[str, str] | None = None) -> URIRef:
+  """The IRI naming a concept.
+
+  ``namespaces`` is the document's own prefix map when the caller has one — the
+  namespaces the filing declared — and it is consulted first. Without it the
+  canonical table answers, and a prefix it does not know falls back to a
+  xbrlkit-minted IRI carrying the QName whole (``…/concept/ba:Revenue``), which
+  is honest about being ours rather than inventing an address inside somebody
+  else's namespace.
+  """
   if ":" not in qname:
     return URIRef(f"{CONCEPT_BASE}{qname}")
   prefix, local = qname.split(":", 1)
+  if namespaces is not None:
+    declared = namespaces.get(prefix)
+    if declared:
+      return URIRef(declared + local)
   ns = _PREFIX_NS.get(prefix)
   if ns is None:
     return URIRef(f"{CONCEPT_BASE}{qname}")
   return URIRef(str(ns) + local)
 
 
-def _measure_uri(measure: str) -> URIRef:
+def _measure_uri(measure: str, namespaces: Mapping[str, str] | None = None) -> URIRef:
   if measure.startswith("iso4217:"):
     return URIRef(str(ISO4217) + measure[len("iso4217:") :])
   if ":" not in measure:
     return URIRef(f"{MEASURE_BASE}{measure}")
-  return _concept_uri(measure)
+  return _concept_uri(measure, namespaces)
 
 
 # ── Root header ────────────────────────────────────────────────────────────

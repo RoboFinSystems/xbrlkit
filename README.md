@@ -4,193 +4,70 @@
 
 Work with XBRL filings above [Arelle](https://arelle.org): fetch a filing, parse
 it **once** into a neutral typed model, and project that model into whichever
-portable representation you need.
+portable representation you need — or hand it one of those representations and
+get the model back.
 
 ```
-EDGAR ──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-   │                       ▲     ├──▶ Tavi            (compiled model)
-   │                       │     ├──▶ xBRL-JSON       (OIM)
-   │            Tavi ──────┤     └──▶ property graph  (parquet, .lbug)
-   │           holon ──────┘
-   └──▶ primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
+  EDGAR ───────────┐
+                   ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
+  filings.xbrl.org ┘                 ▲         ├──▶ Tavi            (compiled model)
+                                     │         ├──▶ xBRL-JSON       (OIM)
+                   holon, Tavi ──────┘         └──▶ property graph  (parquet, .lbug)
+
+                   primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 ```
 
-Four projections hang off the model, and two of them read **back into** it: hand
-`xbrlkit` a `tavi.json` or a `holon.jsonld` and it becomes the same `XbrlModel`,
-with no Arelle and no XBRL, so a report that was never an SEC filing gets the
-whole toolset (see [Importers](#importers)). A further surface, the filing's
-text, reads the primary HTML document directly and needs neither Arelle nor the
-network. And the model itself can be served: `xbrlkit serve` holds a filing in
-memory and exposes it to an MCP client through shaped tools (see
-[Serve](#serve-to-an-mcp-client)).
+Two sources in — the SEC, and everyone else through
+[filings.xbrl.org](https://filings.xbrl.org) — four projections out, and two of
+those read back, so a report that was never an SEC filing gets the same
+treatment. A fifth surface, the filing's text, reads the primary HTML directly
+and needs neither Arelle nor the network. And the model itself can be served:
+`xbrlkit serve` holds a filing in memory and exposes it to an MCP client
+through shaped tools.
 
-Arelle stays the parser — nobody should reimplement DTS resolution. What it does
-not give you is anything ergonomic to *hold*: `ModelXbrl` is a large mutable
-object graph tied to a controller you have to close. `XbrlModel` is the answer to
-that — stateless, single-filing, lossless, and the waist every projection hangs
-off.
+Arelle stays the parser — nobody should reimplement DTS resolution. What it
+does not give you is anything ergonomic to *hold*: `ModelXbrl` is a large
+mutable object graph tied to a controller you have to close. `XbrlModel` is the
+answer to that — stateless, single-filing, lossless, and the waist every
+projection hangs off.
 
 **The one architectural rule:** everything goes through `XbrlModel`. A feature
-that reaches into Arelle's `ModelXbrl` directly is bypassing the waist, and that
-is the change that turns a kit into a junk drawer.
+that reaches into Arelle's `ModelXbrl` directly is bypassing the waist, and
+that is the change that turns a kit into a junk drawer.
 
-## Projections
+## What's in the box
 
-| Target | Status | Notes |
+| | | |
 | --- | --- | --- |
-| **holon** (`.holon.jsonld`) | shipped | RDF/JSON-LD, renders in the [Holon Viewer](https://holon.robosystems.ai/) |
-| **Tavi** (`.tavi.json`) | shipped | [Project Tavi](https://www.xbrl.org/Specification/tavi/PWD-2026-09-01/tavi-PWD-2026-09-01.html) compiled model, PWD-2026-09-01 |
-| **OIM** (`.oim.json`) | shipped | xBRL-JSON, checked fact-for-fact against Arelle's own writer |
-| **property graph** (`.lbug`, parquet) | shipped | the [RoboSystems](https://robosystems.ai) `sec` graph's tables, ids and DDL, as one LadybugDB file per filing; row-identical to the platform's own processor on a 26-filing corpus |
+| [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
+| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, Tavi (+ its gap report), xBRL-JSON, the property graph |
+| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a Tavi read back into the model, no Arelle |
+| [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
+| [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
+| [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
+| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | fourteen shaped tools over a filing in memory |
 
-The OIM projection is the one with a **released reference implementation** to
-check against: Arelle's `saveLoadableOIM` writes the same document from the
-same filing. A second writer is redundant as a feature — its value is that
-every difference is a fidelity bug in the parse or the model, and those same
-bugs are otherwise silent in the holon output, which has nothing to check it.
-Current parity is every fact on 3M FY2024 (3,150) and Boeing FY2024 (2,688),
-and all but one on Microsoft FY2024 (1,855 of 1,856); footnotes are the one
-construct the model does not carry.
-
-Tavi is a **public working draft** and its name is explicitly a working title,
-so treat that projection as tracking a moving target. It has been diffed,
-object class by object class, against the compiled model Arelle's unreleased
-`XbrlModel` plugin ([Arelle PR #2418](https://github.com/Arelle/Arelle/pull/2418))
-writes for 3M FY2024; the two agree on every fact outside that plugin's own
-defects and on every cube. Where the draft left a choice open, the choice and
-its reason are recorded in `SPEC_AMBIGUITIES` and carried in the
-`.tavi.gaps.json` sidecar `--format tavi` writes alongside the document — the
-sidecar also records what the filing carries that the model has nowhere to put,
-and that file is the point of the projection, not a by-product of it.
-
-## Importers
-
-The arrows run both ways. `xbrlkit.deserialize` reads a **Tavi compiled model**
-or a **holon** back into `XbrlModel` — the inverse of the two emitters — after
-which every tool in the package works over it unchanged.
-
-```python
-from xbrlkit.deserialize import from_tavi_json, from_holon_json
-
-model = from_tavi_json(Path("boeing.tavi.json").read_text())
-model = from_holon_json(Path("boeing.holon.jsonld").read_text())
-```
-
-Arelle is not involved and cannot be: it does not load either format. That is
-the point — a report that never was an SEC filing (a ledger's own output, a
-converted filing someone handed you) becomes queryable with the same tools, and
-`xbrlkit serve` loads either file directly.
-
-Both importers keep one rule: **read what the serialization carries and nothing
-else.** Where a projection dropped something the field stays empty and the gap
-is reported (`from_tavi_report` / `from_holon_report` return it beside the
-model) rather than filled with a plausible value, because a filled-in field is
-indistinguishable from a read one. The single exception is the derived period
-enrichment — the duration bucket and calendar placement — which is recomputed
-from the dates by the module the parse itself uses, which is what lets an
-imported period match a parsed one id for id.
-
-What each format loses, measured by round trip:
-
-| | Tavi | holon |
-| --- | --- | --- |
-| loses | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | every label role but the preferred one — recovered from the presentation associations, which carry the label they resolved to — plus `nillable`, the declared item type (it keeps a value *domain*), the namespace year, and fact language |
-| keeps | every label role, the datatype detail, the filing's namespaces | the definition networks, the hypercube/axis/member kinds, the whole `rs:Report` node, the filing's own measure tokens |
-| facts | one per reported fact | one per **distinct** fact: a holon addresses a fact by its content-derived id, so a filing's duplicates arrive as one |
-
-The gate is that the two agree where it counts, and they do: across the
-26-filing corpus of 2024-2025 10-Ks and 10-Qs the [Filing
-Ladder](https://github.com/HarbingerFinLab/filing-ladder) is built on, every
-filing read from its Tavi and from its holon renders **all 2,915 presentation
-networks identically** — same rows, same order, same labels — with the same
-calculation networks and the same `fact_grid` answers on all 26.
-
-## Property graph
-
-`xbrlkit build --format lpg` (with the `lpg` extra: `pip install "xbrlkit[lpg]"`)
-writes the filing as a single-file [LadybugDB](https://github.com/LadybugDB/ladybug)
-database with the tables the RoboSystems `sec` graph is built from — the same
-node labels, relationship types, columns and ids, declared once in
-`xbrlkit.schema` — so Cypher written against the shared graph runs on the file
-and a fact in either is the same row. What the platform adds after projection
-is not in the file: text blocks stay inline in `Fact.value`, and the enrichment
-columns and tables (`canonical_concept`, `canonical_type`, `FactSet`,
-`Classification`) are empty. The projection is checked row for row against the
-platform's own processor on the Filing Ladder's 26-filing corpus; the two
-explained differences are association ids (random on the platform, derived
-from the arc here) and exact duplicate arcs inside Arelle's aggregate
-`XBRL-dimensions` network, which the derived ids collapse.
-
-```python
-from xbrlkit.serialize import to_graph_tables, write_parquet, build_lbug
-
-tables = to_graph_tables(model)          # node and relationship rows, schema order
-write_parquet(tables, Path("out/mmm"))   # nodes/*.parquet, relationships/*.parquet
-build_lbug(tables, Path("out/mmm.lbug")) # CREATE TABLE … + COPY FROM, one file
-```
-
-A host that loads filings through its own Arelle controller — the platform's SEC
-adapter does, for its cache policy — calls `xbrlkit.parse.register_sec_transforms()`
-to get the SEC inline-XBRL transforms this package vendors, instead of carrying the
-EDGAR plugin itself.
-
-## Text
-
-`xbrlkit.text` reads the filing's primary HTML document — no Arelle, no
-network — and returns its text as sections:
-
-| Parser | Sections | Notes |
-| --- | --- | --- |
-| `iXBRLParser` | every inline-XBRL text block (notes, policies, tables), with the XBRL element names it contains | `ix:continuation` chains resolved; nested continuations and nested text blocks included; a concept tagged more than once is one section holding every occurrence; `ix:exclude` page furniture dropped |
-| `NarrativeExtractor` | the 10-K / 10-Q Items — Business, Risk Factors, Cybersecurity, Properties, MD&A, Market Risk | table-of-contents rows and cross-references rejected; a 10-Q's Part I and Part II Items kept apart |
-
-Both render HTML tables as markdown pipe tables and split a long section into
-balanced parts at paragraph boundaries (`part`, `part_count`, and a `label`
-like `"MD&A (2/6)"`) instead of truncating it. Measured on a 26-filing corpus
-of 2024–2025 10-Ks and 10-Qs: every text block's full text is carried, where a
-map of outermost continuations alone lost 15–29% of the note text on nine of
-the filings, and every target Item starts at its body heading.
-
-```python
-from xbrlkit.text import iXBRLParser, NarrativeExtractor
-
-html = open("mmm-20241231.htm").read()
-for s in iXBRLParser().parse(html):
-  print(s.section_id, s.label, s.word_count, s.xbrl_elements[:3])
-for s in NarrativeExtractor().extract(html, form_type="10-K"):
-  print(s.section_id, s.label, s.word_count)
-```
+`model.py` is the waist itself, `schema/` declares the property graph's tables,
+and `query.py` runs SPARQL over a built holon.
 
 ## Install
-
-### As a package
 
 ```bash
 pip install xbrlkit
 ```
 
-Exposes the `xbrlkit` CLI (`xbrlkit build …`, `xbrlkit fetch …`, `xbrlkit query …`,
-`xbrlkit cache …`, `xbrlkit serve …`)
-and the library — use this to consume it from another project. Set your SEC
-User-Agent via the environment (see [SEC User-Agent](#sec-user-agent)).
+Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `cache`, `serve`) and the
+library. Two optional extras: `xbrlkit[lpg]` for the property-graph projection
+(pyarrow, LadybugDB) and `xbrlkit[mcp]` for the MCP server.
 
-Two optional extras: `xbrlkit[lpg]` for the property-graph projection (pyarrow,
-LadybugDB) and `xbrlkit[mcp]` for the local MCP server.
-
-### From source (development)
+From a source checkout:
 
 ```bash
-# Install the toolchain
 brew install uv just
-
-# Install dependencies and provision .env from the template
-just install
+just install     # dependencies, and .env from the template
 ```
 
-`just install` creates `.env` from `.env.example` on first run — then set your
-SEC User-Agent in it.
-
-## SEC User-Agent
+### SEC User-Agent
 
 SEC EDGAR requires a descriptive `User-Agent` on every request, or it throttles
 you (empty responses / HTTP 429). `just install` already created your `.env` —
@@ -202,7 +79,8 @@ SEC_GOV_USER_AGENT="Your Name your@email.com"
 ```
 
 `.env` is loaded automatically by every command. Outside the `just` workflow,
-`export SEC_GOV_USER_AGENT="Your Name your@email.com"` or pass `--user-agent`.
+`export SEC_GOV_USER_AGENT=…` or pass `--user-agent`. Nothing outside EDGAR
+needs it — a local file, a JSON report and filings.xbrl.org all load without.
 
 ## Usage
 
@@ -213,8 +91,6 @@ xbrlkit build --cik 320193 --accno 0000320193-23-000106
 # The other projections: Tavi (plus its .tavi.gaps.json sidecar), xBRL-JSON,
 # the property graph (needs the lpg extra), or every one of them
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
-xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format oim
-xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format lpg
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
 
 # Fetch the latest filing for a ticker (-> ./output/); --form and --n filter
@@ -224,283 +100,79 @@ xbrlkit fetch --ticker NVDA
 xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:Assets
 ```
 
-From a source checkout, `just` wraps the same CLI as a shorthand:
-`just build 320193 0000320193-23-000106` and `just fetch NVDA`.
+From a source checkout, `just` wraps the same CLI: `just build 320193
+0000320193-23-000106` and `just fetch NVDA`.
+
+```python
+from xbrlkit.parse import load_model, to_xbrl_model
+from xbrlkit.serialize import to_holon, to_tavi_report
+from xbrlkit.deserialize import from_holon_json
+
+model = to_xbrl_model(load_model("mmm-20241231.htm"), filing_meta)
+holon = to_holon(model)
+tavi, gaps = to_tavi_report(model)
+model = from_holon_json(holon)          # and back again
+```
 
 ## Serve to an MCP client
-
-`xbrlkit serve` loads filings into memory and serves them to any MCP client over
-Streamable HTTP — Claude Code, Claude Desktop, Cursor, VS Code, or a script with
-the MCP SDK. There is no graph and no index behind the tools: every answer is read
-from the parsed filing.
 
 ```bash
 pip install "xbrlkit[mcp]"
 xbrlkit serve
 # → MCP at http://127.0.0.1:8765/mcp
-```
 
-Point the client at the URL — no key, no sign-in — and load filings from the
-chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
-*"load `~/Downloads/mmm-20241231.htm`"*. The `load_filing` tool takes a ticker
-with an optional form (`NVDA`, `NVDA 10-Q`), an EDGAR `cik:accession`, a URL, an
-inline `.htm`, an instance `.xml`, a filing directory or `.zip`, or a JSON
-report — a `.tavi.json`, a `.holon.jsonld`, or a `model.json` written by
-`export_filing`. Several filings can be loaded at once, each under an id;
-`unload_filing` drops one.
-
-Outside the SEC it also takes `lei:<LEI>` — a filer's latest filing on
-[filings.xbrl.org](https://filings.xbrl.org), XBRL International's open index of
-ESEF and national-regime filings — or one of that index's own filing ids
-(`213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0`). No key. These filings identify
-their entity by **LEI** rather than by ticker or CIK, and that is what comes
-back.
-
-```bash
 claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 ```
 
-Filings named on the command line are loaded before the server starts:
+Or without installing anything:
 
 ```bash
-xbrlkit serve NVDA                                   # latest 10-K for a ticker
-xbrlkit serve "NVDA 10-Q" MMM                        # two filings, by id afterwards
-xbrlkit serve ./0000066740-25-000006/                # a filing directory, or a .zip
+uvx --from "xbrlkit[mcp]@latest" xbrlkit serve NVDA
 ```
 
-Two switches shape what the tools answer. `--pure` is a faithful reading of the
-filing and nothing more: no statement kinds (networks are listed by the filer's
-own names), no detected Items, no period buckets, the Filing Ladder's read cap —
-the profile a benchmark rung runs under. `--with-document` / `--without-document`
-choose whether the text tools read the whole primary document or only the
-tagged text blocks; the product profile defaults to the document, `--pure` to
-the blocks so the document can be held out as a control. `--as model` names the
-representation served; it is the only one in this release, and `tavi`, `holon`,
-`lpg` and `files` — the tool sets of the ladder's other rungs — are the next
-backends behind the same flag.
-
-```bash
-xbrlkit serve --pure ./0000066740-25-000006/         # the form alone
-xbrlkit serve --pure --with-document ./0000066740-25-000006/   # + the document
-```
-
-### Without installing — `uvx`
-
-`uvx` runs the server straight from PyPI in its own environment, nothing added to
-yours. Two things in the `--from` matter: the `[mcp]` extra — `uvx xbrlkit` alone
-resolves the package without it, and `serve` stops with a message naming it — and
-`@latest`, without which `uvx` keeps reusing the environment it built the first
-time and never sees a new release.
-
-```bash
-uvx --from "xbrlkit[mcp]@latest" xbrlkit serve NVDA   # pin instead: --from "xbrlkit[mcp]==0.5.0"
-```
-
-Clients that launch a server themselves — Claude Desktop, Claude Code's stdio
-entries, Cursor — run the same command over stdio:
-
-```json
-{
-  "mcpServers": {
-    "xbrlkit": {
-      "command": "uvx",
-      "args": ["--from", "xbrlkit[mcp]@latest", "xbrlkit", "serve", "--transport", "stdio", "NVDA"],
-      "env": { "SEC_GOV_USER_AGENT": "Your Name your@email.example" }
-    }
-  }
-}
-```
-
-```bash
-claude mcp add xbrlkit -e SEC_GOV_USER_AGENT="Your Name your@email.example" \
-  -- uvx --from "xbrlkit[mcp]@latest" xbrlkit serve --transport stdio NVDA
-```
-
-The filings named on the command line load before the server answers its first
-request — a cold taxonomy cache can take a minute — so a client with a short
-startup timeout does better with no source on the command line and a
-`load_filing` call once connected. `SEC_GOV_USER_AGENT` is needed for anything
-EDGAR has to fetch (a ticker, a `cik:accession`); a local file needs none.
-
-Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs — and so
-does the rest of EDGAR. A filing from outside the SEC usually ships as a
-**taxonomy package**, because it references the filer's extension taxonomy at
-their own domain: point at the `.zip` or the unpacked directory and the
-package's catalog is registered, so those URLs resolve to the schema travelling
-beside the report. ESEF filings identify their entity by LEI rather than CIK,
-and that is what comes back. Three kinds of filing load, and `describe_filing`'s
-`profile` says which one you have:
-
-| kind | what it is | how it reads |
-|---|---|---|
-| **XBRL** | 10-K, 10-Q, 20-F, IFRS / ESEF, ACFRs — inline or classic | facts, networks and text; the whole toolset |
-| **XML** | the forms with no XBRL: ownership (3, 4, 5), 13F, N-PORT, SC 13D/G | `records` returns the form's own tables; searchable as text |
-| **document** | an 8-K, a proxy, a registration statement, anything pre-2000 | text only — `search_text` and `read_text` |
-
-A filing is a *set* of documents, and the primary one is not always where the
-content is: an 8-K is boilerplate with the press release attached as `EX-99.1`,
-and a 13F-HR's primary document is a cover page whose holdings are every one of
-them in a second document. `documents` lists what else was filed and
-`read_document` reads one — one small fetch of EDGAR's index page the first
-time it is asked, and nothing at load.
-
-Everything is listed, **including what this cannot read**, with the URL it
-lives at. A PDF annual report and a chart filed as an image are content; that
-they are not HTML or XML is a fact about this reader, not about the filing, and
-the caller asking may well be able to open one. So `documents` says where each
-document is and whether `read_document` can read it, rather than pretending a
-filing has five documents when it has six.
-
-**Before about 2000** EDGAR wrote no separate files at all: a filing is one SGML
-stream, its documents have types and sequence numbers but no names, and the
-filing index lists them with an empty Document column because there is nothing
-to link to. Those filings are loaded by splitting the complete submission —
-sequence 1 is the primary document, the rest become its other documents — so
-1994 onward reads like anything else.
-
-A **classic** (pre-inline) filing's narrative lives outside its XBRL package —
-`form10-k.htm` is a sibling of the instance, not part of it — so the document is
-fetched alongside and the instance's tagged blocks are located within it by
-matching their prose. Without that, every filing before iXBRL reads as tagged
-blocks alone: no Items, no MD&A, no cover page.
-
-The tools are the shapes a reader needs, not a query language:
-
-| tool | what it answers |
-|---|---|
-| `describe_filing` | how the filing is laid out: entity, periods (with the keys the other tools use), statements and disclosures by role, dimensional axes, text sections with offsets — call it first |
-| `resolve_element` | which concepts the filing reports for a phrase ("revenue", "lease liability"), ranked, with fact counts and where they appear |
-| `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
-| `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |
-| `calculation` | what sums to a total: the calculation children with weights, computed against reported, per period |
-| `documents`, `read_document` | what else was filed with this filing — exhibits, an 8-K's press release, a 13F's holdings table — each with its URL and whether it reads natively; and reading one |
-| `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
-| `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset |
-| `export_filing` | the filing as holon, Tavi, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
-| `list_filings`, `load_filing`, `unload_filing` | the session |
-
-The server binds to the loopback interface with the SDK's host- and
-origin-header validation on, so a page in a browser cannot drive it; `--host`
-opens it to a network you trust, and `--transport stdio` serves clients that
-speak nothing else. The same tool functions are importable without MCP
-(`xbrlkit.serve.tools`) for tests and notebooks.
-
-## Outside EDGAR
-
-`filings.xbrl.org` indexes filings from the regimes that are not the SEC. It is
-open and asks for no key, and one adapter reaches every country in it:
-
-```bash
-xbrlkit serve lei:213800H2PQMIF3OVZY47      # a filer's latest, by LEI
-```
-
-```python
-from xbrlkit.filings_org import FilingsOrgClient
-
-client = FilingsOrgClient()
-client.entity("213800H2PQMIF3OVZY47")            # KAINOS GROUP PLC
-client.entity_filings("213800H2PQMIF3OVZY47")    # newest period first
-client.filings(country="FI", limit=25)           # by country
-```
-
-Two things worth knowing before planning against it. It is **not** all of
-Europe — Germany files to the Bundesanzeiger, which does not share, and has
-nothing in the index. And being indexed is not the same as being loadable: the
-self-contained ESEF packages load, while a national-GAAP filing depends on its
-national taxonomy host, and some of those have moved or gone. Of one filing
-sampled from each of thirteen countries, eleven load; Denmark's taxonomy entry
-point answers 404 and Ukraine's host does not resolve at all.
-
-## EDGAR
-
-`xbrlkit.edgar` is the fetch layer the CLI uses, exposed for hosts that discover
-and download filings themselves: synchronous `requests`, local-filesystem output,
-and EDGAR's two throttle signatures — a 429, and an empty 200 — ridden out with
-a bounded wait-and-retry (`EdgarThrottled` when the budget is spent).
-
-| | |
-| --- | --- |
-| `EdgarClient` | ticker → CIK, a company's filing list (`list_filings`, by form), `company_info`, one filing by accession (`get_filing_ref`) |
-| `EftsClient` / `query_efts` | bulk discovery through EDGAR full-text search: by form, year or quarter, across every filer |
-| `download_filing` / `fetch` | the XBRL zip for one accession, unpacked to a directory |
-
-```python
-from pathlib import Path
-from xbrlkit.edgar import EdgarClient, download_filing
-
-client = EdgarClient()
-cik = client.ticker_to_cik("MMM")
-latest = client.list_filings(cik, forms=["10-K"])[0]
-package = download_filing(client, cik, latest.accession, Path("data"))  # the Arelle load target
-```
-
-The SEC User-Agent is required here as everywhere (see [SEC User-Agent](#sec-user-agent)).
-
-## Arelle cache
-
-Arelle resolves a filing's DTS by fetching every schema and linkbase it imports —
-the XBRL core from xbrl.org, the W3C schemas from w3.org, `dei` / `srt` / `ecd` /
-country / currency from xbrl.sec.gov, the us-gaap year from xbrl.fasb.org. A 10-K
-resolves to a few hundred files, and the two smallest hosts throttle a cold cache
-within a few dozen filings. So `load_model` serves the DTS from a persistent cache
-(`~/.cache/xbrlkit/arelle`, or `$XBRLKIT_ARELLE_CACHE_DIR`) in Arelle's own layout,
-spaces its fetches per host, waits out a `Retry-After` on a 429 or 503, and —
-when a document still cannot be resolved — raises `DtsResolutionError` naming the
-URLs rather than returning a filing that parses with holes.
-
-Warm the cache once, or ship it:
-
-```bash
-xbrlkit cache status                          # what the cache holds; exit 1 if unseeded
-xbrlkit cache download --years 2022-2026      # load the standard entry points through Arelle
-xbrlkit cache bundle --out schemas.tar.gz --host www.xbrl.org --host www.w3.org
-xbrlkit cache extract --bundle schemas.tar.gz # seed a container's cache at build time
-```
-
-`XBRLKIT_ARELLE_OFFLINE=1` (or `load_model(..., offline=True)`) never touches the
-network; a miss is then an error, not a fetch. A host that builds its own Arelle
-controller gets the same policy from `xbrlkit.parse.configure_webcache(cntlr, cache_dir)`.
+Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
+`lei:`, a local package, or a holon or Tavi by path or URL — and ask for
+statements, facts by concept and period, calculations, exhibits and text.
+There is no graph and no index behind the tools: every answer is read from the
+filing. Full detail, including the tool table and the `--pure` profile, in
+[`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
 
 ## Where it runs
 
-**RoboSystems.** The platform's SEC pipeline is built on this package: filings are
-parsed with `xbrlkit.parse` (the platform's own Arelle controller, with
-`register_sec_transforms` and the cache policy from `configure_webcache`), projected
-with `to_holon`, `to_tavi_report` and the property-graph tables, the shared `sec`
-graph is declared from `xbrlkit.schema`, and the full-text index behind its document
-search is built from `xbrlkit.text`.
+**RoboSystems.** The platform's SEC pipeline is built on this package: filings
+are parsed with `xbrlkit.parse` (its own Arelle controller, with
+`register_sec_transforms` and the cache policy from `configure_webcache`),
+projected with `to_holon`, `to_tavi_report` and the property-graph tables, the
+shared `sec` graph is declared from `xbrlkit.schema`, and the full-text index
+behind its document search is built from `xbrlkit.text`.
 
-**Filing Ladder.** The [Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder)
-benchmark — one filing handed to the same language model in every representation —
-built its 26-filing corpus of 2024–2025 10-Ks and 10-Qs with this package: the Tavi
-compiled model, the holon, the per-filing property graph, and both text parsers. Each
+**Filing Ladder.** The
+[Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark —
+one filing handed to the same language model in every representation — built
+its 26-filing corpus of 2024–2025 10-Ks and 10-Qs with this package. Each
 projection is a rung of the ladder, so the
 [v0.1 results](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/v0.1-sonnet-5/README.md)
-are also a measurement of what a model can do with each of these outputs. Before that
-run, every text-block section the parsers produce was checked against the filing's own
-text-block facts as Arelle resolves them, on all 26 filings, and the property-graph
-projection was checked row for row against the platform's processor. The two defects
-those checks found in the text layer were fixed in 0.4.1 and are disclosed in the
-benchmark's protocol.
+are also a measurement of what a model can do with each of these outputs. That
+corpus is this package's test bench too: the text sections were checked against
+the filing's own text-block facts on all 26 filings, the property graph row for
+row against the platform's processor, and the two importers by round trip.
 
 ## View & explore
 
-Built holons render in the **RoboSystems Holon Viewer** — a browser-based reader
-that renders the financial statements and lets you ask questions of the report
-with AI:
+Built holons render in the **RoboSystems Holon Viewer** — a browser-based
+reader that renders the financial statements and lets you ask questions of the
+report with AI:
 
-- **Hosted:** <https://holon.robosystems.ai/> — open a `holon.jsonld` and explore
-  the statements, notes, and dimensional facts, or chat with the report.
-- **Source:** <https://github.com/RoboFinSystems/robosystems-holon-viewer> — run
-  it locally or self-host.
+- **Hosted:** <https://holon.robosystems.ai/> — open a `holon.jsonld` and
+  explore the statements, notes and dimensional facts, or chat with the report.
+- **Source:** <https://github.com/RoboFinSystems/robosystems-holon-viewer>
 
 The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
-complete, portable, self-describing report. The viewer's chat asks the report raw
-questions (jq over a Tavi model, SPARQL over a holon); `xbrlkit serve` is the other
-side of that pair — the same filing behind shaped tools, on your own machine.
+complete, portable, self-describing report. Its chat asks the report raw
+questions (jq over a Tavi model, SPARQL over a holon); `xbrlkit serve` is the
+other side of that pair — the same filing behind shaped tools, on your own
+machine.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-MIT © 2026 RFS LLC
+MIT © 2026 RFS LLC — see [LICENSE](LICENSE).

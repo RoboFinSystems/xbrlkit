@@ -104,6 +104,14 @@ CANONICAL_CONTEXT: dict = {
   # v1.1 — the element's value domain (textBlock / monetary / shares / decimal /
   # date / boolean / string), orthogonal to elementType's structural role.
   "itemType": {"@id": f"{RS_VOCAB}itemType"},
+  # The type the taxonomy declares, beside the value domain `itemType` buckets
+  # it into: `dei:yesNoItemType` is a `string` domain but is not a string type.
+  "dataType": {"@id": f"{RS_VOCAB}dataType"},
+  # The XML Schema type the declared type ultimately derives from.
+  "baseType": {"@id": f"{RS_VOCAB}baseType"},
+  # The period the report covers, beside the date it was filed.
+  "periodEndDate": {"@id": f"{RS_VOCAB}periodEndDate", "@type": "xsd:date"},
+  "nillable": {"@id": f"{RS_VOCAB}nillable", "@type": "xsd:boolean"},
   "substitutionGroup": {"@id": f"{RS_VOCAB}substitutionGroup", "@type": "@id"},
   "source": {"@id": f"{RS_VOCAB}source"},
   # Relationships. Structural taxonomy arcs (presentation / calculation /
@@ -131,6 +139,48 @@ CANONICAL_CONTEXT: dict = {
   "altLabel": "skos:altLabel",
   "prefLabel": "skos:prefLabel",
   "documentation": "rdfs:comment",
+  # The standard-role label, written beside `skos:prefLabel` because only
+  # this one can carry the language the label was authored in.
+  "label": {"@id": f"{RS_VOCAB}label"},
+  # Every other XBRL label role, one term each. A label is a literal with a
+  # role, so it is one triple rather than a node: reifying them would add a
+  # node per label, half again as many nodes as a report has.
+  "deprecatedDateLabel": {"@id": f"{RS_VOCAB}deprecatedDateLabel"},
+  "deprecatedLabel": {"@id": f"{RS_VOCAB}deprecatedLabel"},
+  "negated": {"@id": f"{RS_VOCAB}negated"},
+  "negatedLabel": {"@id": f"{RS_VOCAB}negatedLabel"},
+  "negatedNetLabel": {"@id": f"{RS_VOCAB}negatedNetLabel"},
+  "negatedPeriodEnd": {"@id": f"{RS_VOCAB}negatedPeriodEnd"},
+  "negatedPeriodEndLabel": {"@id": f"{RS_VOCAB}negatedPeriodEndLabel"},
+  "negatedPeriodStart": {"@id": f"{RS_VOCAB}negatedPeriodStart"},
+  "negatedPeriodStartLabel": {"@id": f"{RS_VOCAB}negatedPeriodStartLabel"},
+  "negatedTerseLabel": {"@id": f"{RS_VOCAB}negatedTerseLabel"},
+  "negatedTotal": {"@id": f"{RS_VOCAB}negatedTotal"},
+  "negatedTotalLabel": {"@id": f"{RS_VOCAB}negatedTotalLabel"},
+  "negativeLabel": {"@id": f"{RS_VOCAB}negativeLabel"},
+  "negativePeriodEndLabel": {"@id": f"{RS_VOCAB}negativePeriodEndLabel"},
+  "negativePeriodEndTotalLabel": {"@id": f"{RS_VOCAB}negativePeriodEndTotalLabel"},
+  "negativePeriodStartLabel": {"@id": f"{RS_VOCAB}negativePeriodStartLabel"},
+  "negativePeriodStartTotalLabel": {"@id": f"{RS_VOCAB}negativePeriodStartTotalLabel"},
+  "negativeTerseLabel": {"@id": f"{RS_VOCAB}negativeTerseLabel"},
+  "negativeVerboseLabel": {"@id": f"{RS_VOCAB}negativeVerboseLabel"},
+  "netLabel": {"@id": f"{RS_VOCAB}netLabel"},
+  "periodEndLabel": {"@id": f"{RS_VOCAB}periodEndLabel"},
+  "periodStartLabel": {"@id": f"{RS_VOCAB}periodStartLabel"},
+  "positiveLabel": {"@id": f"{RS_VOCAB}positiveLabel"},
+  "positivePeriodEndLabel": {"@id": f"{RS_VOCAB}positivePeriodEndLabel"},
+  "positivePeriodEndTotalLabel": {"@id": f"{RS_VOCAB}positivePeriodEndTotalLabel"},
+  "positivePeriodStartLabel": {"@id": f"{RS_VOCAB}positivePeriodStartLabel"},
+  "positivePeriodStartTotalLabel": {"@id": f"{RS_VOCAB}positivePeriodStartTotalLabel"},
+  "positiveTerseLabel": {"@id": f"{RS_VOCAB}positiveTerseLabel"},
+  "positiveVerboseLabel": {"@id": f"{RS_VOCAB}positiveVerboseLabel"},
+  "restatedLabel": {"@id": f"{RS_VOCAB}restatedLabel"},
+  "terseLabel": {"@id": f"{RS_VOCAB}terseLabel"},
+  "totalLabel": {"@id": f"{RS_VOCAB}totalLabel"},
+  "verboseLabel": {"@id": f"{RS_VOCAB}verboseLabel"},
+  "zeroLabel": {"@id": f"{RS_VOCAB}zeroLabel"},
+  "zeroTerseLabel": {"@id": f"{RS_VOCAB}zeroTerseLabel"},
+  "zeroVerboseLabel": {"@id": f"{RS_VOCAB}zeroVerboseLabel"},
   "labelRole": {"@id": f"{RS_VOCAB}labelRole"},
   "labelLanguage": {"@id": f"{RS_VOCAB}labelLanguage"},
   # References
@@ -163,6 +213,10 @@ CANONICAL_CONTEXT: dict = {
   "stringValue": {"@id": f"{RS_VOCAB}stringValue"},
   "factType": {"@id": f"{RS_VOCAB}factType"},
   "decimals": {"@id": f"{RS_VOCAB}decimals"},
+  # xsi:nil, and the fact's xml:lang — a fact reported as not disclosed is not
+  # a fact with an empty value, and a text fact's language is part of it.
+  "isNil": {"@id": f"{RS_VOCAB}isNil", "@type": "xsd:boolean"},
+  "language": {"@id": f"{RS_VOCAB}language"},
   # Period node — period kind uses XBRL's instant/duration vocabulary
   "instant": {"@id": "xbrli:instant", "@type": "xsd:date"},
   "startDate": {"@id": "xbrli:startDate", "@type": "xsd:date"},

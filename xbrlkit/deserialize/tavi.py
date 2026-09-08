@@ -199,7 +199,7 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   concepts = _concepts(xbrl_model, namespaces, gaps)
   _apply_labels(xbrl_model, concepts, entity, gaps)
   networks = _networks(xbrl_model)
-  facts, periods, units = _facts(xbrl_model, concepts, entity, gaps)
+  facts, periods, units = _facts(xbrl_model, concepts, entity, namespaces, gaps)
   _mark_text_facts(concepts, facts)
   filing = _filing(document, xbrl_model, namespaces, entity, facts, concepts)
 
@@ -591,6 +591,7 @@ def _facts(
   xbrl_model: Mapping[str, Any],
   concepts: Mapping[str, Concept],
   entity: EntityIdentity,
+  namespaces: Mapping[str, str],
   gaps: ImportGaps,
 ) -> tuple[list[XbrlFact], list[Any], list[Unit]]:
   """Facts, and the periods and units they use.
@@ -629,11 +630,11 @@ def _facts(
     measure = dimensions.get("xbrl:unit")
     unit = None
     if isinstance(measure, str) and measure:
-      unit = _unit(measure, units)
+      unit = _unit(measure, units, namespaces)
     elif concept is not None and concept.is_numeric:
       # A pure unit is written as no unit at all (section 8.5.2.3); a numeric
       # fact that arrives without one had one before the emitter dropped it.
-      unit = _unit(PURE_MEASURE, units)
+      unit = _unit(PURE_MEASURE, units, namespaces)
 
     dims: list[DimQualifier] = []
     for axis, member in dimensions.items():
@@ -676,7 +677,7 @@ def _facts(
   return facts, list(periods.values()), list(units.values())
 
 
-def _unit(measure: str, units: dict[str, Unit]) -> Unit:
+def _unit(measure: str, units: dict[str, Unit], namespaces: Mapping[str, str]) -> Unit:
   """The unit a fact's measure names, minted once per measure.
 
   The emitter rewrites two measures (a share count to the accounting module's
@@ -687,11 +688,11 @@ def _unit(measure: str, units: dict[str, Unit]) -> Unit:
   existing = units.get(measure)
   if existing is not None:
     return existing
-  token, uri = _measure_source(measure)
+  token, uri = _measure_source(measure, namespaces)
   if "/" in token:
     numerator, _, denominator = token.partition("/")
-    num_uri = _measure_source(numerator)[1]
-    den_uri = _measure_source(denominator)[1]
+    num_uri = _measure_source(numerator, namespaces)[1]
+    den_uri = _measure_source(denominator, namespaces)[1]
     unit = Unit(
       id=unit_id(f"{num_uri}/{den_uri}"),
       measure=token,
@@ -705,12 +706,17 @@ def _unit(measure: str, units: dict[str, Unit]) -> Unit:
   return unit
 
 
-def _measure_source(measure: str) -> tuple[str, str]:
-  """A Tavi measure as ``(token, uri)`` in the form the parse produced."""
+def _measure_source(measure: str, namespaces: Mapping[str, str]) -> tuple[str, str]:
+  """A Tavi measure as ``(token, uri)`` in the form the parse produced.
+
+  A filer's own unit (``ba:aircraft``) is a QName like any other, so the
+  document's namespace map answers it; only where it does not is the prefix
+  itself the best available stem.
+  """
   if "/" in measure:
     numerator, _, denominator = measure.partition("/")
-    num_token, num_uri = _measure_source(numerator)
-    den_token, den_uri = _measure_source(denominator)
+    num_token, num_uri = _measure_source(numerator, namespaces)
+    den_token, den_uri = _measure_source(denominator, namespaces)
     return f"{num_token}/{den_token}", f"{num_uri}/{den_uri}"
   known = MEASURE_SOURCES.get(measure)
   if known is not None:
@@ -721,7 +727,13 @@ def _measure_source(measure: str) -> tuple[str, str]:
   if prefix == "iso4217":
     return measure, f"http://www.xbrl.org/2003/iso4217#{local}"
   if prefix == "utr":
+    # `utr` is one of Tavi's *reserved* prefixes and binds to the draft's own
+    # namespace, which is not where the unit registry lives; the emitter put a
+    # bare registry token under it, so it comes back to the registry.
     return measure, f"{UTR_NAMESPACE}#{local}"
+  declared = namespaces.get(prefix)
+  if declared:
+    return measure, f"{declared.rstrip('#')}#{local}"
   return measure, f"{prefix}#{local}"
 
 

@@ -11,7 +11,11 @@ answer a question the same way.
 
 from __future__ import annotations
 
+import functools
+import http.server
 import json
+import socketserver
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -37,6 +41,7 @@ from xbrlkit.model import (
   XbrlFact,
   XbrlModel,
 )
+from xbrlkit.parse.ids import unit_id
 from xbrlkit.periods import duration_period, instant_period, period_from_interval
 from xbrlkit.serialize import to_holon, to_tavi
 from xbrlkit.serve import tools
@@ -50,6 +55,7 @@ PARENT_CHILD = "http://www.xbrl.org/2003/arcrole/parent-child"
 SUMMATION = "http://www.xbrl.org/2003/arcrole/summation-item"
 DIM = "http://xbrl.org/int/dim/arcrole"
 BALANCE_SHEET = "http://example.com/role/BalanceSheet"
+USD_URI = "http://www.xbrl.org/2003/iso4217#USD"
 
 
 def _model() -> XbrlModel:
@@ -158,7 +164,7 @@ def _model() -> XbrlModel:
       id="f1",
       concept_qname="us-gaap:Assets",
       period_id=instant.id,
-      unit_id="u-usd",
+      unit_id=unit_id(USD_URI),
       entity_cik="0001234567",
       value_str="1000",
       numeric_value=1000.0,
@@ -168,7 +174,7 @@ def _model() -> XbrlModel:
       id="f2",
       concept_qname="us-gaap:Cash",
       period_id=instant.id,
-      unit_id="u-usd",
+      unit_id=unit_id(USD_URI),
       entity_cik="0001234567",
       value_str="400",
       numeric_value=400.0,
@@ -287,7 +293,13 @@ def _model() -> XbrlModel:
     entity=EntityIdentity(cik="0001234567", name="Acme Corp"),
     concepts=concepts,
     periods=[instant, duration],
-    units=[Unit(id="u-usd", measure="iso4217:USD")],
+    units=[
+      Unit(
+        id=unit_id(USD_URI),
+        measure="iso4217:USD",
+        uri=USD_URI,
+      )
+    ],
     facts=facts,
     networks=networks,
   )
@@ -436,21 +448,66 @@ def test_tavi_gaps_are_declared(model: XbrlModel) -> None:
 def test_holon_gaps_are_declared(model: XbrlModel) -> None:
   got, gaps = from_holon_report(to_holon(model))
   reported = " ".join(gaps.missing)
-  assert "label roles" in reported
-  assert "namespace" in reported
+  assert "no fact, network or dimension mentions" in reported
+  assert "source_hash" in reported
   assert gaps.unresolved_references == 0
-  # The gaps are real, and this is what they look like in the model.
-  assert got.concepts["us-gaap:Assets"].nillable is False
-  assert got.concepts["us-gaap:Assets"].namespace == "http://fasb.org/us-gaap/"
-  assert not any(f.language for f in got.facts)
+
+
+def test_holon_carries_what_the_filing_declared(
+  model: XbrlModel, through_holon: XbrlModel
+) -> None:
+  """The four fields the holon used to drop, and the namespace it used to
+  flatten — the round trip is what showed they were missing."""
+  assets = through_holon.concepts["us-gaap:Assets"]
+  assert assets.nillable is True
+  assert assets.namespace == US_GAAP  # the year the filing used, not a stem
+  assert assets.item_type == "monetaryItemType"
+  assert assets.base_xsd_type == "decimal"
+  assert (TERSE, "Total assets") in [(lab.role, lab.value) for lab in assets.labels]
+  document_type = next(
+    f for f in through_holon.facts if f.concept_qname == "dei:DocumentType"
+  )
+  assert document_type.language == "en-us"
+  assert through_holon.concepts["dei:DocumentType"].is_text_fact is True
+
+
+def test_a_holon_binds_the_filings_own_namespaces(model: XbrlModel) -> None:
+  """A concept compacts to its QName against the taxonomy the filing declared.
+
+  The document said ``http://fasb.org/us-gaap/Revenues`` before — an address
+  inside FASB's namespace that FASB never minted, with the year dropped — and
+  a filer's own concepts did not compact at all.
+  """
+  document = json.loads(to_holon(model))
+  assert document["@context"]["us-gaap"] == f"{US_GAAP}#"
+  assert document["@context"]["dei"] == f"{DEI}#"
+  ids = [
+    node["@id"]
+    for graph in document["@graph"]
+    for node in graph["@graph"]
+    if "Element" in str(node.get("@type"))
+  ]
+  assert ids and all(":" in i and "://" not in i for i in ids)
 
 
 def test_holon_keeps_the_preferred_label_a_network_resolved(
   model: XbrlModel, through_holon: XbrlModel
 ) -> None:
-  """An element carries one label in a holon — but a presentation association
-  carries the preferred label it resolved to, which is where the rest are."""
-  assets = through_holon.concepts["us-gaap:Assets"]
+  """A presentation association carries the preferred label it resolved to, so
+  the label reaches the concept even from a holon that never listed it.
+
+  Every label is written on the element now, which is why this strips one back
+  out: the association is where a holon written before that came from, and
+  reading it is what took a real filing's balance sheet from 40 wrong labels
+  out of 46 to none.
+  """
+  document = json.loads(to_holon(model))
+  for graph in document["@graph"]:
+    for node in graph["@graph"]:
+      if node.get("internalId") == "us-gaap:Assets":
+        node.pop("terseLabel", None)
+  got = from_holon_json(json.dumps(document))
+  assets = got.concepts["us-gaap:Assets"]
   assert (TERSE, "Total assets") in [(lab.role, lab.value) for lab in assets.labels]
 
 
@@ -466,6 +523,71 @@ def test_holon_collapses_duplicate_facts(model: XbrlModel) -> None:
   model.facts.append(model.facts[0].model_copy())
   assert len(from_tavi_json(to_tavi(model)).facts) == before + 1
   assert len(from_holon_json(to_holon(model)).facts) == before
+
+
+def test_holon_round_trips_the_whole_model(model: XbrlModel) -> None:
+  """The gate: model -> holon -> model, compared field by field.
+
+  Everything the model carries survives — facts with their values, decimals,
+  dimensions, nil flag and language; every label with its role and language;
+  all three network kinds with order, weight, preferred label and roots; the
+  concept fields; and the units and periods with their content-derived ids.
+  """
+  got = from_holon_json(to_holon(model))
+  assert got.entity.model_dump() == model.entity.model_dump()
+  assert [p.model_dump() for p in got.periods] == [
+    p.model_dump() for p in model.periods
+  ]
+  assert {(u.measure, u.uri) for u in got.units} == {
+    (u.measure, u.uri) for u in model.units
+  }
+  assert {q: c.model_dump() for q, c in got.concepts.items()} == {
+    q: c.model_dump() for q, c in model.concepts.items()
+  }
+  # A fact's own entity is not written per fact by either serialization — the
+  # report has one entity and every fact is read as carrying it.
+  skip = {"id", "entity_scheme", "entity_identifier"}
+  assert sorted(str(f.model_dump(exclude=skip)) for f in got.facts) == sorted(
+    str(f.model_dump(exclude=skip)) for f in model.facts
+  )
+  assert sorted(str(n.model_dump()) for n in got.networks) == sorted(
+    str(n.model_dump()) for n in model.networks
+  )
+  # The filing identity, all but the one thing no serialization records.
+  assert got.filing.model_dump(
+    exclude={"is_inline_xbrl", "taxonomy_namespaces"}
+  ) == model.filing.model_dump(exclude={"is_inline_xbrl", "taxonomy_namespaces"})
+
+
+def test_a_holon_keeps_the_value_as_the_filing_wrote_it(model: XbrlModel) -> None:
+  """A rate stated to four places is not the same statement as the float.
+
+  The holon wrote `Decimal(str(0.05))` and lost the precision the filer chose;
+  it writes the lexical value now, which is still a valid `xsd:decimal`.
+  """
+  model.facts[0].value_str = "1000.00"
+  got = from_holon_json(to_holon(model))
+  assets = next(f for f in got.facts if f.concept_qname == "us-gaap:Assets")
+  assert assets.value_str == "1000.00"
+
+
+def test_a_holon_tells_a_nil_fact_from_an_empty_one(model: XbrlModel) -> None:
+  """Both were written with an empty value, so neither could be read back."""
+  model.facts.append(
+    XbrlFact(
+      id="nil",
+      concept_qname="us-gaap:Cash",
+      period_id=model.periods[0].id,
+      unit_id=unit_id(USD_URI),
+      entity_cik="0001234567",
+      is_nil=True,
+    )
+  )
+  got = from_holon_json(to_holon(model))
+  nil = [f for f in got.facts if f.is_nil]
+  assert len(nil) == 1
+  assert nil[0].concept_qname == "us-gaap:Cash"
+  assert nil[0].value_str is None
 
 
 # -- the two agree ---------------------------------------------------------------
@@ -529,6 +651,32 @@ def test_the_session_loads_a_tavi_and_a_holon(model: XbrlModel, tmp_path: Path) 
       ]
   finally:
     session.close()
+
+
+def test_the_session_loads_a_json_report_from_a_url(
+  model: XbrlModel, tmp_path: Path
+) -> None:
+  """A report published as an artifact opens by its URL.
+
+  Arelle fetches its own documents, which is why every other URL goes through
+  it — but it cannot load either JSON report, so those are fetched here and
+  read into the model instead.
+  """
+  (tmp_path / "acme.holon.jsonld").write_text(to_holon(model))
+  handler = functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=str(tmp_path)
+  )
+  with socketserver.TCPServer(("127.0.0.1", 0), handler) as httpd:
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    session = FilingSession()
+    try:
+      loaded = session.load(f"http://127.0.0.1:{port}/acme.holon.jsonld")
+      assert loaded.has_xbrl is True
+      assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
+    finally:
+      session.close()
+      httpd.shutdown()
 
 
 def test_the_session_still_refuses_an_oim_report(tmp_path: Path) -> None:
