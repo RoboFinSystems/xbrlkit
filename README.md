@@ -79,7 +79,8 @@ model = from_holon_json(Path("boeing.holon.jsonld").read_text())
 Arelle is not involved and cannot be: it does not load either format. That is
 the point — a report that never was an SEC filing (a ledger's own output, a
 converted filing someone handed you) becomes queryable with the same tools, and
-`xbrlkit serve` loads either file directly.
+`xbrlkit serve` loads either one directly, **by path or by URL**: a report
+published as an artifact opens from the chat, no download step.
 
 Both importers keep one rule: **read what the serialization carries and nothing
 else.** Where a projection dropped something the field stays empty and the gap
@@ -256,8 +257,8 @@ chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
 with an optional form (`NVDA`, `NVDA 10-Q`), an EDGAR `cik:accession`, a URL, an
 inline `.htm`, an instance `.xml`, a filing directory or `.zip`, or a JSON
 report — a `.tavi.json`, a `.holon.jsonld`, or a `model.json` written by
-`export_filing`. Several filings can be loaded at once, each under an id;
-`unload_filing` drops one.
+`export_filing`, from a path or a URL. Several filings can be loaded at once,
+each under an id; `unload_filing` drops one.
 
 Outside the SEC it also takes `lei:<LEI>` — a filer's latest filing on
 [filings.xbrl.org](https://filings.xbrl.org), XBRL International's open index of

@@ -39,6 +39,8 @@ SectionKind = Literal["item", "text_block", "records"]
 
 _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
 _PLAIN_SUFFIXES = {".txt", ".md"}
+# A report serialized as JSON — read into the model here, never by Arelle.
+_JSON_SUFFIXES = {".json", ".jsonld"}
 # What a document-only filing can be read from. A PDF (an ARS, an SEC comment
 # letter) is a document EDGAR holds and this cannot read; it is named as such
 # rather than loaded empty.
@@ -250,7 +252,7 @@ class FilingSession:
 
   def _load_local(self, path: Path, source: str) -> LoadedFiling:
     package_dir: Path | None = None
-    if path.is_file() and path.suffix.lower() in (".json", ".jsonld"):
+    if path.is_file() and path.suffix.lower() in _JSON_SUFFIXES:
       return self._load_json(path, source)
     if path.is_dir():
       package_dir = path
@@ -326,6 +328,11 @@ class FilingSession:
     clean = Path(url.split("?", 1)[0])
     accession = clean.stem or url
     suffix = clean.suffix.lower()
+    if suffix in _JSON_SUFFIXES:
+      # A JSON report is read here, not by Arelle, which cannot load one. This
+      # is how a report published as an artifact — a holon or a Tavi on a CDN —
+      # is opened by its URL rather than downloaded first.
+      return self._load_json(self._fetch(url), url)
     try:
       model = self._parse(url, accession=accession, filing=None, entity=None)
     except NoXbrlFound:

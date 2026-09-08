@@ -11,7 +11,11 @@ answer a question the same way.
 
 from __future__ import annotations
 
+import functools
+import http.server
 import json
+import socketserver
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -647,6 +651,32 @@ def test_the_session_loads_a_tavi_and_a_holon(model: XbrlModel, tmp_path: Path) 
       ]
   finally:
     session.close()
+
+
+def test_the_session_loads_a_json_report_from_a_url(
+  model: XbrlModel, tmp_path: Path
+) -> None:
+  """A report published as an artifact opens by its URL.
+
+  Arelle fetches its own documents, which is why every other URL goes through
+  it — but it cannot load either JSON report, so those are fetched here and
+  read into the model instead.
+  """
+  (tmp_path / "acme.holon.jsonld").write_text(to_holon(model))
+  handler = functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=str(tmp_path)
+  )
+  with socketserver.TCPServer(("127.0.0.1", 0), handler) as httpd:
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    session = FilingSession()
+    try:
+      loaded = session.load(f"http://127.0.0.1:{port}/acme.holon.jsonld")
+      assert loaded.has_xbrl is True
+      assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
+    finally:
+      session.close()
+      httpd.shutdown()
 
 
 def test_the_session_still_refuses_an_oim_report(tmp_path: Path) -> None:
