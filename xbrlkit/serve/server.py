@@ -77,6 +77,12 @@ disclosure table — as rows in filing order with values per period column.
 - calculation answers "what sums to X": the calculation-linkbase children with \
 their weights, the computed sum against the reported total, per period.
 
+OTHER DOCUMENTS
+- A filing is a set of documents and the primary one is not always where the \
+content is: an 8-K is boilerplate with the press release attached as EX-99.1, \
+and a 13F-HR's primary document is a cover page whose holdings are all in a \
+second document. documents lists them; read_document reads one.
+
 RECORDS (XML filings)
 - records returns the form's own tables — a Form 4's transactions and \
 holdings, a 13F's positions — as rows with the header fields beside them. \
@@ -399,6 +405,44 @@ def build_server(
     return run(
       lambda: tools.calculation(
         session.get(filing), concept, role=role, period_end=period_end
+      )
+    )
+
+  @server.tool(
+    name="documents",
+    description=(
+      "What else was filed with this filing — the exhibits, and any second "
+      "document the content actually lives in (an 8-K's EX-99.1 press "
+      "release, a 13F's INFORMATION TABLE of holdings). Costs one small fetch "
+      "the first time and nothing after. The XBRL package, the SEC's rendered "
+      "copies and images are not listed."
+    ),
+    structured_output=False,
+  )
+  def documents(filing: Filing = None) -> str:
+    return run(lambda: tools.documents(session.get(filing), session))
+
+  @server.tool(
+    name="read_document",
+    description=(
+      f"Read up to {tools.MAX_READ} characters of one of the filing's other "
+      "documents, from a character offset — the name comes from `documents`. "
+      "An XML document (a 13F's holdings) comes back as its record tables "
+      "rendered to text. Returns the next offset when more follows."
+    ),
+    structured_output=False,
+  )
+  def read_document(
+    document: Annotated[
+      str, Field(description="The document's name, from `documents`.")
+    ],
+    filing: Filing = None,
+    offset: Annotated[int, Field(description="Character offset.", ge=0)] = 0,
+    length: ReadLength = tools.MAX_READ,
+  ) -> str:
+    return run(
+      lambda: tools.read_document(
+        session.get(filing), session, document, offset=offset, length=length
       )
     )
 

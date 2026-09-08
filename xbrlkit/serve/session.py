@@ -26,6 +26,7 @@ import requests
 from xml.etree import ElementTree
 
 from xbrlkit.config import CONFIG, Config
+from xbrlkit.edgar.filing_index import FilingDocument
 from xbrlkit.model import Concept, EntityIdentity, FilingMeta, XbrlFact, XbrlModel
 from xbrlkit.text.ixbrl import _strip_html, iXBRLParser
 from xbrlkit.text.narrative import NarrativeExtractor, _html_to_text
@@ -88,6 +89,10 @@ class LoadedFiling:
   # The parsed document of an XML filing (a Form 4, a 13F): its fields and
   # record tables. None for XBRL and HTML filings.
   xml_document: XmlDocument | None = None
+  # The filing's other documents, listed from EDGAR's index page on first ask
+  # and each one read on first read. Nothing is fetched until something asks.
+  other_documents: list[FilingDocument] | None = None
+  read_documents: dict[str, "ReadDocument"] = field(default_factory=dict)
 
   @property
   def has_xbrl(self) -> bool:
@@ -299,6 +304,71 @@ class FilingSession:
     target = self._tmp / Path(url.split("?", 1)[0]).name
     target.write_bytes(resp.content)
     return target
+
+  # -- the filing's other documents ------------------------------------------
+
+  def other_documents(self, lf: LoadedFiling) -> list[FilingDocument]:
+    """What else was filed with this one — listed once, then remembered.
+
+    Costs one ~12 KB fetch of EDGAR's index page, and only when asked.
+    """
+    if lf.other_documents is not None:
+      return lf.other_documents
+    cik, accession = self._edgar_coordinates(lf)
+    from xbrlkit.edgar import EdgarClient
+    from xbrlkit.edgar.filing_index import fetch_filing_index
+    from xbrlkit.edgar.filing_index import other_documents as select
+
+    listed = fetch_filing_index(EdgarClient(config=self.config), cik, accession)
+    lf.other_documents = select(listed, lf.model.filing.document_name or "")
+    return lf.other_documents
+
+  def read_other_document(self, lf: LoadedFiling, name: str) -> ReadDocument:
+    """Fetch and read one of the filing's other documents, once."""
+    wanted = (name or "").strip().lower()
+    match = next(
+      (d for d in self.other_documents(lf) if d.document.lower() == wanted), None
+    )
+    if match is None:
+      names = [d.document for d in self.other_documents(lf)]
+      raise SourceError(f"No document {name!r} in this filing; it has {names}")
+    cached = lf.read_documents.get(match.document)
+    if cached is not None:
+      return cached
+    cik, accession = self._edgar_coordinates(lf)
+    from xbrlkit.edgar import EdgarClient, download_primary_document
+
+    dest = lf.package_dir or (self._tmp / lf.id)
+    path = download_primary_document(
+      EdgarClient(config=self.config), cik, accession, dest, match.document
+    )
+    # A bare model, deliberately: an exhibit is its own document, and carrying
+    # the parent's form would have the narrative extractor hunt for a 10-K's
+    # Items inside a certification.
+    bare = XbrlModel(
+      filing=FilingMeta(
+        accession=accession, cik=cik, document_name=match.document, form=match.type
+      ),
+      entity=lf.model.entity,
+    )
+    read = _read_document(path, bare)
+    if read is None:
+      raise SourceError(
+        f"{match.document} is a {match.suffix or 'binary'} document; "
+        "this reads HTML, XML and plain text."
+      )
+    lf.read_documents[match.document] = read
+    return read
+
+  def _edgar_coordinates(self, lf: LoadedFiling) -> tuple[str, str]:
+    """The CIK and accession needed to reach back to EDGAR for this filing."""
+    cik, accession = lf.model.filing.cik, lf.accession
+    if not cik or not _ACCESSION_RE.match(accession):
+      raise SourceError(
+        f"{lf.id} was not loaded from EDGAR, so its other documents cannot be "
+        "listed. Load it as `cik:accession` or by ticker to reach them."
+      )
+    return cik, accession
 
   def _document_only(
     self, document: Path, source: str, accession: str, package_dir: Path | None

@@ -687,6 +687,66 @@ def records(
   }
 
 
+def documents(lf: LoadedFiling, session: Any) -> dict[str, Any]:
+  """What else was filed with this filing: exhibits, and any second document
+  the form's content actually lives in."""
+  found = session.other_documents(lf)
+  return {
+    "filing": lf.id,
+    "primary_document": lf.model.filing.document_name,
+    "documents": [
+      {
+        "document": d.document,
+        "type": d.type,
+        "description": d.description or None,
+        "size": d.size,
+      }
+      for d in found
+    ],
+    "count": len(found),
+    "note": (
+      "read_document reads one. The XBRL package and the SEC's own rendered "
+      "copies are not listed; neither are images."
+    )
+    if found
+    else "Nothing was filed with this one but the primary document.",
+  }
+
+
+def read_document(
+  lf: LoadedFiling,
+  session: Any,
+  document: str,
+  offset: int = 0,
+  length: int = MAX_READ,
+) -> dict[str, Any]:
+  """Read one of the filing's other documents — an exhibit, a 13F's holdings.
+
+  Fetched on first read and kept, so paging through one costs one fetch.
+  """
+  read = session.read_other_document(lf, document)
+  text = read.text
+  offset = max(0, int(offset or 0))
+  length = max(1, min(int(length or MAX_READ), MAX_READ))
+  window = text[offset : offset + length]
+  out: dict[str, Any] = {
+    "document": document,
+    "offset": offset,
+    "length": len(window),
+    "total_chars": len(text),
+    "text": window,
+  }
+  if offset + len(window) < len(text):
+    out["next_offset"] = offset + len(window)
+  if read.xml_document is not None:
+    out["records"] = [
+      {"name": t.name, "columns": t.columns, "row_count": len(t.rows)}
+      for t in read.xml_document.tables
+    ]
+    out["records_note"] = "the rows are in `text`, rendered as markdown tables"
+  return out
+
+
 def resolve_element(lf: LoadedFiling, query: str, limit: int = 20) -> dict[str, Any]:
   _require_xbrl(lf, "concepts")
   model, idx = lf.model, index_for(lf)

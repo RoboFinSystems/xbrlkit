@@ -318,3 +318,85 @@ def test_filing_refs_carry_whether_edgar_holds_xbrl() -> None:
     },
   )
   assert [r.is_xbrl for r in refs] == [True, False]
+
+
+# -- the filing's other documents --------------------------------------------------
+
+# EDGAR's index page, in its two-table shape: document files, then data files.
+# The 13F twin (a source `.xml` beside its rendered `.html`) and an inline
+# document's " iXBRL" name marker are both here because both have bitten.
+INDEX_PAGE = """<html><body>
+<table summary="Document Format Files">
+<tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+<tr><td>1</td><td></td><td>primary_doc.html</td><td>13F-HR</td><td>0</td></tr>
+<tr><td>1</td><td></td><td>primary_doc.xml</td><td>13F-HR</td><td>4231</td></tr>
+<tr><td>2</td><td>INFORMATION TABLE</td><td>56757.html</td><td>INFORMATION TABLE</td><td>0</td></tr>
+<tr><td>2</td><td>INFORMATION TABLE</td><td>56757.xml</td><td>INFORMATION TABLE</td><td>44724</td></tr>
+<tr><td>3</td><td></td><td>ex99-1.htm &nbsp;iXBRL</td><td>EX-99.1</td><td>19547</td></tr>
+<tr><td>4</td><td></td><td>audit_001.jpg</td><td>GRAPHIC</td><td>7050</td></tr>
+<tr><td>&nbsp;</td><td>Complete submission text file</td><td>0001-26-000001.txt</td><td>&nbsp;</td><td>6929712</td></tr>
+</table>
+<table summary="Data Files">
+<tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+<tr><td>5</td><td>XBRL INSTANCE FILE</td><td>mrmd-20181231.xml</td><td>EX-101.INS</td><td>907209</td></tr>
+</table>
+</body></html>
+"""
+
+
+def test_the_index_page_lists_every_real_document() -> None:
+  from xbrlkit.edgar.filing_index import parse_filing_index
+
+  docs = parse_filing_index(INDEX_PAGE)
+  # Header rows and the complete-submission row carry no sequence number.
+  assert [d.seq for d in docs] == [1, 1, 2, 2, 3, 4, 5]
+  # EDGAR appends a marker to an inline document's name; the name is the file.
+  assert [d.document for d in docs if d.seq == 3] == ["ex99-1.htm"]
+  assert [d.type for d in docs if d.seq == 5] == ["EX-101.INS"]
+
+
+def test_other_documents_keeps_the_content_and_drops_the_rest() -> None:
+  from xbrlkit.edgar.filing_index import other_documents, parse_filing_index
+
+  kept = other_documents(parse_filing_index(INDEX_PAGE), "primary_doc.xml")
+  assert [(d.document, d.type) for d in kept] == [
+    # The holdings, as the source XML — not its rendered twin.
+    ("56757.xml", "INFORMATION TABLE"),
+    ("ex99-1.htm", "EX-99.1"),
+  ]
+  # Gone: the primary, its own rendered twin, the image, the XBRL package.
+  names = {d.document for d in kept}
+  assert not names & {
+    "primary_doc.xml",
+    "primary_doc.html",
+    "audit_001.jpg",
+    "mrmd-20181231.xml",
+  }
+
+
+def test_a_filing_not_from_edgar_says_so_rather_than_guessing(tmp_path: Path) -> None:
+  path = tmp_path / "wk-form4.xml"
+  path.write_text(FORM4)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    with pytest.raises(SourceError, match="not loaded from EDGAR"):
+      session.other_documents(lf)
+  finally:
+    session.close()
+
+
+def test_documents_reports_an_empty_filing_plainly() -> None:
+  from xbrlkit.serve import tools as serve_tools
+
+  class _Session:
+    def other_documents(self, lf: object) -> list[object]:
+      return []
+
+  from xbrlkit.serve.session import LoadedFiling
+
+  model = _text_block_model("<p>" + "word " * 40 + "</p>")
+  loaded = LoadedFiling(id="x", source="memory", model=model, text="", sections=[])
+  out = serve_tools.documents(loaded, _Session())
+  assert out["count"] == 0
+  assert "Nothing was filed with this one" in out["note"]

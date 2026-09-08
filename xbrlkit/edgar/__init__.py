@@ -16,6 +16,12 @@ from .download import (
   primary_document_url,
 )
 from .efts import EftsClient, EftsHit, query_efts
+from .filing_index import (
+  FilingDocument,
+  fetch_filing_index,
+  other_documents,
+  parse_filing_index,
+)
 
 __all__ = [
   "CompanyInfo",
@@ -23,10 +29,14 @@ __all__ = [
   "EdgarThrottled",
   "EftsClient",
   "EftsHit",
+  "FilingDocument",
   "FilingRef",
   "download_filing",
   "download_primary_document",
   "fetch",
+  "fetch_filing_index",
+  "other_documents",
+  "parse_filing_index",
   "primary_document_url",
   "query_efts",
 ]

@@ -943,6 +943,8 @@ async def test_server_lists_and_calls_tools(
       "search_text",
       "read_text",
       "records",
+      "documents",
+      "read_document",
       "export_filing",
     }
     described = await client.call_tool("describe_filing", {})
