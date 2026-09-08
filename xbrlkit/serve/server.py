@@ -29,6 +29,7 @@ import anyio
 from pydantic import Field
 
 from xbrlkit import __version__
+from xbrlkit.config import DEFAULT_USER_AGENT
 from xbrlkit.serve import tools
 from xbrlkit.serve.session import FilingSession, SourceError
 
@@ -579,6 +580,40 @@ def build_server(
   return server
 
 
+def identity_lines(identity: str | None) -> list[str]:
+  """How this server identifies itself to EDGAR, and how to change it."""
+  if identity is not None:
+    return [f"SEC identity: {identity}"]
+  return [
+    f'SEC identity: not set — EDGAR requests go out as "{DEFAULT_USER_AGENT}".',
+    "  To be attributed to you, restart with:",
+    '    SEC_GOV_USER_AGENT="Your Name you@example.com" xbrlkit serve',
+  ]
+
+
+def connect_lines(url: str) -> list[str]:
+  """How to point an MCP client at a running HTTP server.
+
+  The JSON is built from the live url rather than quoted from the README, so
+  it stays correct on a non-default host, port or path.
+  """
+  config = {"mcpServers": {"xbrlkit": {"type": "http", "url": url}}}
+  return [
+    "Connect with Claude Code:",
+    f"  claude mcp add --transport http xbrlkit {url}",
+    "",
+    "or add to an MCP client's config:",
+    *("  " + line for line in json.dumps(config, indent=2).splitlines()),
+  ]
+
+
+def startup_banner(url: str, identity: str | None) -> str:
+  """The whole HTTP start-up notice, as one block."""
+  lines = [f"xbrlkit serve: MCP at {url}", "", *connect_lines(url), ""]
+  lines.extend(identity_lines(identity))
+  return "\n".join(lines)
+
+
 def serve(
   session: FilingSession,
   *,
@@ -592,7 +627,12 @@ def serve(
 ) -> None:
   """Run the server until interrupted."""
   server = build_server(session, out_dir, pure=pure, with_document=with_document)
+  identity = session.config.identity()
   if transport == "stdio":
+    # stdout is the protocol here, so the notice goes to stderr and says only
+    # the part a client cannot already know: the client did the connecting.
+    for line in identity_lines(identity):
+      print(line, file=sys.stderr)
     server.run("stdio")
     return
   if host not in ("127.0.0.1", "localhost", "::1"):
@@ -601,5 +641,5 @@ def serve(
       "only do this on a network you trust.",
       file=sys.stderr,
     )
-  print(f"xbrlkit serve: MCP at http://{host}:{port}{path}", file=sys.stderr)
+  print(startup_banner(f"http://{host}:{port}{path}", identity), file=sys.stderr)
   server.run("streamable-http", host=host, port=port, streamable_http_path=path)

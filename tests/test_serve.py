@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import textwrap
 from datetime import date
 from pathlib import Path
 
@@ -1023,3 +1024,37 @@ def test_real_filing_round_trip() -> None:
     assert tools.search_text(lf, "item 7")["total"] > 0
   finally:
     session.close()
+
+
+class TestStartupBanner:
+  """What ``xbrlkit serve`` tells the operator on the way up."""
+
+  def test_the_json_is_valid_and_tracks_the_live_url(self):
+    """Built from the running url, so a non-default port stays copy-pasteable."""
+    from xbrlkit.serve.server import startup_banner
+
+    url = "http://127.0.0.1:9000/mcp"
+    banner = startup_banner(url, "Acme Corp ops@acme.com")
+    block = banner[banner.index("{") : banner.rindex("}") + 1]
+    parsed = json.loads(textwrap.dedent(block))
+    assert parsed == {"mcpServers": {"xbrlkit": {"type": "http", "url": url}}}
+
+  def test_it_offers_the_claude_code_command(self):
+    from xbrlkit.serve.server import startup_banner
+
+    banner = startup_banner("http://127.0.0.1:8765/mcp", None)
+    assert "claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp" in banner
+
+  def test_an_undeclared_identity_names_the_default_and_the_fix(self):
+    from xbrlkit.config import DEFAULT_USER_AGENT
+    from xbrlkit.serve.server import identity_lines
+
+    text = "\n".join(identity_lines(None))
+    assert DEFAULT_USER_AGENT in text
+    assert "SEC_GOV_USER_AGENT=" in text
+
+  def test_a_declared_identity_is_echoed_without_advice(self):
+    from xbrlkit.serve.server import identity_lines
+
+    lines = identity_lines("Acme Corp ops@acme.com")
+    assert lines == ["SEC identity: Acme Corp ops@acme.com"]
