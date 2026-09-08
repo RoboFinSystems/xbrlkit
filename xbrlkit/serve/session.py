@@ -249,13 +249,22 @@ class FilingSession:
       target = path
       package_dir = path.parent
     accession = _local_accession(path, target)
+    # Arelle registers a taxonomy package from its archive or its manifest, and
+    # the two are not interchangeable: one Dutch package's manifest raises
+    # inside Arelle where the same package as a zip registers cleanly. The
+    # archive is the better form whenever it is still to hand.
+    packages: list[Path] | None = None
+    if path.suffix.lower() == ".zip" and _taxonomy_packages(target):
+      packages = [path]
     if target.suffix.lower() in _PLAIN_SUFFIXES:
       # Arelle cannot read plain text and never could: a filing from the 1990s
       # holds no markup at all. Going to it first only produces a parse error
       # where the answer is simply that this is a document.
       return self._document_only(target, source, accession, package_dir)
     try:
-      model = self._parse(target, accession=accession, filing=None, entity=None)
+      model = self._parse(
+        target, accession=accession, filing=None, entity=None, packages=packages
+      )
     except NoXbrlFound:
       if target.suffix.lower() not in _DOCUMENT_SUFFIXES:
         raise
@@ -563,6 +572,7 @@ class FilingSession:
     accession: str,
     filing: FilingMeta | None,
     entity: EntityIdentity | None,
+    packages: list[Path] | None = None,
   ) -> XbrlModel:
     from xbrlkit.parse import close, load_model, to_xbrl_model
 
@@ -573,7 +583,7 @@ class FilingSession:
           cache_dir=self.config.arelle_cache_dir,
           offline=self.config.arelle_offline,
           timeout=self.config.arelle_timeout,
-          packages=_taxonomy_packages(target),
+          packages=_taxonomy_packages(target) if packages is None else packages,
           config=self.config,
         )
       except RuntimeError as exc:
