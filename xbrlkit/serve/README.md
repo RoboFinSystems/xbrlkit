@@ -96,14 +96,16 @@ xbrlkit serve "NVDA 10-Q" MMM          # two filings, by id afterwards
 xbrlkit serve ./0000066740-25-000006/  # a filing directory, or a .zip
 ```
 
-They load *before* the server answers its first request — a cold taxonomy cache
-can take a minute — so a client with a short startup timeout does better with
-no source on the command line and a `load_filing` call once connected.
+They load *before* the server answers its first request — a cold taxonomy
+cache can take a minute — which is why **the launch commands above name no
+filing**: an empty server answers immediately and the first `load_filing` call
+decides what to open. Name one on the command line when you want it warm and
+the client will wait.
 
 ## Without installing — `uvx`
 
 ```bash
-uvx --from "xbrlkit[mcp]@latest" xbrlkit serve NVDA   # pin instead: --from "xbrlkit[mcp]==0.6.0"
+uvx --from "xbrlkit[mcp]@latest" xbrlkit serve   # pin instead: --from "xbrlkit[mcp]==0.6.0"
 ```
 
 Two things in the `--from` matter: the **`[mcp]` extra** — `uvx xbrlkit` alone
@@ -118,7 +120,7 @@ Clients that launch a server themselves run the same command over stdio:
   "mcpServers": {
     "xbrlkit": {
       "command": "uvx",
-      "args": ["--from", "xbrlkit[mcp]@latest", "xbrlkit", "serve", "--transport", "stdio", "NVDA"],
+      "args": ["--from", "xbrlkit[mcp]@latest", "xbrlkit", "serve", "--transport", "stdio"],
       "env": { "SEC_GOV_USER_AGENT": "Your Name your@email.example" }
     }
   }
@@ -127,7 +129,7 @@ Clients that launch a server themselves run the same command over stdio:
 
 ```bash
 claude mcp add xbrlkit -e SEC_GOV_USER_AGENT="Your Name your@email.example" \
-  -- uvx --from "xbrlkit[mcp]@latest" xbrlkit serve --transport stdio NVDA
+  -- uvx --from "xbrlkit[mcp]@latest" xbrlkit serve --transport stdio
 ```
 
 `SEC_GOV_USER_AGENT` is needed for anything EDGAR has to fetch (a ticker, a
