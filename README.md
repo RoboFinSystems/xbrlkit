@@ -267,8 +267,23 @@ startup timeout does better with no source on the command line and a
 `load_filing` call once connected. `SEC_GOV_USER_AGENT` is needed for anything
 EDGAR has to fetch (a ticker, a `cik:accession`); a local file needs none.
 
-Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs. The tools
-are the shapes a reader needs, not a query language:
+Any XBRL Arelle can load works — US GAAP, IFRS / ESEF, tagged ACFRs — and so
+does the rest of EDGAR. Three kinds of filing load, and `describe_filing`'s
+`profile` says which one you have:
+
+| kind | what it is | how it reads |
+|---|---|---|
+| **XBRL** | 10-K, 10-Q, 20-F, IFRS / ESEF, ACFRs — inline or classic | facts, networks and text; the whole toolset |
+| **XML** | the forms with no XBRL: ownership (3, 4, 5), 13F, N-PORT, SC 13D/G | `records` returns the form's own tables; searchable as text |
+| **document** | an 8-K, a proxy, a registration statement | text only — `search_text` and `read_text` |
+
+A **classic** (pre-inline) filing's narrative lives outside its XBRL package —
+`form10-k.htm` is a sibling of the instance, not part of it — so the document is
+fetched alongside and the instance's tagged blocks are located within it by
+matching their prose. Without that, every filing before iXBRL reads as tagged
+blocks alone: no Items, no MD&A, no cover page.
+
+The tools are the shapes a reader needs, not a query language:
 
 | tool | what it answers |
 |---|---|
@@ -277,6 +292,7 @@ are the shapes a reader needs, not a query language:
 | `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
 | `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |
 | `calculation` | what sums to a total: the calculation children with weights, computed against reported, per period |
+| `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
 | `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset |
 | `export_filing` | the filing as holon, Tavi, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
 | `list_filings`, `load_filing`, `unload_filing` | the session |

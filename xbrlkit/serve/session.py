@@ -11,26 +11,40 @@ keeps global state; the parsed model is what the tools read.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 from zipfile import ZipFile
 
+import requests
+from xml.etree import ElementTree
+
 from xbrlkit.config import CONFIG, Config
-from xbrlkit.model import EntityIdentity, FilingMeta, XbrlFact, XbrlModel
+from xbrlkit.model import Concept, EntityIdentity, FilingMeta, XbrlFact, XbrlModel
 from xbrlkit.text.ixbrl import _strip_html, iXBRLParser
 from xbrlkit.text.narrative import NarrativeExtractor, _html_to_text
+from xbrlkit.text.xml import XmlDocument, parse_xml_document, raw_document_name
+from xbrlkit.text.xml import render as render_xml
 
-SectionKind = Literal["item", "text_block"]
+SectionKind = Literal["item", "text_block", "records"]
 
 _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
+_PLAIN_SUFFIXES = {".txt", ".md"}
+# What a document-only filing can be read from. A PDF (an ARS, an SEC comment
+# letter) is a document EDGAR holds and this cannot read; it is named as such
+# rather than loaded empty.
+_DOCUMENT_SUFFIXES = _INLINE_SUFFIXES | _PLAIN_SUFFIXES | {".xml"}
 _ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 _CIK_ACCESSION_RE = re.compile(r"^(\d{1,10})[:/](\d{10}-\d{2}-\d{6})$")
 _TICKER_RE = re.compile(r"^([A-Za-z][A-Za-z0-9.\-]{0,9})(?:\s+([0-9A-Za-z\-/]+))?$")
+
+logger = logging.getLogger(__name__)
 
 # Arelle's controller is process-global; one load at a time.
 _ARELLE_LOCK = threading.Lock()
@@ -71,6 +85,14 @@ class LoadedFiling:
   block_text: str = ""
   block_sections: list[TextSection] = field(default_factory=list)
   has_document: bool = False
+  # The parsed document of an XML filing (a Form 4, a 13F): its fields and
+  # record tables. None for XBRL and HTML filings.
+  xml_document: XmlDocument | None = None
+
+  @property
+  def has_xbrl(self) -> bool:
+    """Whether the filing carries XBRL at all, or is document-only."""
+    return bool(self.model.facts or self.model.concepts)
 
   def __post_init__(self) -> None:
     # A filing built without a document (a classic instance, a model.json, a
@@ -92,6 +114,15 @@ class LoadedFiling:
 
 class SourceError(ValueError):
   """The source could not be resolved to a filing."""
+
+
+class NoXbrlFound(SourceError):
+  """Arelle read the source and found no XBRL in it.
+
+  Distinct from a source it could not read at all, because a document with no
+  XBRL is a filing this server still holds — most of EDGAR is one — and only
+  the caller knows whether a document is on hand to read instead.
+  """
 
 
 class FilingSession:
@@ -212,9 +243,13 @@ class FilingSession:
     else:
       target = path
       package_dir = path.parent
-    model = self._parse(
-      target, accession=_local_accession(path, target), filing=None, entity=None
-    )
+    accession = _local_accession(path, target)
+    try:
+      model = self._parse(target, accession=accession, filing=None, entity=None)
+    except NoXbrlFound:
+      if target.suffix.lower() not in _DOCUMENT_SUFFIXES:
+        raise
+      return self._document_only(target, source, accession, package_dir)
     return self._finish(_local_id(path, model), source, model, target, package_dir)
 
   def _load_json(self, path: Path, source: str) -> LoadedFiling:
@@ -242,31 +277,126 @@ class FilingSession:
     return self._finish(_local_id(path, model), source, model, target, path.parent)
 
   def _load_url(self, url: str) -> LoadedFiling:
-    accession = Path(url.split("?", 1)[0]).stem or url
-    model = self._parse(url, accession=accession, filing=None, entity=None)
+    clean = Path(url.split("?", 1)[0])
+    accession = clean.stem or url
+    suffix = clean.suffix.lower()
+    try:
+      model = self._parse(url, accession=accession, filing=None, entity=None)
+    except NoXbrlFound:
+      if suffix not in _DOCUMENT_SUFFIXES:
+        raise
+      return self._document_only(self._fetch(url), url, accession, None)
     target: Path | None = None
-    if Path(url.split("?", 1)[0]).suffix.lower() in _INLINE_SUFFIXES:
+    if suffix in _INLINE_SUFFIXES:
       # Arelle keeps its own copy; fetch the document once more for the text.
-      import requests
-
-      resp = requests.get(url, headers=self.config.headers, timeout=60)
-      resp.raise_for_status()
-      target = self._tmp / Path(url.split("?", 1)[0]).name
-      target.write_bytes(resp.content)
+      target = self._fetch(url)
     return self._finish(accession, url, model, target, None)
 
+  def _fetch(self, url: str) -> Path:
+    """The document at ``url``, saved beside this session's other work."""
+    resp = requests.get(url, headers=self.config.headers, timeout=60)
+    resp.raise_for_status()
+    target = self._tmp / Path(url.split("?", 1)[0]).name
+    target.write_bytes(resp.content)
+    return target
+
+  def _document_only(
+    self, document: Path, source: str, accession: str, package_dir: Path | None
+  ) -> LoadedFiling:
+    """A document held on its own, with no EDGAR record to describe it.
+
+    Identity comes from the document where it states it — an ownership form
+    names its issuer, its form and its period — and is otherwise left unknown
+    rather than guessed at.
+    """
+    filing = FilingMeta(accession=accession, cik="", document_name=document.name)
+    entity = EntityIdentity(cik="")
+    suffix = document.suffix.lower()
+    if suffix == ".xml":
+      try:
+        _identify_from_xml(parse_xml_document(document.read_bytes()), filing, entity)
+      except ElementTree.ParseError:
+        pass
+    elif suffix in _INLINE_SUFFIXES:
+      filing.form = _form_on_the_cover(
+        document.read_text(encoding="utf-8", errors="replace")
+      )
+    model = XbrlModel(filing=filing, entity=entity)
+    return self._finish(accession, source, model, None, package_dir, document)
+
   def _load_edgar(self, cik: str, accession: str, source: str) -> LoadedFiling:
+    """One EDGAR filing: its XBRL package, and its readable document.
+
+    The ``-xbrl.zip`` holds XBRL and nothing else, so an inline filing arrives
+    with its document (the instance *is* the document) while a classic one
+    does not — its ``form10-k.htm`` is a sibling of the zip and is fetched
+    separately. Without that second fetch every filing before iXBRL loads with
+    no narrative at all: no Items, no MD&A, only the tagged blocks.
+    """
     from xbrlkit.cli import entity_identity, filing_meta
-    from xbrlkit.edgar import EdgarClient, download_filing
+    from xbrlkit.edgar import EdgarClient, download_filing, download_primary_document
 
     client = EdgarClient(config=self.config)
     ref = client.get_filing_ref(cik, accession)
+    if not ref.is_xbrl:
+      return self._load_document_only(client, cik, accession, ref, source)
     info = client.company_info(cik)
     package_dir = self._tmp / accession
-    target = download_filing(client, cik, accession, package_dir)
+    try:
+      target = download_filing(client, cik, accession, package_dir)
+    except FileNotFoundError:
+      # EDGAR's record said XBRL and the package is not there: an unknown
+      # accession assumed to have one, or a filing whose index disagrees.
+      return self._load_document_only(client, cik, accession, ref, source)
     filing = filing_meta(self.config.sec_base_url, cik, accession, ref, target.name)
+    document: Path | None = None
+    if target.suffix.lower() in _INLINE_SUFFIXES:
+      filing.document_name = target.name
+    elif ref.primary_document:
+      try:
+        document = download_primary_document(
+          client, cik, accession, package_dir, ref.primary_document
+        )
+        filing.document_name = document.name
+      except (FileNotFoundError, requests.RequestException) as exc:
+        # The filing still loads; its text tools fall back to the tagged
+        # blocks, as they did before the document was fetched at all.
+        logger.warning(
+          "no primary document for %s (%s): %s", accession, ref.primary_document, exc
+        )
     model = self._parse(target, accession, filing=filing, entity=entity_identity(info))
-    return self._finish(accession, source, model, target, package_dir)
+    return self._finish(accession, source, model, target, package_dir, document)
+
+  def _load_document_only(
+    self, client: Any, cik: str, accession: str, ref: Any, source: str
+  ) -> LoadedFiling:
+    """A filing EDGAR holds with no XBRL in it — most of EDGAR, by count.
+
+    Every 8-K, proxy and registration statement, and every ownership form:
+    there is no ``-xbrl.zip`` to fetch and nothing for Arelle to parse, so the
+    document *is* the filing. The model is empty but real — it still carries
+    who filed, which form, and when — and the text tools read the document.
+    """
+    from xbrlkit.cli import entity_identity, filing_meta
+    from xbrlkit.edgar import download_primary_document
+
+    name = raw_document_name(ref.primary_document)
+    if not name:
+      raise SourceError(
+        f"EDGAR holds no XBRL and names no document for {accession}; nothing to read."
+      )
+    if Path(name).suffix.lower() not in _DOCUMENT_SUFFIXES:
+      raise SourceError(
+        f"{accession} is a {Path(name).suffix or 'binary'} document "
+        f"({name}); this reads XBRL, HTML and XML filings."
+      )
+    package_dir = self._tmp / accession
+    document = download_primary_document(client, cik, accession, package_dir, name)
+    filing = filing_meta(self.config.sec_base_url, cik, accession, ref, name)
+    filing.document_name = name
+    entity = entity_identity(client.company_info(cik))
+    model = XbrlModel(filing=filing, entity=entity)
+    return self._finish(accession, source, model, None, package_dir, document)
 
   def _load_ticker(self, ticker: str, form: str, source: str) -> LoadedFiling:
     from xbrlkit.edgar import EdgarClient
@@ -308,9 +438,10 @@ class FilingSession:
       finally:
         close(mx.modelManager.cntlr)
     if not model.facts and not model.concepts:
-      # Arelle accepts any HTML as an empty document; a filing with nothing
-      # tagged is not one this server can answer for.
-      raise SourceError(
+      # Arelle accepts any HTML as an empty document. That is not a failure —
+      # an 8-K, a proxy, a Form 4 all read this way — but it is the caller's
+      # call whether there is a document behind it worth holding.
+      raise NoXbrlFound(
         f"{target} holds no XBRL facts or concepts: not an XBRL or inline XBRL "
         "document (a Tavi, holon or OIM file needs its importer)."
       )
@@ -323,15 +454,21 @@ class FilingSession:
     model: XbrlModel,
     target: Path | None,
     package_dir: Path | None,
+    document: Path | None = None,
   ) -> LoadedFiling:
-    html = None
-    if target is not None and target.suffix.lower() in _INLINE_SUFFIXES:
-      html = target.read_text(encoding="utf-8", errors="replace")
+    """Assemble the :class:`LoadedFiling`.
+
+    ``document`` is the filing's readable primary document when it is a
+    *different* file from the Arelle load target — a classic filing's
+    ``form10-k.htm`` beside its instance. When it is omitted the target is
+    the document, as it is for inline XBRL.
+    """
     block_text, block_sections = _text_from_text_blocks(model)
-    if html is None:
-      text, sections = block_text, block_sections
-    else:
-      text, sections = build_text(model, html)
+    doc = document if document is not None else target
+    read = _read_document(doc, model)
+    text, sections = (
+      (read.text, read.sections) if read else (block_text, block_sections)
+    )
     return LoadedFiling(
       id=filing_id,
       source=source,
@@ -342,22 +479,100 @@ class FilingSession:
       package_dir=package_dir,
       block_text=block_text,
       block_sections=block_sections,
-      has_document=html is not None,
+      has_document=read is not None,
+      xml_document=read.xml_document if read else None,
     )
 
 
 # -- the readable document ------------------------------------------------------
 
 
+@dataclass
+class ReadDocument:
+  """A filing's document, read into the text the tools search."""
+
+  text: str
+  sections: list[TextSection]
+  xml_document: XmlDocument | None = None
+
+
+def _read_document(doc: Path | None, model: XbrlModel) -> ReadDocument | None:
+  """Read a filing's primary document, by what kind of document it is.
+
+  Three lanes, because EDGAR is three kinds of document:
+
+  * **HTML** — a 10-K, an 8-K, a proxy: prose, read as Items and (when the
+    filing has XBRL) its tagged blocks located within them.
+  * **XML** — the ownership forms, 13F, N-PORT: structure, read as fields and
+    record tables and rendered to text so it can still be searched.
+  * **plain text** — the oldest submissions, taken as they are.
+
+  ``None`` when there is no document to read, or it is one this cannot read
+  (a PDF), which leaves the filing on whatever text its XBRL carries.
+  """
+  if doc is None:
+    return None
+  suffix = doc.suffix.lower()
+  if suffix in _INLINE_SUFFIXES:
+    html = doc.read_text(encoding="utf-8", errors="replace")
+    text, sections = build_text(model, html)
+    return ReadDocument(text, sections)
+  if suffix in _PLAIN_SUFFIXES:
+    return ReadDocument(
+      _normalize_text(doc.read_text(encoding="utf-8", errors="replace")), []
+    )
+  if suffix == ".xml":
+    # An XBRL instance is XML too; it is the load target, and its facts are
+    # the reading. Only a document with no XBRL behind it is read this way.
+    if model.facts or model.concepts:
+      return None
+    try:
+      parsed = parse_xml_document(doc.read_bytes())
+    except ElementTree.ParseError as exc:
+      logger.warning("%s is not readable XML: %s", doc.name, exc)
+      return None
+    text = render_xml(parsed)
+    sections = []
+    for table in parsed.tables:
+      header = f"## {table.name} ("
+      at = text.find(header)
+      sections.append(
+        TextSection(
+          id=table.name,
+          label=f"{table.name} ({len(table.rows)} rows)",
+          kind="records",
+          chars=sum(len(v) for row in table.rows for v in row.values()),
+          offset=at if at >= 0 else None,
+          elements=table.columns,
+        )
+      )
+    return ReadDocument(text, sections, parsed)
+  return None
+
+
 def build_text(model: XbrlModel, html: str | None) -> tuple[str, list[TextSection]]:
   """The filing as plain text plus its section map.
 
-  With the inline document in hand the text is the whole document and the
-  sections are its Items (10-K / 10-Q) and tagged text blocks located in it.
-  Without it (a classic instance, or a URL Arelle loaded that is not an
-  inline document) the text is the tagged text blocks themselves, one after
+  With the document in hand the text is the whole document and the sections
+  are its Items (10-K / 10-Q) and its tagged text blocks located in it.
+  Without one the text is the tagged text blocks themselves, one after
   another under their concept names — every block a section with a known
   offset.
+
+  Where the blocks come from depends on the era, because the document and
+  the tagged blocks are one file only for inline XBRL:
+
+  * **inline** — the blocks are ``ix:nonNumeric`` tags in this very document,
+    so the iXBRL parser reads them out with the nested element qnames each
+    one contains.
+  * **classic** — the document carries no XBRL markup at all; the blocks live
+    in a separate instance, as escaped HTML of these same paragraphs. They are
+    taken from the model's facts and *located* in the document by matching
+    their opening words, the way an Item is located. The two renderings agree
+    on the prose and on nothing else, which is exactly what
+    :func:`_locate` tolerates. Nested element qnames are not recoverable this
+    way — the instance does not record which facts sat inside which block —
+    so a classic block's ``elements`` is empty.
   """
   if html is None:
     return _text_from_text_blocks(model)
@@ -376,7 +591,8 @@ def build_text(model: XbrlModel, html: str | None) -> tuple[str, list[TextSectio
           offset=_locate(text, item.content),
         )
       )
-  for block in iXBRLParser(part_size=None).parse(html):
+  inline_blocks = iXBRLParser(part_size=None).parse(html)
+  for block in inline_blocks:
     sections.append(
       TextSection(
         id=block.section_id,
@@ -387,14 +603,60 @@ def build_text(model: XbrlModel, html: str | None) -> tuple[str, list[TextSectio
         elements=block.xbrl_elements,
       )
     )
+  if not inline_blocks:
+    sections.extend(_blocks_located_in(model, text))
   sections.sort(key=lambda s: (s.offset is None, s.offset or 0))
   return text, sections
 
 
-def _text_from_text_blocks(model: XbrlModel) -> tuple[str, list[TextSection]]:
-  parts: list[str] = []
+def _blocks_located_in(model: XbrlModel, text: str) -> list[TextSection]:
+  """The model's tagged text blocks, found in a document that does not mark
+  them up — a classic filing's instance read against its own ``form10-k.htm``.
+
+  Matching runs on the block's *prose* — its text before the first table row.
+  A note's twelfth word is usually already inside its table, and the two
+  renderings disagree most about tables: the instance's escaped HTML becomes
+  markdown pipes while the document's becomes laid-out rows, putting a header
+  row's worth of characters between two words that :func:`_locate` expects to
+  find close together. Stopping at the table locates every block in the test
+  filing where matching the whole body found 50 of 58, and it does so without
+  widening the gap :func:`_locate` allows — the tolerance that keeps a table
+  of contents from matching stays exactly as tight.
+  """
   sections: list[TextSection] = []
-  offset = 0
+  for fact, concept, body in _text_block_facts(model):
+    head = _prose_head(body)
+    offset = _locate(text, head)
+    if offset is None and head is not body:
+      offset = _locate(text, body)
+    sections.append(
+      TextSection(
+        id=fact.concept_qname,
+        label=concept.pref_label or concept.name,
+        kind="text_block",
+        chars=len(body),
+        offset=offset,
+      )
+    )
+  return sections
+
+
+def _prose_head(body: str) -> str:
+  """A block's text before its first markdown table row, when that leaves
+  enough words to match on; the whole block when it is a table throughout."""
+  cut = body.find("\n|")
+  if cut <= 0:
+    return body
+  head = body[:cut]
+  return head if len(_WORD_RE.findall(head)) >= 3 else body
+
+
+def _text_block_facts(model: XbrlModel) -> list[tuple[XbrlFact, Concept, str]]:
+  """Every tagged text block worth reading, as (fact, concept, plain text).
+
+  A block under twenty words is a caption or an empty tag, not a disclosure.
+  """
+  found: list[tuple[XbrlFact, Concept, str]] = []
   for fact in model.facts:
     if fact.value_kind != "text" or not fact.value_str:
       continue
@@ -404,6 +666,15 @@ def _text_from_text_blocks(model: XbrlModel) -> tuple[str, list[TextSection]]:
     body = _normalize_text(_strip_html(fact.value_str))
     if len(body.split()) < 20:
       continue
+    found.append((fact, concept, body))
+  return found
+
+
+def _text_from_text_blocks(model: XbrlModel) -> tuple[str, list[TextSection]]:
+  parts: list[str] = []
+  sections: list[TextSection] = []
+  offset = 0
+  for fact, concept, body in _text_block_facts(model):
     header = f"## {fact.concept_qname}\n"
     chunk = header + body + "\n\n"
     sections.append(
@@ -516,6 +787,62 @@ def _find_load_target(package_dir: Path) -> Path:
     f"No inline document or XBRL instance found in {package_dir}; "
     "point at the file to load."
   )
+
+
+_XML_IDENTITY = {
+  "form": ("documentType", "submissionType"),
+  "report_date": ("periodOfReport", "reportCalendarOrQuarter"),
+}
+_XML_ENTITY = {
+  "cik": ("issuer.issuerCik", "issuerCik", "filer.filerCik"),
+  "name": ("issuer.issuerName", "issuerName", "filer.filerName"),
+  "ticker": ("issuer.issuerTradingSymbol", "issuerTradingSymbol"),
+}
+
+
+def _identify_from_xml(
+  parsed: XmlDocument, filing: FilingMeta, entity: EntityIdentity
+) -> None:
+  """Fill in what an XML document says about itself: which form, whose, when."""
+
+  def first(names: tuple[str, ...]) -> str | None:
+    for name in names:
+      value = parsed.fields.get(name)
+      if value:
+        return value
+    return None
+
+  filing.form = filing.form or first(_XML_IDENTITY["form"])
+  reported = first(_XML_IDENTITY["report_date"])
+  if reported and filing.report_date is None:
+    filing.report_date = _parse_iso_date(reported)
+  cik = first(_XML_ENTITY["cik"])
+  if cik:
+    entity.cik = f"{int(cik):0>10}" if cik.isdigit() else cik
+    filing.cik = entity.cik
+  entity.name = entity.name or first(_XML_ENTITY["name"])
+  entity.ticker = entity.ticker or first(_XML_ENTITY["ticker"])
+
+
+# A filing says which form it is on its cover page. Without EDGAR's record to
+# ask — a document opened straight from disk — that is the only thing that
+# tells the narrative extractor which Items to look for.
+_COVER_FORM_RE = re.compile(
+  r"\bFORM\s+(10-K|10-Q|20-F|40-F|8-K|S-1|S-3|DEF\s*14A)\b", re.IGNORECASE
+)
+
+
+def _form_on_the_cover(html: str) -> str | None:
+  """The form a document names on its cover, from the top of the document."""
+  m = _COVER_FORM_RE.search(_html_to_text(html[:400_000]))
+  return re.sub(r"\s+", " ", m.group(1)).upper() if m else None
+
+
+def _parse_iso_date(value: str) -> date | None:
+  try:
+    return date.fromisoformat(value.strip()[:10])
+  except ValueError:
+    return None
 
 
 def _local_accession(path: Path, target: Path) -> str:

@@ -52,6 +52,10 @@ class FilingRef:
   is_inline: bool
   report_date: str = ""
   acceptance_datetime: str = ""
+  # Whether EDGAR holds XBRL for this filing at all. False for the forms that
+  # are only a document — most 8-Ks, DEF 14A, S-1, everything before the 2009
+  # mandate — which have no `-xbrl.zip` to download and load as document-only.
+  is_xbrl: bool = True
 
 
 @dataclass
@@ -193,6 +197,7 @@ class EdgarClient:
     dates = arrays.get("filingDate") or []
     primary = arrays.get("primaryDocument") or []
     inline = arrays.get("isInlineXBRL") or []
+    xbrl = arrays.get("isXBRL") or []
     report_dates = arrays.get("reportDate") or []
     accepted = arrays.get("acceptanceDateTime") or []
 
@@ -211,6 +216,7 @@ class EdgarClient:
           is_inline=bool(at(inline, i)),
           report_date=str(at(report_dates, i) or ""),
           acceptance_datetime=str(at(accepted, i) or ""),
+          is_xbrl=bool(at(xbrl, i)) or bool(at(inline, i)),
         )
       )
     return refs
@@ -276,9 +282,11 @@ class EdgarClient:
   def get_filing_ref(self, cik: str, accession: str) -> FilingRef:
     """Return the :class:`FilingRef` for one accession.
 
-    Falls back to a minimal ref (form/date unknown, ``is_inline=True``) when
-    the accession is not found in the submissions history, so downloads can
-    still proceed by URL construction alone.
+    Falls back to a minimal ref (form/date unknown, ``is_inline=True``,
+    ``is_xbrl=True``) when the accession is not found in the submissions
+    history, so downloads can still proceed by URL construction alone — an
+    unknown filing is tried as XBRL and falls back to document-only if it
+    turns out to have none.
     """
     padded_cik = f"{int(cik):0>10}"
     for ref in self.list_filings(cik):

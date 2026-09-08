@@ -542,6 +542,7 @@ def describe_filing(
     "profile": {
       "pure": pure,
       "text": "primary document" if whole and lf.has_document else "tagged text blocks",
+      "xbrl": lf.has_xbrl,
     },
     "filing": {
       "id": lf.id,
@@ -599,19 +600,95 @@ def describe_filing(
         {"id": s.id, "offset": s.offset, "chars": s.chars} for s in blocks
       ],
       "text_block_count": len([s for s in sections if s.kind == "text_block"]),
+      "records": [
+        {
+          "name": t.name,
+          "rows": len(t.rows),
+          "columns": t.columns,
+        }
+        for t in (lf.xml_document.tables if lf.xml_document else [])
+      ],
       "note": "offsets index into the plain text that search_text and read_text read",
     },
-    "next": [
-      "resolve_element to turn a phrase into the concepts this filing reports",
-      "fact_grid for consolidated values by concept and period",
-      "statement with a network from the list above",
-      "calculation for what sums to a total",
-      "search_text for anything in the document text, read_text to page it",
+    "next": _next_steps(lf),
+  }
+
+
+def _next_steps(lf: LoadedFiling) -> list[str]:
+  """What to call next, given what this filing actually is."""
+  if not lf.has_xbrl:
+    document = [
+      "search_text for anything in the document, read_text to page it",
+    ]
+    if lf.xml_document:
+      return [
+        "records for this form's tables — its transactions, holdings or rows",
+        *document,
+      ]
+    return document
+  return [
+    "resolve_element to turn a phrase into the concepts this filing reports",
+    "fact_grid for consolidated values by concept and period",
+    "statement with a network from the list above",
+    "calculation for what sums to a total",
+    "search_text for anything in the document text, read_text to page it",
+  ]
+
+
+def _require_xbrl(lf: LoadedFiling, what: str) -> None:
+  """Refuse an XBRL question about a filing that carries no XBRL.
+
+  Most of EDGAR is document-only, and "no network matches" would send a
+  caller hunting for a name that was never going to be there.
+  """
+  if lf.has_xbrl:
+    return
+  form = lf.model.filing.form or "This filing"
+  raise ToolError(
+    f"{form} carries no XBRL, so it has no {what}. It is a document: "
+    "search_text and read_text read it"
+    + (", and records returns its tables." if lf.xml_document else ".")
+  )
+
+
+def records(
+  lf: LoadedFiling, table: str | None = None, limit: int = 100
+) -> dict[str, Any]:
+  """The record tables of an XML filing — a Form 4's transactions, a 13F's
+  holdings — as rows, with the document's header fields alongside."""
+  doc = lf.xml_document
+  if doc is None:
+    raise ToolError(
+      "This filing is not an XML document; records reads the ownership forms, "
+      "13F, N-PORT and the rest of EDGAR's XML. Use fact_grid or statement "
+      "for an XBRL filing."
+    )
+  wanted = (table or "").strip().lower()
+  tables = doc.tables
+  if wanted:
+    tables = [t for t in doc.tables if t.name.lower() == wanted]
+    if not tables:
+      names = [t.name for t in doc.tables]
+      raise ToolError(f"No table {table!r} in this document; it has {names}")
+  return {
+    "document": doc.root,
+    "form": lf.model.filing.form or doc.form_hint,
+    "fields": doc.fields,
+    "tables": [
+      {
+        "name": t.name,
+        "columns": t.columns,
+        "row_count": len(t.rows),
+        "rows": t.rows[:limit],
+        "truncated": len(t.rows) > limit,
+      }
+      for t in tables
     ],
   }
 
 
 def resolve_element(lf: LoadedFiling, query: str, limit: int = 20) -> dict[str, Any]:
+  _require_xbrl(lf, "concepts")
   model, idx = lf.model, index_for(lf)
   q = (query or "").strip()
   if not q:
@@ -680,6 +757,7 @@ def fact_grid(
   limit: int = 200,
   pure: bool = False,
 ) -> dict[str, Any]:
+  _require_xbrl(lf, "facts")
   model, idx = lf.model, index_for(lf)
   if not elements:
     raise ToolError("elements is required: one or more concept names")
@@ -809,6 +887,7 @@ def statement(
   max_rows: int = MAX_STATEMENT_ROWS,
   pure: bool = False,
 ) -> dict[str, Any]:
+  _require_xbrl(lf, "presentation networks")
   model, idx = lf.model, index_for(lf)
   network = _find_network(idx, statement, pure=pure)
   max_rows = max(1, min(int(max_rows or MAX_STATEMENT_ROWS), MAX_STATEMENT_ROWS))
@@ -925,6 +1004,7 @@ def calculation(
   role: str | None = None,
   period_end: str | None = None,
 ) -> dict[str, Any]:
+  _require_xbrl(lf, "calculations")
   model, idx = lf.model, index_for(lf)
   qnames, _unresolved = _resolve_concepts(model, [concept])
   if not qnames:

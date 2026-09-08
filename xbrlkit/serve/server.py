@@ -43,10 +43,17 @@ MAX_RESULT_CHARS = 60_000
 REPRESENTATIONS = ("model", "tavi", "holon", "lpg", "files")
 
 INSTRUCTIONS = """\
-xbrlkit: XBRL filings loaded in memory on this machine — any XBRL or inline \
-XBRL report (SEC 10-K / 10-Q / 20-F, IFRS / ESEF, tagged ACFRs), parsed once \
-with Arelle into one neutral model and queried through these tools. There is \
-no graph and no index behind them: every answer is read from the filing.
+xbrlkit: SEC and XBRL filings loaded in memory on this machine, parsed once \
+and queried through these tools. There is no graph and no index behind them: \
+every answer is read from the filing.
+
+Three kinds of filing load, and describe_filing's `profile` says which one you \
+have:
+- XBRL — any XBRL or inline XBRL report (SEC 10-K / 10-Q / 20-F, IFRS / ESEF, \
+tagged ACFRs). Facts, networks and text; the whole toolset.
+- XML — the forms with no XBRL in them: ownership (3, 4, 5), 13F, N-PORT, \
+SC 13D/G. Read as fields and record tables through `records`, and as text.
+- documents — an 8-K, a proxy, a registration statement: text only.
 
 START
 - list_filings says what is loaded. Nothing? load_filing takes a local path \
@@ -69,6 +76,11 @@ member breakdowns need include_dimensions, axis or member.
 disclosure table — as rows in filing order with values per period column.
 - calculation answers "what sums to X": the calculation-linkbase children with \
 their weights, the computed sum against the reported total, per period.
+
+RECORDS (XML filings)
+- records returns the form's own tables — a Form 4's transactions and \
+holdings, a 13F's positions — as rows with the header fields beside them. \
+describe_filing's `sections.records` lists the tables and their columns.
 
 TEXT
 - search_text is a regular-expression search over the readable text — the \
@@ -389,6 +401,26 @@ def build_server(
         session.get(filing), concept, role=role, period_end=period_end
       )
     )
+
+  @server.tool(
+    name="records",
+    description=(
+      "The record tables of an XML filing — a Form 4's transactions and "
+      "holdings, a 13F's positions — as rows, with the document's header "
+      "fields beside them. Omit `table` for every table; describe_filing's "
+      "`sections.records` lists their names and columns."
+    ),
+    structured_output=False,
+  )
+  def records(
+    filing: Filing = None,
+    table: Annotated[
+      str | None,
+      Field(description="One table's name; omit for all of them."),
+    ] = None,
+    limit: Annotated[int, Field(description="Rows per table.", ge=1, le=1000)] = 100,
+  ) -> str:
+    return run(lambda: tools.records(session.get(filing), table=table, limit=limit))
 
   text_scope = (
     "the filing's primary document as plain text — every Item, note, table, "
