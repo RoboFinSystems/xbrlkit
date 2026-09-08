@@ -36,6 +36,7 @@ Both call :func:`build_holon_dataset`, so the holon is derived one way.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 from rdflib import RDF, Dataset, Graph, URIRef
 
@@ -154,19 +155,23 @@ def build_holon_dataset(g: Graph, root: URIRef) -> Dataset:
 # ── Serializers ────────────────────────────────────────────────────────────
 
 
-def serialize_holon_jsonld_from_graph(g: Graph, root: URIRef) -> str:
+def serialize_holon_jsonld_from_graph(
+  g: Graph, root: URIRef, *, namespaces: Mapping[str, str] | None = None
+) -> str:
   """Serialize a flat report graph to the canonical **dataset-form JSON-LD**
   holon — ``{"@context", "@graph": [ {@id: …#scene, @graph: […]}, … ]}``.
 
   Passing the canonical ``@context`` compacts qnames and keeps the emitted
   vocabulary identical to the flat JSON-LD bundle; without it rdflib dumps its
-  entire built-in prefix registry into ``@context``.
+  entire built-in prefix registry into ``@context``. ``namespaces`` adds the
+  prefixes this report declares, so its concepts compact against the taxonomy
+  the filing actually used.
   """
   ds = build_holon_dataset(g, root)
   text = ds.serialize(
     format="json-ld",
     auto_compact=True,
-    context=_build_context(),
+    context=_build_context(namespaces),
     indent=2,
     sort_keys=True,
   )

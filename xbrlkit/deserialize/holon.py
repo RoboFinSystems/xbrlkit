@@ -56,6 +56,7 @@ from ..model import (
   XbrlModel,
 )
 from ..namespaces import CONCEPT_BASE, HOLON_VOCAB
+from ..serialize.tavi import LABEL_ROLE_TYPES
 from ..parse.ids import unit_id
 from ..periods import duration_period, forever_period, instant_period
 
@@ -71,6 +72,15 @@ FACT = "Fact"
 DIMENSION = "Dimension"
 STRUCTURE = "Structure"
 ASSOCIATION = "Association"
+
+# Vocabulary term -> label role URI, inverted from the emitter's own map so a
+# role a holon writes and a role this reads cannot drift apart. `prefLabel` and
+# `documentation` are the two roles with a predicate of their own.
+LABEL_TERM_ROLES: dict[str, str] = {
+  label_type.split(":", 1)[-1]: role for role, label_type in LABEL_ROLE_TYPES.items()
+}
+STANDARD_LABEL_ROLE_URI = "http://www.xbrl.org/2003/role/label"
+DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
 
 PARENT_CHILD_ARCROLE = "http://www.xbrl.org/2003/arcrole/parent-child"
 SUMMATION_ITEM_ARCROLE = "http://www.xbrl.org/2003/arcrole/summation-item"
@@ -163,15 +173,13 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
     raise HolonError("no rs:Fact or rs:Element nodes")
   gaps = ImportGaps(
     missing=[
-      "label roles beyond the preferred label",
-      "taxonomy namespace URIs (prefixes bind to year-less stems)",
-      "duplicate facts (collapsed at emit)",
-      "fact language",
-      "the nil-versus-empty-string distinction",
-      "concept nillable and item type QName",
-      "hypercube declarations",
-      "concept references",
+      "an element no fact, network or dimension mentions",
+      "concept references (the reference linkbase)",
+      "the fraction flag and Arelle's display type",
       "network role_id",
+      "fact source_hash and raw_value",
+      "whether the filing behind the report was inline XBRL",
+      "is_text_fact for a concept that reports nothing",
     ]
   )
 
@@ -183,6 +191,7 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   facts = _facts(
     by_type.get(FACT, []), concepts, periods, units, dimensions, entity, prefixes, gaps
   )
+  _mark_text_facts(concepts, facts)
   networks = _networks(
     by_type.get(ASSOCIATION, []), by_type.get(STRUCTURE, []), prefixes, concepts
   )
@@ -346,18 +355,26 @@ def _concepts(
     prefix, _, local = qname.partition(":")
     domain = _text(node.get("itemType")) or ""
     abstract = _bool(node.get("abstract"))
+    declared = _text(node.get("dataType"))
     # `string` is the holon's fallback domain, written for every element it
     # cannot place — an abstract heading included. On an element that reports
     # nothing it carries no information, so it is not read back as a type.
-    item_type = (
-      None
-      if abstract and domain == "string"
-      else HOLON_ITEM_TYPES.get(domain, domain or None)
-    )
+    # `dataType` is the type the taxonomy declared; `itemType` is only the
+    # domain it was bucketed into, so the declared one wins where it is there.
+    # A holon written before `dataType` existed has the domain alone — and its
+    # `string` is the catch-all written for everything the emitter could not
+    # place, so it is read as no type rather than as a string type.
+    item_type_qname = declared if declared and ":" in declared else None
+    if declared:
+      item_type = declared.split(":", 1)[-1]
+    elif domain and domain != "string":
+      item_type = HOLON_ITEM_TYPES.get(domain, domain)
+    else:
+      item_type = None
     pref_label = _text(node.get("prefLabel"))
     concepts[qname] = Concept(
       qname=qname,
-      namespace=prefixes.get(prefix, "") if local else "",
+      namespace=_namespace(prefix, prefixes) if local else "",
       name=local or qname,
       period_type=_period_type(node.get("periodType")),
       balance=_balance(node.get("balance")),
@@ -366,18 +383,72 @@ def _concepts(
       is_textblock=domain == "textBlock",
       is_shares=domain == "shares",
       is_integer=domain == "integer",
-      is_text_fact=domain == "textBlock" or (domain == "string" and not abstract),
+      # Whether a fact of this concept is an OIM text fact is settled by the
+      # facts themselves further down — a language is written for one and not
+      # for anything else — because the declared type cannot answer it: both
+      # `dei:centralIndexKeyItemType` and `dei:yesNoItemType` derive from
+      # token and only one of them takes a language. A text block is one
+      # whatever its facts carry.
+      is_text_fact=domain == "textBlock",
       is_hypercube_item=kind == "hypercube",
       is_dimension_item=kind == "axis",
       is_domain_member=kind == "member",
       substitution_group=_text(node.get("substitutionGroup")),
       item_type=item_type,
-      pref_label=pref_label,
-      labels=(
-        [Label(value=pref_label, role=STANDARD_LABEL_ROLE)] if pref_label else []
+      item_type_qname=item_type_qname,
+      item_type_namespace=(
+        _namespace(item_type_qname.split(":", 1)[0], prefixes)
+        if item_type_qname
+        else None
       ),
+      nillable=_bool(node.get("nillable")),
+      base_xsd_type=_text(node.get("baseType")),
+      pref_label=pref_label,
+      labels=_concept_labels(node, pref_label),
     )
   return concepts
+
+
+def _concept_labels(node: Mapping[str, Any], pref_label: str | None) -> list[Label]:
+  """Every label on an element: the preferred one plus a term per label role.
+
+  Each role has a term of its own, so they come back with their language
+  intact. ``skos:prefLabel`` is the same text as the standard-role label and is
+  only read when no term carried it — which is how a holon written before the
+  terms existed still yields a label.
+  """
+  labels: list[Label] = []
+  for key, value in node.items():
+    role = (
+      DOCUMENTATION_LABEL_ROLE if key == "documentation" else LABEL_TERM_ROLES.get(key)
+    )
+    if role is None:
+      continue
+    for entry in _list(value):
+      # An empty label is not a missing one — the model keeps the difference —
+      # so this reads the value rather than asking whether it is truthy.
+      text = entry.get("@value") if isinstance(entry, Mapping) else entry
+      if not isinstance(text, str):
+        continue
+      language = _text(entry.get("@language")) if isinstance(entry, Mapping) else None
+      labels.append(Label(value=text, role=role, language=language))
+  if pref_label and not any(label.role == STANDARD_LABEL_ROLE_URI for label in labels):
+    # A holon written before the label terms existed has the preferred label
+    # and nothing else, and the preferred label *is* the standard-role one.
+    labels.insert(0, Label(value=pref_label, role=STANDARD_LABEL_ROLE_URI))
+  return labels
+
+
+def _namespace(prefix: str, prefixes: Mapping[str, str]) -> str:
+  """The namespace a prefix names, as the model writes it — no separator.
+
+  The document binds a prefix to the stem a local name appends to, so the
+  fragment separator comes off again here: an XBRL target namespace is
+  ``http://fasb.org/us-gaap/2024``, and the ``#`` belongs to the concept IRI
+  rather than to the namespace.
+  """
+  stem = prefixes.get(prefix, "")
+  return stem[:-1] if stem.endswith("#") else stem
 
 
 def _periods(
@@ -494,7 +565,7 @@ def _facts(
       gaps.unresolved_references += 1
       continue
     unit = units.get(_reference(node.get("unit")))
-    numeric_text = _decimal(_text(node.get("numericValue")))
+    numeric_text = _text(node.get("numericValue"))
     string_value = node.get("stringValue")
     value_str = numeric_text if numeric_text is not None else _text(string_value)
     dims = [
@@ -502,6 +573,9 @@ def _facts(
       for ref in (_reference(entry) for entry in _list(node.get("dimension")))
       if ref in dimensions
     ]
+    # `isNil` says it outright; a holon written before it existed leaves an
+    # empty value behind, which is the same shape as a fact reported empty.
+    declared_nil = node.get("isNil")
     facts.append(
       XbrlFact(
         id=_text(node.get("internalId")) or _text(node.get("@id")) or "",
@@ -516,10 +590,26 @@ def _facts(
         numeric_value=_float(numeric_text),
         decimals=_text(node.get("decimals")),
         value_kind="numeric" if unit is not None else "text",
-        is_nil=value_str is None,
+        is_nil=_bool(declared_nil) if declared_nil is not None else value_str is None,
+        language=_text(node.get("language")),
       )
     )
   return facts
+
+
+def _mark_text_facts(concepts: dict[str, Concept], facts: Sequence[XbrlFact]) -> None:
+  """A fact carrying a language settles its concept's text-fact flag.
+
+  The same rule the Tavi importer applies, over the same evidence: the emitters
+  write a language for an OIM text fact and for nothing else, so a fact that
+  has one says what its type could not.
+  """
+  for fact in facts:
+    if not fact.language:
+      continue
+    concept = concepts.get(fact.concept_qname)
+    if concept is not None:
+      concept.is_text_fact = True
 
 
 # -- networks --------------------------------------------------------------------
@@ -650,22 +740,6 @@ def _bool(value: Any, *, default: bool = False) -> bool:
   if text is None:
     return default
   return text.lower() == "true"
-
-
-def _decimal(value: str | None) -> str | None:
-  """A number the holon wrote in float form, as the lexical value it was.
-
-  ``rs:numericValue`` is written from the parsed float, so a whole number comes
-  back as ``1000.0``. Dropping the empty fraction is the same convention the
-  Tavi emitter applies to the same value, so both importers agree.
-  """
-  if value is None:
-    return None
-  try:
-    number = float(value)
-  except ValueError:
-    return value
-  return str(int(number)) if number.is_integer() else value
 
 
 def _float(value: Any) -> float | None:

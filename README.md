@@ -94,16 +94,26 @@ What each format loses, measured by round trip:
 
 | | Tavi | holon |
 | --- | --- | --- |
-| loses | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | every label role but the preferred one — recovered from the presentation associations, which carry the label they resolved to — plus `nillable`, the declared item type (it keeps a value *domain*), the namespace year, and fact language |
-| keeps | every label role, the datatype detail, the filing's namespaces | the definition networks, the hypercube/axis/member kinds, the whole `rs:Report` node, the filing's own measure tokens |
-| facts | one per reported fact | one per **distinct** fact: a holon addresses a fact by its content-derived id, so a filing's duplicates arrive as one |
+| loses | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | an element no fact, network or dimension mentions; the reference linkbase; a fact's source hash |
+| keeps | every label role, the datatype detail, the filing's namespaces | everything else — every fact with its value, decimals, dimensions, nil flag and language; every label with its role and language; all three network kinds with order, weight, preferred label and roots; the concept fields; units and periods with their ids |
+| facts | one per reported fact | one per **distinct** fact when the parse gave duplicates the same content-derived id |
 
-The gate is that the two agree where it counts, and they do: across the
-26-filing corpus of 2024-2025 10-Ks and 10-Qs the [Filing
-Ladder](https://github.com/HarbingerFinLab/filing-ladder) is built on, every
-filing read from its Tavi and from its holon renders **all 2,915 presentation
-networks identically** — same rows, same order, same labels — with the same
-calculation networks and the same `fact_grid` answers on all 26.
+**The holon is lossless against the model**, and the round trip is what made it
+so: writing the importer measured what the emitter was dropping, and the
+emitter was then fixed — the label palette, `nillable`, the declared item type,
+fact language, `xsi:nil`, the lexical value a filer wrote (`0.0500` is a rate
+stated to four places, not `Decimal(str(0.05))`), and the namespace each prefix
+actually binds to. That last one also shrank the document: a filer's own
+concepts compact to `ba:Revenue` now instead of spelling out a robosystems.ai
+URL, so the corpus went from 204 MiB to 182 MiB while carrying more.
+
+Two gates, both on the 26-filing corpus of 2024-2025 10-Ks and 10-Qs the
+[Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) is built on:
+model → holon → model is **identical on all 26** across facts, labels,
+networks, concept fields, units and periods; and reading each filing from its
+Tavi and from its holon renders **all 2,915 presentation networks identically**
+— same rows, same order, same labels — with the same calculation networks and
+the same `fact_grid` answers.
 
 ## Property graph
 

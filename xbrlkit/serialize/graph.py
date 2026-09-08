@@ -32,9 +32,12 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from rdflib import RDF, XSD, Graph, Literal, URIRef
+from collections.abc import Mapping
 
-from ..model import Concept, Network, XbrlModel
+from rdflib import RDF, RDFS, XSD, Graph, Literal, URIRef
+
+from ..model import Concept, Network, Unit, XbrlModel
+from .tavi import LABEL_ROLE_TYPES
 from ..namespaces import FACTSET_BASE, REPORT_BASE
 from ._kernel.jsonld import (
   LINK,
@@ -52,10 +55,85 @@ from ._kernel.jsonld import (
 
 _FACTSET_BASE = FACTSET_BASE
 
+# Label role URI -> the vocabulary term its labels are written under. Derived
+# from the Tavi emitter's role map so the two projections name a role the same
+# way and neither can drift: Tavi's `xbrl:terseLabel` is this `rs:terseLabel`.
+LABEL_ROLE_TERMS: dict[str, str] = {
+  role: label_type.split(":", 1)[-1] for role, label_type in LABEL_ROLE_TYPES.items()
+}
+# The two roles that already have a predicate: the standard label is what
+# `skos:prefLabel` means, and a documentation label is `rdfs:comment`.
+STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
+DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
+
 
 def _slug(value: str) -> str:
   """A short, stable, path-safe id for a role/dimension URI."""
   return hashlib.md5(value.encode()).hexdigest()[:16]
+
+
+def namespace_bindings(model: XbrlModel) -> dict[str, str]:
+  """Prefix -> namespace for the taxonomies *this filing* declares.
+
+  The concepts carry their real namespace, so the document can bind its own
+  prefixes rather than lean on a fixed table of year-normalized stems. Two
+  things were wrong with that table: it addressed a us-gaap concept inside
+  FASB's namespace at an IRI FASB never minted (`…/us-gaap/Revenues`, no year),
+  and it had no entry at all for a filer's own taxonomy, so every extension
+  concept fell back to a robosystems.ai URL and never compacted to a QName.
+  Year-independent identity is `rs-gaap`'s job — a real taxonomy with
+  equivalence arcs onto each us-gaap version — not something to fake by
+  dropping the year out of somebody else's namespace.
+
+  A prefix a filing binds twice is left out: it cannot compact unambiguously,
+  and the QName-carrying fallback is the honest answer for it.
+  """
+  seen: dict[str, set[str]] = {}
+  for concept in model.concepts.values():
+    # A concept's own namespace, and the one its declared type lives in: a
+    # filing can name a type from a taxonomy it declares no concept from (the
+    # DTR types), and that prefix needs binding too or the type comes back
+    # without its namespace.
+    for qname, namespace in (
+      (concept.qname, concept.namespace),
+      (concept.item_type_qname, concept.item_type_namespace),
+    ):
+      if not qname or not namespace:
+        continue
+      prefix, _, local = qname.partition(":")
+      if local:
+        seen.setdefault(prefix, set()).add(namespace)
+  # A unit is a QName too, and its namespace may be one no concept declares —
+  # the unit registry, a filer's own unit of measure.
+  for unit in model.units:
+    for token, uri in _measure_parts(unit):
+      prefix, _, local = token.partition(":")
+      namespace = uri[: -len(local) - 1] if local and uri.endswith(f"#{local}") else ""
+      if local and namespace:
+        seen.setdefault(prefix, set()).add(namespace)
+  return {
+    prefix: _namespace_stem(next(iter(namespaces)))
+    for prefix, namespaces in sorted(seen.items())
+    if len(namespaces) == 1
+  }
+
+
+def _measure_parts(unit: Unit) -> list[tuple[str, str]]:
+  """A unit's measure token(s) paired with the URI each resolved to."""
+  if unit.numerator_uri and unit.denominator_uri and "/" in unit.measure:
+    numerator, _, denominator = unit.measure.partition("/")
+    return [(numerator, unit.numerator_uri), (denominator, unit.denominator_uri)]
+  return [(unit.measure, unit.uri)] if unit.uri else []
+
+
+def _namespace_stem(namespace: str) -> str:
+  """A namespace as the stem a local name appends to.
+
+  An XBRL target namespace names the schema, and a concept in it is a fragment
+  of that schema, so the separator is `#` unless the namespace already ends in
+  one or is written as a path.
+  """
+  return namespace if namespace.endswith(("#", "/")) else f"{namespace}#"
 
 
 def _factset_uri(role_uri: str) -> URIRef:
@@ -108,24 +186,35 @@ class _Structure:
     return bool(self.presentation)
 
 
-def build_holon_graph(model: XbrlModel, *, report_id: str | None = None) -> Graph:
-  """Assemble the flat holon graph from the whole ``XbrlModel`` slice."""
+def build_holon_graph(
+  model: XbrlModel,
+  *,
+  report_id: str | None = None,
+  namespaces: Mapping[str, str] | None = None,
+) -> Graph:
+  """Assemble the flat holon graph from the whole ``XbrlModel`` slice.
+
+  ``namespaces`` is the prefix map the concepts resolve against; it defaults to
+  the filing's own (:func:`namespace_bindings`) and must be the same map the
+  document's ``@context`` is built from, or the emitted IRIs will not compact.
+  """
   report_id = report_id or model.filing.accession
   root = holon_root(report_id)
   entity_node = _scoped(root, "entity", model.entity.cik)
+  ns = namespace_bindings(model) if namespaces is None else dict(namespaces)
 
   g = Graph()
   _add_root(g, model, root, entity_node)
-  _add_elements(g, model)
+  _add_elements(g, model, ns)
   _add_periods(g, model, root)
-  _add_units(g, model, root)
+  _add_units(g, model, root, ns)
 
   structures = _plan_structures(model)
-  _add_structures(g, structures, root, model)
+  _add_structures(g, structures, root, model, ns)
 
-  dim_uris = _add_dimensions(g, model, root)
+  dim_uris = _add_dimensions(g, model, root, ns)
   membership = _fact_membership(model, structures)
-  _add_facts(g, model, root, entity_node, dim_uris, membership)
+  _add_facts(g, model, root, entity_node, dim_uris, membership, ns)
   _add_information_blocks(g, structures, membership, root)
   return g
 
@@ -161,6 +250,16 @@ def _add_root(
     g.add((root, RS.fiscalPeriodFocus, Literal(filing.fiscal_period_focus)))
   if filing.fiscal_year_end_month:
     g.add((root, RS.fiscalYearEndMonth, Literal(filing.fiscal_year_end_month)))
+  # The period the report covers, as EDGAR records it — distinct from the date
+  # it was filed, and the field every consumer sorts a filer's reports by.
+  if filing.report_date:
+    g.add(
+      (
+        root,
+        RS.periodEndDate,
+        Literal(filing.report_date.isoformat(), datatype=XSD.date),
+      )
+    )
 
   g.add((entity_node, RDF.type, RS.Entity))
   name = model.entity.name or model.entity.cik
@@ -176,9 +275,9 @@ def _add_root(
 # ── Elements (rs:Element per concept — full DTS coverage) ───────────────────
 
 
-def _add_elements(g: Graph, model: XbrlModel) -> None:
+def _add_elements(g: Graph, model: XbrlModel, ns: Mapping[str, str]) -> None:
   for qname, concept in sorted(model.concepts.items()):
-    uri = _concept_uri(qname)
+    uri = _concept_uri(qname, ns)
     g.add((uri, RDF.type, RS.Element))
     if concept.balance:
       g.add((uri, XBRLI.balance, Literal(concept.balance)))
@@ -189,12 +288,59 @@ def _add_elements(g: Graph, model: XbrlModel) -> None:
     g.add((uri, RS.abstract, Literal(concept.is_abstract, datatype=XSD.boolean)))
     g.add((uri, RS.elementType, Literal(_element_type(concept))))
     g.add((uri, RS.itemType, Literal(_item_type(concept))))
+    # `itemType` is the value *domain* a renderer formats by, and several XBRL
+    # types share one (`dei:yesNoItemType` is a `string`). The declared type is
+    # what the filing actually says, so it is carried beside it rather than
+    # instead of it.
+    declared = concept.item_type_qname or concept.item_type
+    if declared:
+      g.add((uri, RS.dataType, Literal(declared)))
+    if concept.base_xsd_type:
+      g.add((uri, RS.baseType, Literal(concept.base_xsd_type)))
+    if concept.nillable:
+      g.add((uri, RS.nillable, Literal(True, datatype=XSD.boolean)))
     if concept.pref_label:
       g.add((uri, SKOS.prefLabel, Literal(concept.pref_label)))
+    _add_labels(g, uri, concept)
     if concept.substitution_group:
-      g.add((uri, RS.substitutionGroup, _concept_uri(concept.substitution_group)))
+      g.add((uri, RS.substitutionGroup, _concept_uri(concept.substitution_group, ns)))
     g.add((uri, RS.internalId, Literal(qname)))
     g.add((uri, RS.source, Literal(_source_of(qname))))
+
+
+def _add_labels(g: Graph, uri: URIRef, concept: Concept) -> None:
+  """Every label the concept carries, one predicate per label role.
+
+  ``skos:prefLabel`` alone says what to call an element and nothing about how a
+  filer chose to call it in one place — the negated, total and period-start
+  forms a statement renders under, and the documentation the taxonomy defines
+  it with. Those are one triple each rather than a node each: a label is a
+  literal with a role, and reifying it would add a node per label (a third
+  again as many nodes as the whole report) to say the same thing.
+
+  A role the vocabulary does not name falls back to ``skos:altLabel``, which
+  keeps the text and loses only which kind of alternative it was.
+  """
+  for label in concept.labels:
+    if label.value is None:
+      continue
+    # `skos:prefLabel` stays a plain string — it is what every consumer of a
+    # holon reads an element's name from — and the standard-role label is
+    # written beside it as well, because that one carries a language and the
+    # preferred label has nowhere to put it.
+    term = LABEL_ROLE_TERMS.get(label.role or "")
+    if label.role == DOCUMENTATION_LABEL_ROLE:
+      predicate = RDFS.comment
+    elif term:
+      predicate = RS[term]
+    else:
+      predicate = SKOS.altLabel
+    literal = (
+      Literal(label.value, lang=label.language)
+      if label.language
+      else Literal(label.value)
+    )
+    g.add((uri, predicate, literal))
 
 
 def _element_type(concept: Concept) -> str:
@@ -276,11 +422,11 @@ def _add_periods(g: Graph, model: XbrlModel, root: URIRef) -> None:
       g.add((uri, RS.calendarPeriodKey, Literal(period.calendar_period_key)))
 
 
-def _add_units(g: Graph, model: XbrlModel, root: URIRef) -> None:
+def _add_units(g: Graph, model: XbrlModel, root: URIRef, ns: Mapping[str, str]) -> None:
   for unit in model.units:
     uri = _scoped(root, "unit", unit.id)
     g.add((uri, RDF.type, RS.Unit))
-    g.add((uri, XBRLI.measure, _measure_uri(unit.measure)))
+    g.add((uri, XBRLI.measure, _measure_uri(unit.measure, ns)))
 
 
 # ── Structures (rs:Structure + reified rs:Association for every network) ─────
@@ -338,7 +484,11 @@ def _preferred_label_text(model: XbrlModel, qname: str, role: str) -> str | None
 
 
 def _add_structures(
-  g: Graph, structures: dict[str, _Structure], root: URIRef, model: XbrlModel
+  g: Graph,
+  structures: dict[str, _Structure],
+  root: URIRef,
+  model: XbrlModel,
+  ns: Mapping[str, str],
 ) -> None:
   for st in structures.values():
     s_uri = _scoped(root, "structure", st.slug)
@@ -370,8 +520,8 @@ def _add_structures(
           g.add((a_uri, RDF.type, RS.Association))
           if kind == "calculation":
             g.add((a_uri, RDF.type, RS.RollUpRelationship))
-          g.add((a_uri, XLINK["from"], _concept_uri(arc.from_qname)))
-          g.add((a_uri, XLINK.to, _concept_uri(arc.to_qname)))
+          g.add((a_uri, XLINK["from"], _concept_uri(arc.from_qname, ns)))
+          g.add((a_uri, XLINK.to, _concept_uri(arc.to_qname, ns)))
           g.add((a_uri, RS.associationType, Literal(kind)))
           # The filer's per-arc label choice: the role URI (negated* roles carry
           # the display-sign semantic) plus the resolved label string, so a
@@ -409,7 +559,9 @@ def _dim_key(axis: str, member: str | None, typed: str | None) -> str:
   return f"{axis}|{member or ''}|{typed or ''}"
 
 
-def _add_dimensions(g: Graph, model: XbrlModel, root: URIRef) -> dict[str, URIRef]:
+def _add_dimensions(
+  g: Graph, model: XbrlModel, root: URIRef, ns: Mapping[str, str]
+) -> dict[str, URIRef]:
   """Emit one rs:Dimension per unique (axis, member/typed) across all facts."""
   uris: dict[str, URIRef] = {}
   for fact in model.facts:
@@ -420,11 +572,11 @@ def _add_dimensions(g: Graph, model: XbrlModel, root: URIRef) -> dict[str, URIRe
       d_uri = _scoped(root, "dimension", _slug(key))
       uris[key] = d_uri
       g.add((d_uri, RDF.type, RS.Dimension))
-      g.add((d_uri, RS.axis, _concept_uri(dim.axis_qname)))
+      g.add((d_uri, RS.axis, _concept_uri(dim.axis_qname, ns)))
       g.add((d_uri, RS.isExplicit, Literal(dim.is_explicit, datatype=XSD.boolean)))
       g.add((d_uri, RS.isTyped, Literal(not dim.is_explicit, datatype=XSD.boolean)))
       if dim.member_qname:
-        g.add((d_uri, RS.member, _concept_uri(dim.member_qname)))
+        g.add((d_uri, RS.member, _concept_uri(dim.member_qname, ns)))
       if dim.typed_value is not None:
         g.add((d_uri, RS.typedValue, Literal(dim.typed_value)))
       if dim.axis_type:
@@ -460,24 +612,25 @@ def _add_facts(
   entity_node: URIRef,
   dim_uris: dict[str, URIRef],
   membership: dict[str, set[str]],
+  ns: Mapping[str, str],
 ) -> None:
   for fact in model.facts:
     uri = _scoped(root, "fact", fact.id)
     g.add((uri, RDF.type, RS.Fact))
-    g.add((uri, RS.element, _concept_uri(fact.concept_qname)))
+    g.add((uri, RS.element, _concept_uri(fact.concept_qname, ns)))
     g.add((uri, RS.entity, entity_node))
     g.add((uri, RS.period, _scoped(root, "period", fact.period_id)))
     if fact.unit_id is not None:
       g.add((uri, RS.unit, _scoped(root, "unit", fact.unit_id)))
 
     if fact.value_kind == "numeric" and fact.numeric_value is not None:
-      g.add(
-        (
-          uri,
-          RS.numericValue,
-          Literal(Decimal(str(fact.numeric_value)), datatype=XSD.decimal),
-        )
-      )
+      # The value as the filing wrote it, not the float's repr: `0.0500` is a
+      # rate stated to four places and `Decimal(str(0.05))` is not the same
+      # statement. Both are valid xsd:decimal, so nothing downstream has to
+      # change to read it, and the lexical form is what every other projection
+      # of this model carries.
+      lexical = fact.value_str or str(Decimal(str(fact.numeric_value)))
+      g.add((uri, RS.numericValue, Literal(lexical, datatype=XSD.decimal)))
       g.add((uri, RS.factType, Literal("numeric")))
       if fact.decimals is not None:
         g.add((uri, RS.decimals, Literal(fact.decimals)))
@@ -485,6 +638,15 @@ def _add_facts(
       if fact.value_str is not None:
         g.add((uri, RS.stringValue, Literal(fact.value_str)))
       g.add((uri, RS.factType, Literal("nonnumeric")))
+
+    # xsi:nil — reported as *not disclosed*, which an empty value alone cannot
+    # say. Written only when true, so its absence is the ordinary case.
+    if fact.is_nil:
+      g.add((uri, RS.isNil, Literal(True, datatype=XSD.boolean)))
+    # XBRL carries a language on non-numeric facts and every other projection
+    # of this model writes it; the holon was dropping it.
+    if fact.language:
+      g.add((uri, RS.language, Literal(fact.language)))
 
     g.add((uri, RS.internalId, Literal(fact.id)))
 
