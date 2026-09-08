@@ -127,7 +127,7 @@ claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 Or without installing anything:
 
 ```bash
-uvx --from "xbrlkit[mcp]@latest" xbrlkit serve NVDA
+uvx --from "xbrlkit[mcp]@latest" xbrlkit serve
 ```
 
 Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a

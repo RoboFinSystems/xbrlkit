@@ -8,7 +8,8 @@ calculation roll-up, text search and read — so a reader that knows one knows
 the other, with nothing behind them but the filing. Needs the ``mcp`` extra::
 
     pip install "xbrlkit[mcp]"
-    xbrlkit serve NVDA            # or a path, a URL, cik:accession
+    xbrlkit serve                 # then load_filing a ticker, a path, a URL,
+                                  # cik:accession or lei: from the client
     # → MCP over Streamable HTTP at http://127.0.0.1:8765/mcp
 
 :class:`FilingSession` holds the loaded filings; :func:`build_server`
