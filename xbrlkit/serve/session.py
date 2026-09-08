@@ -1,7 +1,8 @@
 """The filings a running server holds, and how each one gets there.
 
 A :class:`FilingSession` turns a *source* — a local file, directory or zip,
-an ``http(s)`` URL, an EDGAR ``cik:accession`` pair, or a ticker — into a
+an ``http(s)`` URL, an EDGAR ``cik:accession`` pair, a ticker, or — outside
+the SEC — an ``lei:`` or a filings.xbrl.org filing id — into a
 :class:`LoadedFiling`: the neutral :class:`~xbrlkit.model.XbrlModel`, the
 primary document as plain text (the search and read target), and a section
 map over that text (the 10-K Items and the tagged text blocks, with their
@@ -43,6 +44,12 @@ _PLAIN_SUFFIXES = {".txt", ".md"}
 _DOCUMENT_SUFFIXES = _INLINE_SUFFIXES | _PLAIN_SUFFIXES | {".xml"}
 _ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 _CIK_ACCESSION_RE = re.compile(r"^(\d{1,10})[:/](\d{10}-\d{2}-\d{6})$")
+# filings.xbrl.org: a filer by LEI (20 alphanumerics), or one filing by the
+# index's own id. Neither can be mistaken for an EDGAR accession or a ticker.
+_LEI_RE = re.compile(r"^lei[:/]([A-Za-z0-9]{20})$", re.IGNORECASE)
+_FXO_RE = re.compile(
+  r"^(?:fxo[:/])?([A-Za-z0-9]{20}-\d{4}-\d{2}-\d{2}-[A-Za-z0-9\-]+)$"
+)
 _TICKER_RE = re.compile(r"^([A-Za-z][A-Za-z0-9.\-]{0,9})(?:\s+([0-9A-Za-z\-/]+))?$")
 
 logger = logging.getLogger(__name__)
@@ -214,6 +221,12 @@ class FilingSession:
     m = _CIK_ACCESSION_RE.match(source)
     if m:
       return self._load_edgar(m.group(1), m.group(2), source)
+    m = _LEI_RE.match(source)
+    if m:
+      return self._load_filings_org(lei=m.group(1), source=source)
+    m = _FXO_RE.match(source)
+    if m:
+      return self._load_filings_org(fxo_id=m.group(1), source=source)
     if _ACCESSION_RE.match(source):
       # The accession's prefix is the *filer agent's* CIK, which is the
       # company's own for self-filers; when it is not, EDGAR has no zip at
@@ -230,7 +243,8 @@ class FilingSession:
       return self._load_ticker(m.group(1), m.group(2) or "10-K", source)
     raise SourceError(
       f"Cannot resolve {source!r}: give a local path, a URL, `cik:accession`, "
-      "or a ticker (optionally followed by a form, e.g. `NVDA 10-Q`)."
+      "a ticker (optionally followed by a form, e.g. `NVDA 10-Q`), or — for a "
+      "filing outside EDGAR — `lei:<LEI>` or a filings.xbrl.org filing id."
     )
 
   def _load_local(self, path: Path, source: str) -> LoadedFiling:
@@ -554,6 +568,44 @@ class FilingSession:
       for document, _ in written
       if document is not primary
     ]
+    return loaded
+
+  def _load_filings_org(
+    self, source: str, lei: str = "", fxo_id: str = ""
+  ) -> LoadedFiling:
+    """A filing from XBRL International's index — ESEF and the national regimes.
+
+    The package is downloaded and loaded exactly as a local one is: it carries
+    the filer's own extension taxonomy, which is what lets a report that cites
+    ``http://<the filer's domain>/...`` resolve at all. Identity comes from the
+    index — the LEI and the filer's name — because these filings carry no CIK
+    and no EDGAR record to ask.
+    """
+    from xbrlkit.filings_org import FilingsOrgClient, download_filing
+
+    client = FilingsOrgClient(config=self.config)
+    try:
+      record = client.latest_filing(lei) if lei else client.filing(fxo_id)
+    except LookupError as exc:
+      raise SourceError(str(exc)) from exc
+    if not record.has_package:
+      logger.warning(
+        "%s has no taxonomy package; its report must resolve %s's taxonomy "
+        "over the network",
+        record.fxo_id,
+        record.country or "its regime",
+      )
+    package_dir = self._tmp / record.fxo_id
+    archive = download_filing(client, record, package_dir)
+    loaded = self._load_local(archive, source)
+    loaded.id = record.fxo_id
+    filing, entity = loaded.model.filing, loaded.model.entity
+    filing.accession = filing.accession or record.fxo_id
+    if record.period_end and filing.report_date is None:
+      filing.report_date = _parse_iso_date(record.period_end)
+    if record.entity:
+      entity.name = entity.name or record.entity.name
+      entity.legal_name = entity.legal_name or record.entity.name
     return loaded
 
   def _load_ticker(self, ticker: str, form: str, source: str) -> LoadedFiling:
