@@ -332,6 +332,11 @@ class FilingSession:
     if match is None:
       names = [d.document for d in self.other_documents(lf)]
       raise SourceError(f"No document {name!r} in this filing; it has {names}")
+    if not match.is_readable:
+      raise SourceError(
+        f"{match.document} is a {match.suffix or 'binary'} document, which this "
+        f"server does not read. It is at {match.url} — fetch it there."
+      )
     cached = lf.read_documents.get(match.document)
     if cached is not None:
       return cached
@@ -456,9 +461,12 @@ class FilingSession:
         f"EDGAR holds no XBRL and names no document for {accession}; nothing to read."
       )
     if Path(name).suffix.lower() not in _DOCUMENT_SUFFIXES:
+      from xbrlkit.edgar.download import primary_document_url
+
+      where = primary_document_url(self.config.sec_base_url, cik, accession, name)
       raise SourceError(
-        f"{accession} is a {Path(name).suffix or 'binary'} document "
-        f"({name}); this reads XBRL, HTML and XML filings."
+        f"{accession} is a {Path(name).suffix or 'binary'} document ({name}), "
+        f"which this server does not read. It is at {where} — fetch it there."
       )
     package_dir = self._tmp / accession
     document = download_primary_document(client, cik, accession, package_dir, name)

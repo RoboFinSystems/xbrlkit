@@ -24,11 +24,19 @@ is already loaded from the zip. And a document EDGAR serves twice — a source
 ``.xml`` beside its rendered ``.html`` twin, as 13F does — is kept once, as the
 source, for the same reason the ownership forms are read from the submitted XML
 rather than the page EDGAR renders from it.
+
+Everything else is listed **whether or not this library can read it**, with the
+URL it lives at. A PDF annual report and a chart the filer embedded as an image
+are content; that they are not HTML or XML is a fact about this reader, not
+about the filing. A caller that can open a PDF — an agent with the file, a
+browser, a human — only needs to be told where it is, and saying "there is a
+PDF exhibit here, at this address" is strictly better than pretending the
+filing has five documents when it has six.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -36,9 +44,9 @@ from .client import EdgarClient
 
 # The XBRL package, already loaded from the `-xbrl.zip`.
 _XBRL_PACKAGE_PREFIX = "EX-101"
-# Types that are not text: images the filer embedded, the renderer's spreadsheet
-# and zip copies of the filing itself.
-_NOT_TEXT = {"GRAPHIC", "EXCEL", "ZIP", "JSON"}
+# What the document lanes can read. Anything else is listed with its URL and
+# left to a caller that can open it.
+_READABLE_SUFFIXES = {".htm", ".html", ".xhtml", ".xml", ".txt", ".md"}
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,7 @@ class FilingDocument:
   document: str
   description: str = ""
   size: int = 0
+  url: str = ""
 
   @property
   def suffix(self) -> str:
@@ -60,8 +69,9 @@ class FilingDocument:
     return self.type.upper().startswith(_XBRL_PACKAGE_PREFIX)
 
   @property
-  def is_text(self) -> bool:
-    return self.type.upper() not in _NOT_TEXT
+  def is_readable(self) -> bool:
+    """Whether the document lanes can read this one, or only point at it."""
+    return self.suffix in _READABLE_SUFFIXES
 
 
 class _IndexTableParser(HTMLParser):
@@ -141,7 +151,7 @@ def other_documents(
   }
   keep: list[FilingDocument] = []
   for doc in documents:
-    if doc.is_xbrl_package or not doc.is_text:
+    if doc.is_xbrl_package:
       continue
     if doc.document.lower() == primary:
       continue
@@ -156,12 +166,18 @@ def other_documents(
 def fetch_filing_index(
   client: EdgarClient, cik: str, accession: str
 ) -> list[FilingDocument]:
-  """Fetch and read one filing's index page."""
+  """Fetch and read one filing's index page, with each document's URL."""
+  from .download import primary_document_url
+
+  base = client.config.sec_base_url
   url = (
-    f"{client.config.sec_base_url}/Archives/edgar/data/"
+    f"{base}/Archives/edgar/data/"
     f"{int(cik)}/{accession.replace('-', '')}/{accession}-index.htm"
   )
-  return parse_filing_index(client._get(url).text)
+  return [
+    replace(doc, url=primary_document_url(base, cik, accession, doc.document))
+    for doc in parse_filing_index(client._get(url).text)
+  ]
 
 
 __all__ = [

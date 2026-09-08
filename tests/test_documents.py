@@ -355,7 +355,7 @@ def test_the_index_page_lists_every_real_document() -> None:
   assert [d.type for d in docs if d.seq == 5] == ["EX-101.INS"]
 
 
-def test_other_documents_keeps_the_content_and_drops_the_rest() -> None:
+def test_other_documents_keeps_the_content_and_drops_the_redundant() -> None:
   from xbrlkit.edgar.filing_index import other_documents, parse_filing_index
 
   kept = other_documents(parse_filing_index(INDEX_PAGE), "primary_doc.xml")
@@ -363,15 +363,45 @@ def test_other_documents_keeps_the_content_and_drops_the_rest() -> None:
     # The holdings, as the source XML — not its rendered twin.
     ("56757.xml", "INFORMATION TABLE"),
     ("ex99-1.htm", "EX-99.1"),
+    # Listed although nothing here can read it: it is content, and the caller
+    # is told where it lives.
+    ("audit_001.jpg", "GRAPHIC"),
   ]
-  # Gone: the primary, its own rendered twin, the image, the XBRL package.
+  # Gone only where the content is already had: the primary, its own rendered
+  # twin, and the XBRL package loaded from the zip.
   names = {d.document for d in kept}
-  assert not names & {
-    "primary_doc.xml",
-    "primary_doc.html",
-    "audit_001.jpg",
-    "mrmd-20181231.xml",
-  }
+  assert not names & {"primary_doc.xml", "primary_doc.html", "mrmd-20181231.xml"}
+
+
+def test_a_document_this_cannot_read_is_listed_with_where_it_is() -> None:
+  from xbrlkit.edgar.filing_index import FilingDocument
+  from xbrlkit.serve import tools as serve_tools
+  from xbrlkit.serve.session import LoadedFiling
+
+  pdf = FilingDocument(
+    seq=2,
+    type="EX-99.1",
+    document="annual-report.pdf",
+    size=900_000,
+    url="https://www.sec.gov/Archives/edgar/data/1/2/annual-report.pdf",
+  )
+  htm = FilingDocument(
+    seq=3, type="EX-21", document="ex-21.htm", url="https://x/ex-21.htm"
+  )
+  assert pdf.is_readable is False and htm.is_readable is True
+
+  class _Session:
+    def other_documents(self, lf: object) -> list[FilingDocument]:
+      return [pdf, htm]
+
+  model = _text_block_model("<p>" + "word " * 40 + "</p>")
+  loaded = LoadedFiling(id="x", source="memory", model=model, text="", sections=[])
+  out = serve_tools.documents(loaded, _Session())
+  by_name = {d["document"]: d for d in out["documents"]}
+  assert by_name["annual-report.pdf"]["url"] == pdf.url
+  assert "does not read .pdf" in by_name["annual-report.pdf"]["read"]
+  assert by_name["ex-21.htm"]["read"] == "read_document"
+  assert "not text — fetch the url" in out["note"]
 
 
 def test_a_filing_not_from_edgar_says_so_rather_than_guessing(tmp_path: Path) -> None:

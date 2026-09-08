@@ -414,8 +414,10 @@ def build_server(
       "What else was filed with this filing — the exhibits, and any second "
       "document the content actually lives in (an 8-K's EX-99.1 press "
       "release, a 13F's INFORMATION TABLE of holdings). Costs one small fetch "
-      "the first time and nothing after. The XBRL package, the SEC's rendered "
-      "copies and images are not listed."
+      "the first time and nothing after. Every document carries its URL and "
+      "says whether read_document can read it: a PDF or an image is listed "
+      "with its address so a caller that can open one may fetch it directly. "
+      "The XBRL package and the SEC's own rendered copies are not listed."
     ),
     structured_output=False,
   )

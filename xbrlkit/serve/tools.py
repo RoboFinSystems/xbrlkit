@@ -691,6 +691,7 @@ def documents(lf: LoadedFiling, session: Any) -> dict[str, Any]:
   """What else was filed with this filing: exhibits, and any second document
   the form's content actually lives in."""
   found = session.other_documents(lf)
+  unreadable = [d for d in found if not d.is_readable]
   return {
     "filing": lf.id,
     "primary_document": lf.model.filing.document_name,
@@ -700,13 +701,24 @@ def documents(lf: LoadedFiling, session: Any) -> dict[str, Any]:
         "type": d.type,
         "description": d.description or None,
         "size": d.size,
+        "url": d.url or None,
+        # A PDF or an image is content this reader cannot open. Saying where
+        # it is beats leaving it out: whoever asked may well be able to.
+        "read": "read_document"
+        if d.is_readable
+        else f"fetch the url — this server does not read {d.suffix or 'binary'}",
       }
       for d in found
     ],
     "count": len(found),
     "note": (
-      "read_document reads one. The XBRL package and the SEC's own rendered "
-      "copies are not listed; neither are images."
+      "read_document reads the HTML, XML and text ones. "
+      + (
+        f"{len(unreadable)} of these are not text — fetch the url. "
+        if unreadable
+        else ""
+      )
+      + "The XBRL package and the SEC's own rendered copies are not listed."
     )
     if found
     else "Nothing was filed with this one but the primary document.",

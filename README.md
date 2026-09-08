@@ -284,6 +284,13 @@ them in a second document. `documents` lists what else was filed and
 `read_document` reads one — one small fetch of EDGAR's index page the first
 time it is asked, and nothing at load.
 
+Everything is listed, **including what this cannot read**, with the URL it
+lives at. A PDF annual report and a chart filed as an image are content; that
+they are not HTML or XML is a fact about this reader, not about the filing, and
+the caller asking may well be able to open one. So `documents` says where each
+document is and whether `read_document` can read it, rather than pretending a
+filing has five documents when it has six.
+
 A **classic** (pre-inline) filing's narrative lives outside its XBRL package —
 `form10-k.htm` is a sibling of the instance, not part of it — so the document is
 fetched alongside and the instance's tagged blocks are located within it by
@@ -299,7 +306,7 @@ The tools are the shapes a reader needs, not a query language:
 | `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
 | `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |
 | `calculation` | what sums to a total: the calculation children with weights, computed against reported, per period |
-| `documents`, `read_document` | what else was filed with this filing — exhibits, an 8-K's press release, a 13F's holdings table — and reading one |
+| `documents`, `read_document` | what else was filed with this filing — exhibits, an 8-K's press release, a 13F's holdings table — each with its URL and whether it reads natively; and reading one |
 | `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
 | `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset |
 | `export_filing` | the filing as holon, Tavi, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
