@@ -81,6 +81,10 @@ LABEL_TERM_ROLES: dict[str, str] = {
   label_type.split(":", 1)[-1]: role for role, label_type in LABEL_ROLE_TYPES.items()
 }
 STANDARD_LABEL_ROLE_URI = "http://www.xbrl.org/2003/role/label"
+# The emitter names the standard-role label `standardLabel`; `label` is read as
+# well, because holons written by 0.7.0-0.7.2 used it.
+LABEL_TERM_ROLES["standardLabel"] = STANDARD_LABEL_ROLE_URI
+LABEL_TERM_ROLES["label"] = STANDARD_LABEL_ROLE_URI
 DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
 
 PARENT_CHILD_ARCROLE = "http://www.xbrl.org/2003/arcrole/parent-child"

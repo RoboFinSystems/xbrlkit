@@ -27,6 +27,7 @@ from xbrlkit.model import (
 )
 from rdflib import RDF
 
+from xbrlkit.serialize._kernel import context
 from xbrlkit.serialize import (
   build_holon_graph,
   classify_network,
@@ -472,3 +473,33 @@ def test_holon_serialization_is_deterministic() -> None:
     if isinstance(entry, dict) and isinstance(entry.get("@graph"), list):
       ids = [n.get("@id", "") for n in entry["@graph"] if isinstance(n, dict)]
       assert ids == sorted(ids)
+
+
+def test_the_canonical_context_declares_each_term_once() -> None:
+  """A repeated key in the context silently rebinds a term.
+
+  `serialize/_kernel/` is a vendored fork and is excluded from ruff, so F601 —
+  which is enabled and does catch this — never runs on it. That is how a second
+  `"label"` key shipped in 0.7.0 and shadowed `rdfs:label` with `rs:label`,
+  leaving one term meaning two predicates across two documents that both call
+  themselves holons. Lint cannot reach the file; this can.
+  """
+  import ast
+  from pathlib import Path
+
+  source = Path(context.__file__).read_text()
+  tree = ast.parse(source)
+  for node in ast.walk(tree):
+    if not isinstance(node, ast.Dict):
+      continue
+    keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+    duplicates = {k for k in keys if keys.count(k) > 1}
+    assert not duplicates, f"repeated context keys: {sorted(duplicates)}"
+
+
+def test_the_standard_label_term_does_not_shadow_rdfs_label() -> None:
+  """`label` is `rdfs:label` — the platform's holon context binds it that way
+  too, and the two must not disagree. XBRL's standard-role label is written
+  under its own name."""
+  assert context.CANONICAL_CONTEXT["label"] == "rdfs:label"
+  assert context.CANONICAL_CONTEXT["standardLabel"]["@id"].endswith("standardLabel")
