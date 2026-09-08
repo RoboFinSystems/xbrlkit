@@ -27,6 +27,7 @@ import requests
 from xml.etree import ElementTree
 
 from xbrlkit.config import CONFIG, Config
+from xbrlkit.deserialize import HolonError, TaviError, from_holon_json, from_tavi_json
 from xbrlkit.edgar.filing_index import FilingDocument
 from xbrlkit.model import Concept, EntityIdentity, FilingMeta, XbrlFact, XbrlModel
 from xbrlkit.text.ixbrl import _strip_html, iXBRLParser
@@ -286,21 +287,33 @@ class FilingSession:
     return self._finish(_local_id(path, model), source, model, target, package_dir)
 
   def _load_json(self, path: Path, source: str) -> LoadedFiling:
-    """A JSON file: the parse saved by ``export_filing model`` loads at
-    once; the serializations xbrlkit writes (Tavi, holon, xBRL-JSON) are
-    named and refused until each has an importer into the model."""
-    head = path.read_text(encoding="utf-8", errors="replace")[:4000]
-    kind = _json_kind(head)
-    if kind != "model":
-      raise SourceError(
-        f"{path.name} is {kind}; this server reads the parse (a model.json from "
-        "export_filing) and XBRL packages. An importer for that serialization "
-        "into the model is the next lane."
-      )
+    """A JSON file, read into the model without Arelle.
+
+    Three of the four shapes xbrlkit knows are read directly: the parse saved
+    by ``export_filing model``, a Tavi compiled model, and a holon. Each is a
+    representation of the report rather than a rendering of it, so the tools
+    work over it unchanged — and none of them is something Arelle can load.
+    The xBRL-JSON report is the one still refused: that one *is* Arelle's, and
+    wants its OIM loader rather than an importer of our own.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    kind = _json_kind(text[:4000])
     try:
-      model = XbrlModel.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValueError as exc:
-      raise SourceError(f"{path} is not an XbrlModel JSON file: {exc}") from exc
+      if kind == "tavi":
+        model = from_tavi_json(text)
+      elif kind == "holon":
+        model = from_holon_json(text)
+      elif kind == "model":
+        model = XbrlModel.model_validate_json(text)
+      else:
+        raise SourceError(
+          f"{path.name} is "
+          f"{JSON_KIND_NAMES.get(kind, 'not a JSON file xbrlkit recognises')}"
+          "; this server reads a saved parse, a Tavi compiled model, a holon, "
+          "and XBRL packages."
+        )
+    except (TaviError, HolonError, ValueError) as exc:
+      raise SourceError(f"{path} could not be read as {kind}: {exc}") from exc
     target: Path | None = None
     if model.filing.primary_document:
       candidate = path.parent / model.filing.primary_document
@@ -948,17 +961,26 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
   return m.start() if m else None
 
 
+# What each JSON xbrlkit recognises is called, for the one it cannot yet read.
+JSON_KIND_NAMES = {
+  "holon": "a holon (JSON-LD)",
+  "tavi": "a Tavi compiled model",
+  "oim": "an xBRL-JSON (OIM) report",
+  "model": "a saved parse",
+}
+
+
 def _json_kind(head: str) -> str:
   """Which JSON xbrlkit is looking at, from its first few kilobytes."""
   if '"@context"' in head or '"@graph"' in head:
-    return "a holon (JSON-LD)"
+    return "holon"
   if "/compiled" in head and '"documentInfo"' in head:
-    return "a Tavi compiled model"
+    return "tavi"
   if "xbrl-json" in head or "https://xbrl.org/2021" in head:
-    return "an xBRL-JSON (OIM) report"
+    return "oim"
   if '"filing"' in head and '"entity"' in head:
     return "model"
-  return "not a JSON file xbrlkit recognises"
+  return "unknown"
 
 
 # -- filing identity without EDGAR ----------------------------------------------

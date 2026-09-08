@@ -8,16 +8,21 @@ portable representation you need.
 
 ```
 EDGAR ──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-   │                             ├──▶ Tavi            (compiled model)
-   │                             ├──▶ xBRL-JSON       (OIM)
-   │                             └──▶ property graph  (parquet, .lbug)
+   │                       ▲     ├──▶ Tavi            (compiled model)
+   │                       │     ├──▶ xBRL-JSON       (OIM)
+   │            Tavi ──────┤     └──▶ property graph  (parquet, .lbug)
+   │           holon ──────┘
    └──▶ primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 ```
 
-Four projections hang off the model. A fifth surface, the filing's text, reads the
-primary HTML document directly and needs neither Arelle nor the network. And the
-model itself can be served: `xbrlkit serve` holds a filing in memory and exposes it
-to an MCP client through shaped tools (see [Serve](#serve-to-an-mcp-client)).
+Four projections hang off the model, and two of them read **back into** it: hand
+`xbrlkit` a `tavi.json` or a `holon.jsonld` and it becomes the same `XbrlModel`,
+with no Arelle and no XBRL, so a report that was never an SEC filing gets the
+whole toolset (see [Importers](#importers)). A further surface, the filing's
+text, reads the primary HTML document directly and needs neither Arelle nor the
+network. And the model itself can be served: `xbrlkit serve` holds a filing in
+memory and exposes it to an MCP client through shaped tools (see
+[Serve](#serve-to-an-mcp-client)).
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it does
 not give you is anything ergonomic to *hold*: `ModelXbrl` is a large mutable
@@ -57,6 +62,48 @@ its reason are recorded in `SPEC_AMBIGUITIES` and carried in the
 `.tavi.gaps.json` sidecar `--format tavi` writes alongside the document — the
 sidecar also records what the filing carries that the model has nowhere to put,
 and that file is the point of the projection, not a by-product of it.
+
+## Importers
+
+The arrows run both ways. `xbrlkit.deserialize` reads a **Tavi compiled model**
+or a **holon** back into `XbrlModel` — the inverse of the two emitters — after
+which every tool in the package works over it unchanged.
+
+```python
+from xbrlkit.deserialize import from_tavi_json, from_holon_json
+
+model = from_tavi_json(Path("boeing.tavi.json").read_text())
+model = from_holon_json(Path("boeing.holon.jsonld").read_text())
+```
+
+Arelle is not involved and cannot be: it does not load either format. That is
+the point — a report that never was an SEC filing (a ledger's own output, a
+converted filing someone handed you) becomes queryable with the same tools, and
+`xbrlkit serve` loads either file directly.
+
+Both importers keep one rule: **read what the serialization carries and nothing
+else.** Where a projection dropped something the field stays empty and the gap
+is reported (`from_tavi_report` / `from_holon_report` return it beside the
+model) rather than filled with a plausible value, because a filled-in field is
+indistinguishable from a read one. The single exception is the derived period
+enrichment — the duration bucket and calendar placement — which is recomputed
+from the dates by the module the parse itself uses, which is what lets an
+imported period match a parsed one id for id.
+
+What each format loses, measured by round trip:
+
+| | Tavi | holon |
+| --- | --- | --- |
+| loses | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | every label role but the preferred one — recovered from the presentation associations, which carry the label they resolved to — plus `nillable`, the declared item type (it keeps a value *domain*), the namespace year, and fact language |
+| keeps | every label role, the datatype detail, the filing's namespaces | the definition networks, the hypercube/axis/member kinds, the whole `rs:Report` node, the filing's own measure tokens |
+| facts | one per reported fact | one per **distinct** fact: a holon addresses a fact by its content-derived id, so a filing's duplicates arrive as one |
+
+The gate is that the two agree where it counts, and they do: across the
+26-filing corpus of 2024-2025 10-Ks and 10-Qs the [Filing
+Ladder](https://github.com/HarbingerFinLab/filing-ladder) is built on, every
+filing read from its Tavi and from its holon renders **all 2,915 presentation
+networks identically** — same rows, same order, same labels — with the same
+calculation networks and the same `fact_grid` answers on all 26.
 
 ## Property graph
 
@@ -197,9 +244,10 @@ Point the client at the URL — no key, no sign-in — and load filings from the
 chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
 *"load `~/Downloads/mmm-20241231.htm`"*. The `load_filing` tool takes a ticker
 with an optional form (`NVDA`, `NVDA 10-Q`), an EDGAR `cik:accession`, a URL, an
-inline `.htm`, an instance `.xml`, a filing directory or `.zip`, or a
-`model.json` written by `export_filing`. Several filings can be loaded at once,
-each under an id; `unload_filing` drops one.
+inline `.htm`, an instance `.xml`, a filing directory or `.zip`, or a JSON
+report — a `.tavi.json`, a `.holon.jsonld`, or a `model.json` written by
+`export_filing`. Several filings can be loaded at once, each under an id;
+`unload_filing` drops one.
 
 Outside the SEC it also takes `lei:<LEI>` — a filer's latest filing on
 [filings.xbrl.org](https://filings.xbrl.org), XBRL International's open index of
