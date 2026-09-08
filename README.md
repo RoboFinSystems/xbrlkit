@@ -275,7 +275,7 @@ does the rest of EDGAR. Three kinds of filing load, and `describe_filing`'s
 |---|---|---|
 | **XBRL** | 10-K, 10-Q, 20-F, IFRS / ESEF, ACFRs — inline or classic | facts, networks and text; the whole toolset |
 | **XML** | the forms with no XBRL: ownership (3, 4, 5), 13F, N-PORT, SC 13D/G | `records` returns the form's own tables; searchable as text |
-| **document** | an 8-K, a proxy, a registration statement | text only — `search_text` and `read_text` |
+| **document** | an 8-K, a proxy, a registration statement, anything pre-2000 | text only — `search_text` and `read_text` |
 
 A filing is a *set* of documents, and the primary one is not always where the
 content is: an 8-K is boilerplate with the press release attached as `EX-99.1`,
@@ -290,6 +290,13 @@ they are not HTML or XML is a fact about this reader, not about the filing, and
 the caller asking may well be able to open one. So `documents` says where each
 document is and whether `read_document` can read it, rather than pretending a
 filing has five documents when it has six.
+
+**Before about 2000** EDGAR wrote no separate files at all: a filing is one SGML
+stream, its documents have types and sequence numbers but no names, and the
+filing index lists them with an empty Document column because there is nothing
+to link to. Those filings are loaded by splitting the complete submission —
+sequence 1 is the primary document, the rest become its other documents — so
+1994 onward reads like anything else.
 
 A **classic** (pre-inline) filing's narrative lives outside its XBRL package —
 `form10-k.htm` is a sibling of the instance, not part of it — so the document is

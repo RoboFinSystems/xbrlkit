@@ -16,6 +16,14 @@ from .download import (
   primary_document_url,
 )
 from .efts import EftsClient, EftsHit, query_efts
+from .submission import (
+  SubmissionDocument,
+  complete_submission_url,
+  parse_submission,
+  strip_pem,
+  submission_documents,
+  submission_header,
+)
 from .filing_index import (
   FilingDocument,
   fetch_filing_index,
@@ -31,12 +39,18 @@ __all__ = [
   "EftsHit",
   "FilingDocument",
   "FilingRef",
+  "SubmissionDocument",
   "download_filing",
   "download_primary_document",
   "fetch",
   "fetch_filing_index",
   "other_documents",
+  "complete_submission_url",
   "parse_filing_index",
+  "parse_submission",
   "primary_document_url",
+  "strip_pem",
+  "submission_documents",
+  "submission_header",
   "query_efts",
 ]

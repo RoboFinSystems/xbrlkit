@@ -249,6 +249,11 @@ class FilingSession:
       target = path
       package_dir = path.parent
     accession = _local_accession(path, target)
+    if target.suffix.lower() in _PLAIN_SUFFIXES:
+      # Arelle cannot read plain text and never could: a filing from the 1990s
+      # holds no markup at all. Going to it first only produces a parse error
+      # where the answer is simply that this is a document.
+      return self._document_only(target, source, accession, package_dir)
     try:
       model = self._parse(target, accession=accession, filing=None, entity=None)
     except NoXbrlFound:
@@ -340,19 +345,27 @@ class FilingSession:
     cached = lf.read_documents.get(match.document)
     if cached is not None:
       return cached
-    cik, accession = self._edgar_coordinates(lf)
-    from xbrlkit.edgar import EdgarClient, download_primary_document
-
     dest = lf.package_dir or (self._tmp / lf.id)
-    path = download_primary_document(
-      EdgarClient(config=self.config), cik, accession, dest, match.document
-    )
+    local = dest / match.document
+    if local.is_file():
+      # Split out of a complete submission at load; nothing to fetch.
+      path = local
+    else:
+      cik, accession = self._edgar_coordinates(lf)
+      from xbrlkit.edgar import EdgarClient, download_primary_document
+
+      path = download_primary_document(
+        EdgarClient(config=self.config), cik, accession, dest, match.document
+      )
     # A bare model, deliberately: an exhibit is its own document, and carrying
     # the parent's form would have the narrative extractor hunt for a 10-K's
     # Items inside a certification.
     bare = XbrlModel(
       filing=FilingMeta(
-        accession=accession, cik=cik, document_name=match.document, form=match.type
+        accession=lf.accession,
+        cik=lf.model.filing.cik,
+        document_name=match.document,
+        form=match.type,
       ),
       entity=lf.model.entity,
     )
@@ -457,9 +470,10 @@ class FilingSession:
 
     name = raw_document_name(ref.primary_document)
     if not name:
-      raise SourceError(
-        f"EDGAR holds no XBRL and names no document for {accession}; nothing to read."
-      )
+      # Before about 2000 EDGAR wrote no separate files, so there is no
+      # document to name: the filing is one SGML stream and its documents are
+      # inside it. That is the whole of 1994-2000, and it is read by splitting.
+      return self._load_from_submission(client, cik, accession, ref, source)
     if Path(name).suffix.lower() not in _DOCUMENT_SUFFIXES:
       from xbrlkit.edgar.download import primary_document_url
 
@@ -475,6 +489,63 @@ class FilingSession:
     entity = entity_identity(client.company_info(cik))
     model = XbrlModel(filing=filing, entity=entity)
     return self._finish(accession, source, model, None, package_dir, document)
+
+  def _load_from_submission(
+    self, client: Any, cik: str, accession: str, ref: Any, source: str
+  ) -> LoadedFiling:
+    """A filing that exists only as its complete submission — EDGAR before 2000.
+
+    The stream is fetched once, split, and written out as the files EDGAR never
+    wrote. Sequence 1 becomes the filing's document; the rest are its other
+    documents, already on disk, so listing them costs no further fetch.
+    """
+    from xbrlkit.cli import entity_identity, filing_meta
+    from xbrlkit.edgar.submission import (
+      complete_submission_url,
+      parse_submission,
+      strip_pem,
+    )
+
+    url = complete_submission_url(self.config.sec_base_url, cik, accession)
+    raw = strip_pem(client._get(url).text)
+    header, documents = parse_submission(raw)
+    if not documents:
+      raise SourceError(
+        f"{accession} has no documents in its complete submission at {url}."
+      )
+    package_dir = self._tmp / accession
+    package_dir.mkdir(parents=True, exist_ok=True)
+    written: list[tuple[Any, Path]] = []
+    for document in documents:
+      target = package_dir / document.name
+      target.write_text(document.text, encoding="utf-8")
+      written.append((document, target))
+
+    primary, primary_path = min(written, key=lambda pair: pair[0].sequence)
+    filing = filing_meta(self.config.sec_base_url, cik, accession, ref, primary.name)
+    filing.document_name = primary.name
+    filing.form = filing.form or header.get("CONFORMED SUBMISSION TYPE") or None
+    if filing.report_date is None:
+      filing.report_date = _parse_edgar_date(header.get("CONFORMED PERIOD OF REPORT"))
+    if filing.filing_date is None:
+      filing.filing_date = _parse_edgar_date(header.get("FILED AS OF DATE"))
+    model = XbrlModel(filing=filing, entity=entity_identity(client.company_info(cik)))
+    loaded = self._finish(accession, source, model, None, package_dir, primary_path)
+    # Every other document is already written; listing them needs no index page,
+    # and they share one address because that is all EDGAR has for them.
+    loaded.other_documents = [
+      FilingDocument(
+        seq=document.sequence,
+        type=document.type,
+        document=document.name,
+        description=document.description,
+        size=len(document.text),
+        url=url,
+      )
+      for document, _ in written
+      if document is not primary
+    ]
+    return loaded
 
   def _load_ticker(self, ticker: str, form: str, source: str) -> LoadedFiling:
     from xbrlkit.edgar import EdgarClient
@@ -596,9 +667,9 @@ def _read_document(doc: Path | None, model: XbrlModel) -> ReadDocument | None:
     text, sections = build_text(model, html)
     return ReadDocument(text, sections)
   if suffix in _PLAIN_SUFFIXES:
-    return ReadDocument(
-      _normalize_text(doc.read_text(encoding="utf-8", errors="replace")), []
-    )
+    raw = doc.read_text(encoding="utf-8", errors="replace")
+    text = _normalize_text(raw)
+    return ReadDocument(text, _items_in(model, raw, text))
   if suffix == ".xml":
     # An XBRL instance is XML too; it is the load target, and its facts are
     # the reading. Only a document with no XBRL behind it is read this way.
@@ -656,19 +727,7 @@ def build_text(model: XbrlModel, html: str | None) -> tuple[str, list[TextSectio
     return _text_from_text_blocks(model)
 
   text = _normalize_text(_html_to_text(html))
-  sections: list[TextSection] = []
-  form = model.filing.form or ""
-  if form:
-    for item in NarrativeExtractor(part_size=None).extract(html, form):
-      sections.append(
-        TextSection(
-          id=item.section_id,
-          label=item.section_label,
-          kind="item",
-          chars=len(item.content),
-          offset=_locate(text, item.content),
-        )
-      )
+  sections: list[TextSection] = _items_in(model, html, text)
   inline_blocks = iXBRLParser(part_size=None).parse(html)
   for block in inline_blocks:
     sections.append(
@@ -685,6 +744,29 @@ def build_text(model: XbrlModel, html: str | None) -> tuple[str, list[TextSectio
     sections.extend(_blocks_located_in(model, text))
   sections.sort(key=lambda s: (s.offset is None, s.offset or 0))
   return text, sections
+
+
+def _items_in(model: XbrlModel, source: str, text: str) -> list[TextSection]:
+  """The form's Items, located in ``text``.
+
+  ``source`` is what the extractor reads — the document's markup, or its plain
+  text when that is all there is. A filing from the 1990s is plain text and
+  still says "Item 1. Business"; the extractor's own HTML-to-text step passes
+  such a document through, so one path serves both eras.
+  """
+  form = model.filing.form or ""
+  if not form:
+    return []
+  return [
+    TextSection(
+      id=item.section_id,
+      label=item.section_label,
+      kind="item",
+      chars=len(item.content),
+      offset=_locate(text, item.content),
+    )
+    for item in NarrativeExtractor(part_size=None).extract(source, form)
+  ]
 
 
 def _blocks_located_in(model: XbrlModel, text: str) -> list[TextSection]:
@@ -914,6 +996,17 @@ def _form_on_the_cover(html: str) -> str | None:
   """The form a document names on its cover, from the top of the document."""
   m = _COVER_FORM_RE.search(_html_to_text(html[:400_000]))
   return re.sub(r"\s+", " ", m.group(1)).upper() if m else None
+
+
+def _parse_edgar_date(value: str | None) -> date | None:
+  """A header date, which EDGAR writes as ``YYYYMMDD``."""
+  digits = (value or "").strip()
+  if len(digits) != 8 or not digits.isdigit():
+    return None
+  try:
+    return date(int(digits[:4]), int(digits[4:6]), int(digits[6:]))
+  except ValueError:
+    return None
 
 
 def _parse_iso_date(value: str) -> date | None:

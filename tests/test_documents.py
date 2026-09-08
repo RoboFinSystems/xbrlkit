@@ -430,3 +430,170 @@ def test_documents_reports_an_empty_filing_plainly() -> None:
   out = serve_tools.documents(loaded, _Session())
   assert out["count"] == 0
   assert "Nothing was filed with this one" in out["note"]
+
+
+# -- the complete submission (EDGAR before 2000) -----------------------------------
+
+# A filing as EDGAR stored it before it wrote separate files: a PEM envelope, a
+# plain-text header, and documents with a type and a sequence but no filename.
+SUBMISSION = """-----BEGIN PRIVACY-ENHANCED MESSAGE-----
+Proc-Type: 2001,MIC-CLEAR
+MIC-Info: RSA-MD5,RSA,
+ EpbWlzEXQTzfdDL5kjG3x50wY6TvcOk9uLwpcX6h26y2bYQdAb3l62SVW2tTdzHo
+
+<SEC-DOCUMENT>0000912057-95-001314.txt : 19950310
+<SEC-HEADER>0000912057-95-001314.hdr.sgml : 19950310
+ACCESSION NUMBER:\t\t0000912057-95-001314
+CONFORMED SUBMISSION TYPE:\t10-K
+CONFORMED PERIOD OF REPORT:\t19941231
+FILED AS OF DATE:\t\t19950310
+
+FILER:
+
+\tCOMPANY DATA:
+\t\tCOMPANY CONFORMED NAME:\t\t\tABBOTT LABORATORIES
+\t\tCENTRAL INDEX KEY:\t\t\t0000001800
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>10-K
+<SEQUENCE>1
+<DESCRIPTION>ANNUAL REPORT
+<TEXT>
+
+<PAGE>
+Item 1. Business
+
+The Company discovers, develops, manufactures and sells a broad line of
+health care products, and has done so since 1888 in Illinois.
+
+<PAGE>
+Item 2. Properties
+
+The Company owns plants in Illinois and elsewhere, together with the
+laboratories and offices described in this filing.
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-27
+<SEQUENCE>2
+<DESCRIPTION>FINANCIAL DATA SCHEDULE
+<TEXT>
+<S>                    <C>
+TOTAL-ASSETS           9412796
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>GRAPHIC
+<SEQUENCE>3
+<DESCRIPTION>SIGNATURE
+<TEXT>
+begin 644 sig.gif
+M1TE&.#EA
+end
+</TEXT>
+</DOCUMENT>
+-----END PRIVACY-ENHANCED MESSAGE-----
+"""
+
+
+def test_a_complete_submission_splits_into_its_documents() -> None:
+  from xbrlkit.edgar.submission import parse_submission, strip_pem
+
+  assert strip_pem(SUBMISSION).startswith("<SEC-DOCUMENT>")
+  # A submission with no envelope is left exactly as it is.
+  assert strip_pem("<SEC-DOCUMENT>x") == "<SEC-DOCUMENT>x"
+
+  header, docs = parse_submission(strip_pem(SUBMISSION))
+  assert header["CONFORMED SUBMISSION TYPE"] == "10-K"
+  assert header["CONFORMED PERIOD OF REPORT"] == "19941231"
+  assert header["COMPANY CONFORMED NAME"] == "ABBOTT LABORATORIES"
+
+  # Named by sequence and type, because EDGAR named none of them.
+  assert [d.name for d in docs] == [
+    "0001-10-K.txt",
+    "0002-EX-27.txt",
+    "0003-GRAPHIC.uu",
+  ]
+  assert [d.sequence for d in docs] == [1, 2, 3]
+  assert docs[0].description == "ANNUAL REPORT"
+  # `<PAGE>` is a printer's page break, not content.
+  assert "<PAGE>" not in docs[0].text
+  assert docs[0].text.startswith("Item 1. Business")
+  # A uuencoded image is detected, so it is neither named nor served as prose.
+  assert docs[2].is_binary and not docs[0].is_binary
+
+
+def test_a_submission_document_takes_the_extension_of_its_body() -> None:
+  from xbrlkit.edgar.submission import SubmissionDocument
+
+  plain = SubmissionDocument(sequence=1, type="10-K", description="", text="Item 1.")
+  markup = SubmissionDocument(
+    sequence=2, type="EX-99", description="", text="<HTML><body>hi</body></HTML>"
+  )
+  named = SubmissionDocument(
+    sequence=3, type="EX-1", description="", text="x", filename="given.htm"
+  )
+  assert (plain.name, markup.name, named.name) == (
+    "0001-10-K.txt",
+    "0002-EX-99.htm",
+    "given.htm",
+  )
+
+
+def test_edgar_header_dates_are_yyyymmdd() -> None:
+  from xbrlkit.serve.session import _parse_edgar_date
+
+  assert _parse_edgar_date("19941231") == date(1994, 12, 31)
+  assert _parse_edgar_date("1994-12-31") is None
+  assert _parse_edgar_date(None) is None
+  assert _parse_edgar_date("19941331") is None
+
+
+def test_the_1990s_10_k405_is_a_10_k() -> None:
+  """`10-K405` was the common 1990s annual report — the same Items."""
+  from xbrlkit.text.narrative import NarrativeExtractor
+
+  body = (
+    "<html><body><p>Item 1. Business</p><p>The Company designs and sells "
+    "graphics processors to computer makers, and was incorporated in "
+    "Delaware in 1993 for that purpose.</p>"
+    "<p>Item 2. Properties</p><p>The Company leases its headquarters in "
+    "Santa Clara, California, under an operating lease.</p></body></html>"
+  )
+  found = {
+    s.section_id for s in NarrativeExtractor(part_size=None).extract(body, "10-K405")
+  }
+  assert {"item_1", "item_2"} <= found
+
+
+def test_a_plain_text_filing_still_has_items(tmp_path: Path) -> None:
+  """1990s filings are plain text and say "Item 1. Business" all the same."""
+  from xbrlkit.serve.session import _read_document
+
+  path = tmp_path / "0001-10-K.txt"
+  path.write_text(
+    "Item 1. Business\n\nThe Company discovers, develops, manufactures and "
+    "sells a broad line of health care products in Illinois.\n\n"
+    "Item 2. Properties\n\nThe Company owns plants in Illinois together with "
+    "the laboratories and offices described in this filing.\n"
+  )
+  model = _text_block_model("<p>" + "word " * 40 + "</p>")
+  model.filing.form = "10-K"
+  read = _read_document(path, model)
+  assert read is not None
+  assert {s.id for s in read.sections} == {"item_1", "item_2"}
+  assert all(s.offset is not None for s in read.sections)
+
+
+def test_a_plain_text_document_loads_without_arelle(tmp_path: Path) -> None:
+  """Arelle cannot read plain text, and reaching for it first only produced a
+  parse error where the answer is that this is a document."""
+  path = tmp_path / "0001-10-K.txt"
+  path.write_text("Item 1. Business\n\n" + "The Company sells widgets. " * 20)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    assert lf.has_xbrl is False and lf.has_document is True
+    assert "The Company sells widgets." in lf.text
+  finally:
+    session.close()
