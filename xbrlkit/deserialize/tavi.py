@@ -197,7 +197,7 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
 
   entity = _entity(xbrl_model, namespaces)
   concepts = _concepts(xbrl_model, namespaces, gaps)
-  _apply_labels(xbrl_model, concepts, entity, gaps)
+  _apply_labels(xbrl_model, concepts, entity, _entity_sqname(xbrl_model), gaps)
   networks = _networks(xbrl_model)
   facts, periods, units = _facts(xbrl_model, concepts, entity, namespaces, gaps)
   _mark_text_facts(concepts, facts)
@@ -220,12 +220,17 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
 # -- identity -------------------------------------------------------------------
 
 
+def _entity_sqname(xbrl_model: Mapping[str, Any]) -> str:
+  """The entity object's name, as the document wrote it."""
+  entities = _sequence(xbrl_model.get("entities"))
+  return str(_mapping(entities[0]).get("name", "")) if entities else ""
+
+
 def _entity(
   xbrl_model: Mapping[str, Any], namespaces: Mapping[str, str]
 ) -> EntityIdentity:
   """The reporting entity from its SQName — scheme first, identifier second."""
-  entities = _sequence(xbrl_model.get("entities"))
-  name = str(_mapping(entities[0]).get("name", "")) if entities else ""
+  name = _entity_sqname(xbrl_model)
   prefix, _, identifier = name.partition(":")
   if not identifier:
     prefix, identifier = "", name
@@ -438,6 +443,7 @@ def _apply_labels(
   xbrl_model: Mapping[str, Any],
   concepts: dict[str, Concept],
   entity: EntityIdentity,
+  entity_sqname: str,
   gaps: ImportGaps,
 ) -> None:
   """Hang each label object on the element it points at.
@@ -446,7 +452,6 @@ def _apply_labels(
   the networks; a label on the entity is the registrant's name, which is the
   only place a compiled model carries it.
   """
-  entity_name = f"cik:{entity.cik}" if entity.scheme == CIK_SCHEME else None
   for entry in _sequence(xbrl_model.get("labels")):
     label = _mapping(entry)
     target = str(label.get("forObject", ""))
@@ -457,7 +462,7 @@ def _apply_labels(
       gaps.unmapped_label_types[label_type] = (
         gaps.unmapped_label_types.get(label_type, 0) + 1
       )
-    if target and target == entity_name:
+    if target and target == entity_sqname:
       if entity.name is None and isinstance(value, str):
         entity.name = value
       continue
