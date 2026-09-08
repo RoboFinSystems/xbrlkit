@@ -201,6 +201,13 @@ inline `.htm`, an instance `.xml`, a filing directory or `.zip`, or a
 `model.json` written by `export_filing`. Several filings can be loaded at once,
 each under an id; `unload_filing` drops one.
 
+Outside the SEC it also takes `lei:<LEI>` — a filer's latest filing on
+[filings.xbrl.org](https://filings.xbrl.org), XBRL International's open index of
+ESEF and national-regime filings — or one of that index's own filing ids
+(`213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0`). No key. These filings identify
+their entity by **LEI** rather than by ticker or CIK, and that is what comes
+back.
+
 ```bash
 claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 ```
@@ -329,6 +336,32 @@ origin-header validation on, so a page in a browser cannot drive it; `--host`
 opens it to a network you trust, and `--transport stdio` serves clients that
 speak nothing else. The same tool functions are importable without MCP
 (`xbrlkit.serve.tools`) for tests and notebooks.
+
+## Outside EDGAR
+
+`filings.xbrl.org` indexes filings from the regimes that are not the SEC. It is
+open and asks for no key, and one adapter reaches every country in it:
+
+```bash
+xbrlkit serve lei:213800H2PQMIF3OVZY47      # a filer's latest, by LEI
+```
+
+```python
+from xbrlkit.filings_org import FilingsOrgClient
+
+client = FilingsOrgClient()
+client.entity("213800H2PQMIF3OVZY47")            # KAINOS GROUP PLC
+client.entity_filings("213800H2PQMIF3OVZY47")    # newest period first
+client.filings(country="FI", limit=25)           # by country
+```
+
+Two things worth knowing before planning against it. It is **not** all of
+Europe — Germany files to the Bundesanzeiger, which does not share, and has
+nothing in the index. And being indexed is not the same as being loadable: the
+self-contained ESEF packages load, while a national-GAAP filing depends on its
+national taxonomy host, and some of those have moved or gone. Of one filing
+sampled from each of thirteen countries, eleven load; Denmark's taxonomy entry
+point answers 404 and Ukraine's host does not resolve at all.
 
 ## EDGAR
 

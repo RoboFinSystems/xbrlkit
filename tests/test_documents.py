@@ -699,3 +699,119 @@ def test_a_package_archive_is_preferred_to_its_manifest(tmp_path: Path) -> None:
     assert names == ["mmm-20241231.xml"]
   finally:
     session.close()
+
+
+# -- filings.xbrl.org --------------------------------------------------------------
+
+# One JSON:API payload as the index returns it, with the entity included.
+FILINGS_PAYLOAD = {
+  "data": [
+    {
+      "type": "filing",
+      "attributes": {
+        "fxo_id": "213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0",
+        "country": "GB",
+        "period_end": "2022-03-31",
+        "package_url": "/213800H2PQMIF3OVZY47/2022-03-31/ESEF/GB/0/pkg.zip",
+        "report_url": "/213800H2PQMIF3OVZY47/2022-03-31/ESEF/GB/0/reports/r.xhtml",
+        "json_url": None,
+        "error_count": 0,
+        "inconsistency_count": 2,
+      },
+      "relationships": {"entity": {"data": {"type": "entity", "id": "2670"}}},
+    },
+    {
+      "type": "filing",
+      "attributes": {
+        "fxo_id": "EDRPOU-32033791-2020-12-31-UAIFRS-UA-0",
+        "country": "UA",
+        "period_end": "2020-12-31",
+        "package_url": None,
+        "report_url": "/EDRPOU-32033791/2020-12-31/UAIFRS/UA/0/r.html",
+      },
+      "relationships": {},
+    },
+  ],
+  "included": [
+    {
+      "type": "entity",
+      "id": "2670",
+      "attributes": {"identifier": "213800H2PQMIF3OVZY47", "name": "KAINOS GROUP PLC"},
+    }
+  ],
+  "meta": {"count": 2},
+}
+
+
+def test_the_index_payload_reads_into_filings_and_entities() -> None:
+  from xbrlkit.filings_org.client import _records
+
+  gb, ua = _records(FILINGS_PAYLOAD)
+  assert gb.fxo_id.endswith("ESEF-GB-0")
+  assert gb.entity is not None and gb.entity.name == "KAINOS GROUP PLC"
+  assert gb.entity_identifier == "213800H2PQMIF3OVZY47"
+  assert gb.inconsistency_count == 2
+  # A filing with no package must resolve its taxonomy over the network —
+  # which is exactly what fails for the regimes whose host has gone.
+  assert gb.has_package is True
+  assert ua.has_package is False
+  assert ua.entity is None and ua.entity_identifier == ""
+
+
+def test_a_relative_package_path_becomes_an_absolute_url() -> None:
+  from xbrlkit.filings_org.client import FilingRecord
+  from xbrlkit.filings_org.download import package_url
+
+  gb = FilingRecord(fxo_id="x", package_url="/a/pkg.zip")
+  assert package_url(gb) == "https://filings.xbrl.org/a/pkg.zip"
+  # A filing with only a report falls back to it, and an absolute URL is kept.
+  assert package_url(FilingRecord(fxo_id="x", report_url="/a/r.xhtml")).endswith(
+    "/a/r.xhtml"
+  )
+  assert package_url(FilingRecord(fxo_id="x", package_url="https://e.test/p.zip")) == (
+    "https://e.test/p.zip"
+  )
+  assert package_url(FilingRecord(fxo_id="x")) == ""
+
+
+def test_the_new_source_forms_do_not_collide_with_the_old_ones() -> None:
+  """An LEI and an index filing id have to be told apart from a ticker and an
+  EDGAR accession, since all four arrive as one string."""
+  from xbrlkit.serve.session import (
+    _ACCESSION_RE,
+    _CIK_ACCESSION_RE,
+    _FXO_RE,
+    _LEI_RE,
+    _TICKER_RE,
+  )
+
+  lei = "213800H2PQMIF3OVZY47"
+  fxo = f"{lei}-2022-03-31-ESEF-GB-0"
+  assert _LEI_RE.match(f"lei:{lei}") and _LEI_RE.match(f"LEI/{lei}")
+  assert _FXO_RE.match(fxo) and _FXO_RE.match(f"fxo:{fxo}")
+  # The forms that came first still win their own shapes.
+  assert not _LEI_RE.match("NVDA") and not _FXO_RE.match("NVDA")
+  assert not _FXO_RE.match("0001493152-19-005497")
+  assert _ACCESSION_RE.match("0001493152-19-005497")
+  assert _CIK_ACCESSION_RE.match("1522767:0001493152-19-005497")
+  assert _TICKER_RE.match("NVDA")
+  # A ticker is at most ten characters, so an LEI cannot be read as one.
+  assert not _TICKER_RE.match(lei)
+
+
+def test_the_latest_filing_is_not_one_whose_period_has_not_ended() -> None:
+  """One Finnish filer's index entry reports a period ending in 2031; sorting
+  on the period alone hands that back as their newest report."""
+  from xbrlkit.filings_org.client import FilingRecord, FilingsOrgClient
+
+  rows = [
+    FilingRecord(fxo_id="a", period_end="2031-01-01"),
+    FilingRecord(fxo_id="b", period_end="2025-12-31"),
+    FilingRecord(fxo_id="c", period_end="2024-12-31"),
+  ]
+  client = FilingsOrgClient.__new__(FilingsOrgClient)
+  client.entity_filings = lambda lei, limit=25: rows  # type: ignore[method-assign]
+  assert client.latest_filing("x", today=date(2026, 9, 7)).fxo_id == "b"
+  # Every period in the future is still an answer, not an error.
+  client.entity_filings = lambda lei, limit=25: rows[:1]  # type: ignore[method-assign]
+  assert client.latest_filing("x", today=date(2026, 9, 7)).fxo_id == "a"

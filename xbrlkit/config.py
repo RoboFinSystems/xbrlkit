@@ -34,6 +34,9 @@ class Config:
   )
   sec_base_url: str = "https://www.sec.gov"
   sec_data_url: str = "https://data.sec.gov"
+  # XBRL International's public index of filings outside EDGAR — ESEF and the
+  # national regimes that publish through it. Open, and it asks for no key.
+  filings_base_url: str = "https://filings.xbrl.org"
   request_timeout: int = 30
   rate_limit_per_sec: float = 5.0
   # EDGAR answers a throttled client with an empty 200 as often as a 429;
