@@ -140,8 +140,12 @@ CANONICAL_CONTEXT: dict = {
   "prefLabel": "skos:prefLabel",
   "documentation": "rdfs:comment",
   # The standard-role label, written beside `skos:prefLabel` because only
-  # this one can carry the language the label was authored in.
-  "label": {"@id": f"{RS_VOCAB}label"},
+  # this one can carry the language the label was authored in. Named
+  # `standardLabel` — XBRL's own name for the role — because `label` is bound
+  # to `rdfs:label` by the platform's holon context, and one key meaning two
+  # predicates across two documents that both call themselves holons is worse
+  # than a longer name.
+  "standardLabel": {"@id": f"{RS_VOCAB}standardLabel"},
   # Every other XBRL label role, one term each. A label is a literal with a
   # role, so it is one triple rather than a node: reifying them would add a
   # node per label, half again as many nodes as a report has.

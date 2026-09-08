@@ -58,13 +58,17 @@ _FACTSET_BASE = FACTSET_BASE
 # Label role URI -> the vocabulary term its labels are written under. Derived
 # from the Tavi emitter's role map so the two projections name a role the same
 # way and neither can drift: Tavi's `xbrl:terseLabel` is this `rs:terseLabel`.
+STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
+DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
 LABEL_ROLE_TERMS: dict[str, str] = {
   role: label_type.split(":", 1)[-1] for role, label_type in LABEL_ROLE_TYPES.items()
 }
-# The two roles that already have a predicate: the standard label is what
-# `skos:prefLabel` means, and a documentation label is `rdfs:comment`.
-STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
-DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
+# XBRL's own name for the `…/role/label` role is the *standard* label, and that
+# is what the term is called here. `label` would collide: the platform's
+# holon context binds it to `rdfs:label`, so one key would mean two predicates
+# across two documents that both call themselves holons.
+LABEL_ROLE_TERMS[STANDARD_LABEL_ROLE] = "standardLabel"
+# A documentation label is `rdfs:comment` and needs no term of its own.
 
 
 def _slug(value: str) -> str:
