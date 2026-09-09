@@ -175,6 +175,8 @@ class _Structure:
   slug: str
   name: str
   order: int | None = None
+  # Set only when a producer supplied one; a filing leaves it None.
+  block_type: str | None = None
   presentation: list[Network] = field(default_factory=list)
   calculation: list[Network] = field(default_factory=list)
   definition: list[Network] = field(default_factory=list)
@@ -235,7 +237,14 @@ def _add_root(
   g.add((root, RDF.type, RS.Report))
   g.add((root, RS.serializationVersion, Literal(SERIALIZATION_VERSION)))
   g.add((root, RS.mode, Literal("report")))
-  g.add((root, RS.reportingStyle, Literal("sec-as-filed")))
+  # A filing is as-filed; an authored report says how it was composed.
+  g.add(
+    (
+      root,
+      RS.reportingStyle,
+      Literal(model.filing.reporting_style or "sec-as-filed"),
+    )
+  )
   g.add((root, RS.entity, entity_node))
 
   # Filing metadata on the Report node — identifies the filing (accession/form/
@@ -450,6 +459,8 @@ def _plan_structures(model: XbrlModel) -> dict[str, _Structure]:
       st.presentation.append(net)
       if net.definition:
         st.name = net.definition
+      if net.block_type and st.block_type is None:
+        st.block_type = net.block_type
       for arc in net.arcs:
         st.pres_concepts.add(arc.from_qname)
         st.pres_concepts.add(arc.to_qname)
@@ -506,6 +517,10 @@ def _add_structures(
     g.add((s_uri, SKOS.prefLabel, Literal(st.name)))
     if st.order is not None:
       g.add((s_uri, RS.structureOrder, Literal(st.order, datatype=XSD.integer)))
+    # Classification is enrichment and a filing never carries it; an authored
+    # report knows it as a column, so it is written through when supplied.
+    if st.block_type:
+      g.add((s_uri, RS.blockType, Literal(st.block_type)))
     if st.renderable:
       g.add((s_uri, RS.factSet, _factset_uri(st.role_uri)))
 
@@ -651,6 +666,11 @@ def _add_facts(
     # of this model writes it; the holon was dropping it.
     if fact.language:
       g.add((uri, RS.language, Literal(fact.language)))
+
+    if fact.content_type:
+      g.add((uri, RS.contentType, Literal(fact.content_type)))
+    if fact.structure_id:
+      g.add((uri, RS.structure, _scoped(root, "structure", _slug(fact.structure_id))))
 
     g.add((uri, RS.internalId, Literal(fact.id)))
 

@@ -586,3 +586,89 @@ class TestClassifyByRoot:
 
   def test_no_root_is_the_old_behaviour(self) -> None:
     assert classify_network("x", "Rapport över finansiell ställning") is None
+
+
+class TestAuthoredReportFields:
+  """The optional fields an authored report carries and a filing does not.
+
+  serialization-waist phase 2. The contract is two-sided: a producer that sets
+  them gets them written, and a filing that sets none must serialize exactly as
+  it did before — which is why every assertion here has an absence twin.
+  """
+
+  @staticmethod
+  def _graph(model):
+    from xbrlkit.serialize import build_holon_graph
+
+    return build_holon_graph(model)
+
+  def test_a_filing_writes_none_of_them(self) -> None:
+    """Nothing set, nothing written — the phase 2 gate, in miniature."""
+    from xbrlkit.serialize._kernel.jsonld import RS
+
+    g = self._graph(_model())
+    for predicate in (RS.blockType, RS.contentType):
+      assert not list(g.triples((None, predicate, None)))
+
+  def test_a_block_type_reaches_the_structure(self) -> None:
+    from xbrlkit.serialize._kernel.jsonld import RS
+
+    model = _model()
+    for net in model.networks:
+      if net.kind == "presentation":
+        net.block_type = "BalanceSheet"
+    values = {
+      str(o) for _, _, o in self._graph(model).triples((None, RS.blockType, None))
+    }
+    assert values == {"BalanceSheet"}
+
+  def test_a_content_type_reaches_the_fact(self) -> None:
+    from xbrlkit.serialize._kernel.jsonld import RS
+
+    model = _model()
+    model.facts[0].content_type = "text/markdown"
+    values = {
+      str(o) for _, _, o in self._graph(model).triples((None, RS.contentType, None))
+    }
+    assert values == {"text/markdown"}
+
+  def test_a_structure_pin_reaches_the_fact(self) -> None:
+    """A multi-FactSet report pins a fact to one section explicitly."""
+    from xbrlkit.serialize._kernel.jsonld import RS
+
+    model = _model()
+    role = next(n.role_uri for n in model.networks if n.kind == "presentation")
+    model.facts[0].structure_id = role
+    pinned = list(self._graph(model).triples((None, RS.structure, None)))
+    assert any("structure" in str(o) for _, _, o in pinned)
+
+  def test_the_reporting_style_is_the_model_s_when_it_has_one(self) -> None:
+    from xbrlkit.serialize._kernel.jsonld import RS
+
+    model = _model()
+    model.filing.reporting_style = "roboledger-authored"
+    styles = {
+      str(o) for _, _, o in self._graph(model).triples((None, RS.reportingStyle, None))
+    }
+    assert styles == {"roboledger-authored"}
+
+  def test_a_filing_still_says_as_filed(self) -> None:
+    from xbrlkit.serialize._kernel.jsonld import RS
+
+    styles = {
+      str(o)
+      for _, _, o in self._graph(_model()).triples((None, RS.reportingStyle, None))
+    }
+    assert styles == {"sec-as-filed"}
+
+  def test_report_meta_is_carried_but_not_interpreted(self) -> None:
+    """Opaque by design — xbrlkit stores it and forms no opinion."""
+    model = _model()
+    model.filing.report_meta = {"status": "published", "supersedes": "r-1"}
+    assert model.filing.report_meta["status"] == "published"
+
+  def test_the_neutral_names_read_the_sec_ones(self) -> None:
+    """Phase 3 depends on these names, not on `accession` meaning a report id."""
+    model = _model()
+    assert model.filing.report_id == model.filing.accession
+    assert model.entity.identifier == model.entity.cik

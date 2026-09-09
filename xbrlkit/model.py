@@ -18,6 +18,7 @@ filing and knows nothing about any other. All cross-filing / corpus concerns
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -35,6 +36,14 @@ class FilingMeta(BaseModel):
 
   accession: str
   cik: str  # zero-padded 10-digit
+  # How the report was composed. ``None`` means the source does not say, and a
+  # filing's writer falls back to ``sec-as-filed``; a ledger-authored report
+  # sets its own. (serialization-waist phase 2)
+  reporting_style: str | None = None
+  # Report-level provenance a *report* carries and a filing does not: filing
+  # status, what it supersedes, share provenance. Opaque to xbrlkit — written
+  # through, never interpreted. (serialization-waist phase 2)
+  report_meta: dict[str, Any] | None = None
   form: str | None = None
   filing_date: date | None = None
   fiscal_year_focus: str | None = None
@@ -58,6 +67,17 @@ class FilingMeta(BaseModel):
   # The filer's own taxonomy namespace — the schema shipped in the filing
   # package — as distinct from the standard taxonomies it imports.
   extension_namespace: str | None = None
+
+  @property
+  def report_id(self) -> str:
+    """The report's identifier, named for what it is rather than for EDGAR.
+
+    ``accession`` is the SEC's word and stays the stored field; a report that
+    never went to EDGAR — a ledger's own — has an id but no accession. Depend
+    on this name, not on ``accession`` meaning a report id.
+    """
+    return self.accession
+
   # The readable primary document as EDGAR names it (`form10-k.htm`). The same
   # file as `primary_document` for inline XBRL; a *sibling* of the instance for
   # a classic filing, where the narrative lives outside the XBRL package
@@ -70,6 +90,10 @@ class EntityIdentity(BaseModel):
 
   Everything beyond ``cik`` and ``scheme`` comes from the EDGAR submissions
   header, not the XBRL instance; each is ``None`` when unknown.
+
+  ``identifier`` is the neutral reading of ``cik``: the entity's id under
+  whatever ``scheme`` names it. An ESEF filer is an LEI, a ledger's entity is
+  its own id, and neither is a CIK.
   """
 
   cik: str
@@ -82,6 +106,16 @@ class EntityIdentity(BaseModel):
   sic: str | None = None
   sic_description: str | None = None
   category: str | None = None
+
+  @property
+  def identifier(self) -> str:
+    """The entity's id under ``scheme`` — the neutral reading of ``cik``.
+
+    An ESEF filer is an LEI, a ledger's entity is its own id, and neither is a
+    CIK. Depend on this name, not on ``cik`` meaning an arbitrary identifier.
+    """
+    return self.cik
+
   state_of_incorporation: str | None = None
   fiscal_year_end: str | None = None
   entity_type: str | None = None
@@ -242,6 +276,15 @@ class XbrlFact(BaseModel):
   # Tavi have a place for it; the parse previously kept language only on
   # labels, so every projection was silently dropping it.
   language: str | None = None
+  # The media type of a text fact's value (``text/markdown`` for an authored
+  # block). A filing's text blocks are HTML and say so by being XBRL; an
+  # authored report may carry something else. (serialization-waist phase 2)
+  content_type: str | None = None
+  # The structure this fact is pinned to, when one fact belongs to exactly one
+  # section. Filings derive membership from the presentation networks instead,
+  # so this stays ``None`` there; a multi-FactSet authored report needs the
+  # pin. (serialization-waist phase 2)
+  structure_id: str | None = None
 
 
 class Arc(BaseModel):
@@ -281,6 +324,12 @@ class Network(BaseModel):
   # The ``id`` of the role's ``<link:roleType>`` in the filer's schema, when
   # declared; the property-graph projection names the structure by it.
   role_id: str | None = None
+  # The semantic block type of the section this network presents. A filing
+  # never sets it — classifying a role is enrichment, and xbrlkit refuses to
+  # guess (see ``serialize/graph.py``) — but an authored report knows it as a
+  # column, so a producer may supply it and the writers pass it through.
+  # (serialization-waist phase 2)
+  block_type: str | None = None
 
 
 class XbrlModel(BaseModel):
