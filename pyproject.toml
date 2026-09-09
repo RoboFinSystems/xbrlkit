@@ -72,6 +72,7 @@ xbrlkit = "xbrlkit.cli:main"
 [project.urls]
 Repository = "https://github.com/RoboFinSystems/xbrlkit"
 Homepage = "https://github.com/RoboFinSystems/xbrlkit#readme"
+Viewer = "https://xbrlkit.com"
 "Bug Tracker" = "https://github.com/RoboFinSystems/xbrlkit/issues"
 
 [build-system]

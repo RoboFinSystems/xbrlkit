@@ -224,13 +224,14 @@ row against the platform's processor, and the two importers by round trip.
 
 ## View & explore
 
-Built holons render in the **RoboSystems Holon Viewer** — a browser-based
-reader that renders the financial statements and lets you ask questions of the
-report with AI:
+Built holons and TAVI models render in the **xbrlkit viewer** — the browser
+side of the toolkit, a reader that renders the financial statements and lets
+you ask questions of the report with AI:
 
-- **Hosted:** <https://holon.robosystems.ai/> — open a `holon.jsonld` and
-  explore the statements, notes and dimensional facts, or chat with the report.
-- **Source:** <https://github.com/RoboFinSystems/robosystems-holon-viewer>
+- **Hosted:** <https://xbrlkit.com/> — open a `holon.jsonld` or a `tavi.json`
+  and explore the statements, notes and dimensional facts, or chat with the
+  report.
+- **Source:** <https://github.com/RoboFinSystems/xbrlkit-viewer>
 
 The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
 complete, portable, self-describing report. Its chat asks the report raw
@@ -259,7 +260,7 @@ uvx xbrlkit view NVDA
 A browser cannot be handed a local path — `file://` is unreachable from an
 https page, and a file input cannot be pre-populated — so this serves the
 document instead, on an ephemeral loopback port with an unguessable path, and
-opens `holon.robosystems.ai/?url=…` pointing at it. `http://127.0.0.1` is a
+opens `xbrlkit.com/?url=…` pointing at it. `http://127.0.0.1` is a
 potentially trustworthy origin, so the https page may read it; the CORS header
 names the viewer's origin and no other. The document is readable there, by that
 origin, until you press Ctrl-C. `--viewer` points at a different build.

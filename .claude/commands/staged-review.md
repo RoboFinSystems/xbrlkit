@@ -8,7 +8,7 @@ This is `xbrlkit`: a **published Python package** converting SEC XBRL filings in
 
 ## Output contract (decides the verdict)
 
-The emitted `holon.jsonld` is consumed downstream by `robosystems-holon-viewer` and `robosystems-report-components`:
+The emitted `holon.jsonld` is consumed downstream by `xbrlkit-viewer` and `robosystems-report-components`:
 
 - Does the diff change a **value**, a **key name**, or the **document structure**? Say for which filings and why — a consumer's rendering can depend on the old shape.
 - A CLI change (renamed command or flag) is breaking for anyone scripting `xbrlkit build …`.

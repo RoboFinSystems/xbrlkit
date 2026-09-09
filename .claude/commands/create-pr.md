@@ -45,7 +45,7 @@ TARGET=${1:-main}
 
   The template has no Related Issues section — put `Closes #123` as the last line of the Summary.
 
-- **Output Impact is the judgment that matters.** Downstream, `robosystems-holon-viewer` and `robosystems-report-components` render these documents:
+- **Output Impact is the judgment that matters.** Downstream, `xbrlkit-viewer` and `robosystems-report-components` render these documents:
   - **Changed output** — a different value, a renamed key, a restructured document. Say what changes and for which filings; a consumer's rendering may depend on the old shape.
   - **Broader coverage** — filings that previously failed now convert. Free, but name the class.
   - **CLI contract** — a renamed flag or command is breaking for anyone scripting against it.

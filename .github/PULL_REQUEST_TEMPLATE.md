@@ -12,7 +12,7 @@
 
 ## Output Impact
 
-<!-- Required judgment. The emitted holon.jsonld is consumed by robosystems-holon-viewer and
+<!-- Required judgment. The emitted holon.jsonld is consumed by xbrlkit-viewer and
      robosystems-report-components; the TAVI projection targets a published spec.
      - CHANGED OUTPUT: a different value, a renamed key, a restructured document. Say which
        filings are affected — a consumer's rendering may depend on the old shape.
