@@ -87,11 +87,6 @@ directory, so a `uvx` or `pip` install never picks one up. There, use
 [Serve to an MCP client](#serve-to-an-mcp-client)). Nothing outside EDGAR
 needs it — a local file, a JSON report and filings.xbrl.org all load without.
 
-> **Do not put a GitHub URL in it.** EDGAR answers `403` to any `User-Agent`
-> containing `github.com`, whatever else the header says, and the failure
-> looks like a permissions problem rather than a header problem. A name and
-> an email is the shape that works.
-
 ## Usage
 
 ```bash
@@ -185,8 +180,9 @@ And filings.xbrl.org, local packages and Tavi/holon JSON need no identity at all
 Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
 `lei:`, a local package, or a holon or Tavi by path or URL — and ask for
 statements, facts by concept and period, calculations, exhibits and text.
-There is no graph and no index behind the tools: every answer is read from the
-filing. Full detail, including the tool table and the `--pure` profile, in
+No graph and no database sits behind any of it: every answer about a filing is
+read from that filing. The one outward call is `search_filings`, which asks
+EDGAR's own full-text index which filings to go and read. Full detail, including the tool table and the `--pure` profile, in
 [`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
 
 ## Where it runs

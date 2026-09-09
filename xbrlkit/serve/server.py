@@ -190,6 +190,64 @@ def build_server(
     return run(tools.list_filings, session)
 
   @server.tool(
+    name="search_filings",
+    description=(
+      "Find filings ACROSS EDGAR by phrase, form, date and filer — the "
+      "discovery step before load_filing. `text_query` searches the filing "
+      "documents themselves (quote a phrase for an exact match: "
+      "'\"material weakness in internal control\"'), `forms` narrows by type "
+      "(['10-K', '8-K']), `start_date` / `end_date` are YYYY-MM-DD, `ciks` "
+      "restricts to given filers. Returns a page of hits and the total that "
+      "matched; each hit's `source` is the `cik:accession` load_filing takes, "
+      "so a result reads directly. EDGAR's full-text index begins in 2001 — "
+      "an earlier date range finds nothing, however the filing reads. This is "
+      "the corpus-wide search; `search_text` searches inside one loaded filing."
+    ),
+    structured_output=False,
+  )
+  async def search_filings(
+    text_query: Annotated[
+      str | None,
+      Field(
+        description="A phrase to find in the filing text; quote it for an exact match."
+      ),
+    ] = None,
+    forms: Annotated[
+      list[str] | None, Field(description="Form types, e.g. ['10-K', '20-F'].")
+    ] = None,
+    start_date: Annotated[
+      str | None,
+      Field(description="Earliest filing date, YYYY-MM-DD (EDGAR indexes from 2001)."),
+    ] = None,
+    end_date: Annotated[
+      str | None, Field(description="Latest filing date, YYYY-MM-DD.")
+    ] = None,
+    ciks: Annotated[
+      list[str] | None, Field(description="Restrict to these filer CIKs.")
+    ] = None,
+    limit: Annotated[
+      int,
+      Field(
+        description="Hits to return; the total matched is reported regardless.",
+        ge=1,
+        le=tools.SEARCH_MAX_LIMIT,
+      ),
+    ] = tools.SEARCH_DEFAULT_LIMIT,
+  ) -> str:
+    return await anyio.to_thread.run_sync(
+      lambda: run(
+        tools.search_filings,
+        text_query=text_query,
+        forms=forms,
+        start_date=start_date,
+        end_date=end_date,
+        ciks=ciks,
+        limit=limit,
+        config=session.config,
+      )
+    )
+
+  @server.tool(
     name="load_filing",
     description=(
       "Load a filing into the server and return its description. `source` is "

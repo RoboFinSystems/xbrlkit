@@ -942,6 +942,7 @@ async def test_server_lists_and_calls_tools(
     names = {t.name for t in listed.tools}
     assert names == {
       "list_filings",
+      "search_filings",
       "load_filing",
       "unload_filing",
       "describe_filing",
@@ -1058,3 +1059,78 @@ class TestStartupBanner:
 
     lines = identity_lines("Acme Corp ops@acme.com")
     assert lines == ["SEC identity: Acme Corp ops@acme.com"]
+
+
+class TestSearchFilings:
+  """EDGAR-wide discovery: the step before load_filing."""
+
+  @staticmethod
+  def _stub(monkeypatch, total, hits):
+    """Stand in for EftsClient without touching the network."""
+    import xbrlkit.edgar.efts as efts
+
+    class _Hit:
+      def __init__(self, cik, accession):
+        self.cik = cik
+        self.accession = accession
+        self.form = "10-K"
+        self.filing_date = "2026-03-24"
+        self.primary_document = "ACME CORP  (ACME)"
+
+    class _Client:
+      def __init__(self, config=None):
+        self.config = config
+
+      def query_with_total(self, **kwargs):
+        _Client.seen = kwargs
+        return total, [_Hit(f"000000000{i}", f"acc-{i}") for i in range(hits)]
+
+    monkeypatch.setattr(efts, "EftsClient", _Client)
+    return _Client
+
+  def test_a_hit_is_directly_loadable(self, monkeypatch):
+    """`source` is the cik:accession load_filing takes — that is the point."""
+    self._stub(monkeypatch, total=3, hits=3)
+    out = tools.search_filings(text_query="goodwill impairment")
+    assert out["filings"][0]["source"] == "0000000000:acc-0"
+    assert out["returned"] == 3
+
+  def test_an_unfiltered_search_is_refused(self):
+    """Every filing on EDGAR is not an answer."""
+    with pytest.raises(tools.ToolError, match="at least one"):
+      tools.search_filings()
+
+  def test_the_total_is_reported_beside_the_page(self, monkeypatch):
+    """8 of 3,412 is a different answer from 8."""
+    self._stub(monkeypatch, total=3412, hits=5)
+    out = tools.search_filings(text_query="x", limit=5)
+    assert out["total_matching"] == 3412
+    assert out["returned"] == 5
+    assert "3412 filings match" in out["note"]
+
+  def test_no_note_when_the_page_is_the_whole_answer(self, monkeypatch):
+    self._stub(monkeypatch, total=2, hits=2)
+    out = tools.search_filings(text_query="x")
+    assert "note" not in out
+
+  @pytest.mark.parametrize("asked", [500, 10_000])
+  def test_the_limit_is_clamped(self, monkeypatch, asked):
+    """EFTS will page through 10,000 hits given the chance; a tool will not."""
+    client = self._stub(monkeypatch, total=10_000, hits=1)
+    tools.search_filings(text_query="x", limit=asked)
+    assert client.seen["max_results"] == tools.SEARCH_MAX_LIMIT
+
+  def test_a_network_failure_becomes_a_tool_error(self, monkeypatch):
+    """So the caller gets a message it can act on, not a traceback."""
+    import xbrlkit.edgar.efts as efts
+
+    class _Broken:
+      def __init__(self, config=None):
+        pass
+
+      def query_with_total(self, **kwargs):
+        raise ConnectionError("EDGAR unreachable")
+
+    monkeypatch.setattr(efts, "EftsClient", _Broken)
+    with pytest.raises(tools.ToolError, match="EDGAR unreachable"):
+      tools.search_filings(text_query="x")

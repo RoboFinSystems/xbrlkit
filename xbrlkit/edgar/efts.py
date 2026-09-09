@@ -171,6 +171,25 @@ class EftsClient:
     ``max_results`` caps the fetch; by default everything up to the EFTS
     ceiling is returned, with a warning when the query exceeds it.
     """
+    return self.query_with_total(
+      forms, start_date, end_date, ciks, text_query, max_results, include_amendments
+    )[1]
+
+  def query_with_total(
+    self,
+    forms: list[str] | tuple[str, ...] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    ciks: list[str] | None = None,
+    text_query: str | None = None,
+    max_results: int | None = None,
+    include_amendments: bool = False,
+  ) -> tuple[int, list[EftsHit]]:
+    """As :meth:`query`, and the total number of matches beside the page.
+
+    A caller that shows a handful of hits still needs the size of what it is
+    sampling — "8 of 3,412" is a different answer from "8".
+    """
     params = self.build_params(
       forms, start_date, end_date, ciks, text_query, include_amendments
     )
@@ -178,7 +197,7 @@ class EftsClient:
     first = self._fetch_page(params, offset=0, size=1)
     total = int(first.get("hits", {}).get("total", {}).get("value", 0) or 0)
     if total == 0:
-      return []
+      return 0, []
     if total > EFTS_MAX_RESULTS:
       logger.warning(
         "EFTS query matches %d filings, over its %d limit; narrow the dates or forms",
@@ -197,7 +216,7 @@ class EftsClient:
       if len(page_hits) < size:
         break
     logger.info("EFTS query complete: %d filings", len(hits))
-    return hits[:to_fetch]
+    return total, hits[:to_fetch]
 
   def query_by_year(
     self,

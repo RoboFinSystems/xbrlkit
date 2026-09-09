@@ -30,6 +30,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from xbrlkit.config import CONFIG, Config
 from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
 from xbrlkit.serialize import classify_network
 from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
@@ -1319,3 +1320,78 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
     "bytes": target.stat().st_size if target.is_file() else None,
     "files": [str(p) for p in written],
   }
+
+
+# -- EDGAR-wide search ----------------------------------------------------------
+
+# EFTS will page through 10,000 hits given the chance. A tool answers into a
+# context window, so it returns a sample and says how big the thing sampled is.
+SEARCH_MAX_LIMIT = 100
+SEARCH_DEFAULT_LIMIT = 20
+EFTS_FIRST_YEAR = 2001
+
+
+def search_filings(
+  text_query: str | None = None,
+  forms: list[str] | None = None,
+  start_date: str | None = None,
+  end_date: str | None = None,
+  ciks: list[str] | None = None,
+  limit: int = SEARCH_DEFAULT_LIMIT,
+  config: Config = CONFIG,
+) -> dict[str, Any]:
+  """Filings across EDGAR matching a phrase, form and date range.
+
+  Returns a page of hits and the total that matched, each hit carrying the
+  ``cik:accession`` that ``load_filing`` takes — the point of the tool is that
+  a search result is directly loadable.
+  """
+  if not any((text_query, forms, start_date, end_date, ciks)):
+    raise ToolError(
+      "Give at least one of text_query, forms, start_date, end_date or ciks; "
+      "an unfiltered search matches all of EDGAR."
+    )
+  limit = max(1, min(limit, SEARCH_MAX_LIMIT))
+
+  from xbrlkit.edgar.efts import EftsClient
+
+  try:
+    total, hits = EftsClient(config=config).query_with_total(
+      forms=forms,
+      start_date=start_date,
+      end_date=end_date,
+      ciks=ciks,
+      text_query=text_query,
+      max_results=limit,
+    )
+  except Exception as exc:  # a network or EDGAR-side failure, not a bad query
+    raise ToolError(f"EDGAR full-text search failed: {exc}") from exc
+
+  filings = [
+    {
+      "source": f"{hit.cik}:{hit.accession}",
+      "form": hit.form,
+      "filed": hit.filing_date,
+      "filer": hit.primary_document,
+    }
+    for hit in hits
+  ]
+  result: dict[str, Any] = {
+    "query": {
+      "text_query": text_query,
+      "forms": forms,
+      "start_date": start_date,
+      "end_date": end_date,
+      "ciks": ciks,
+    },
+    "total_matching": total,
+    "returned": len(filings),
+    "filings": filings,
+    "next": "load_filing with a hit's `source` to read one; search_text to search inside it",
+  }
+  if total > len(filings):
+    result["note"] = (
+      f"{total} filings match; {len(filings)} shown. Narrow the dates, forms or "
+      "phrase rather than raising the limit — the whole set is not the answer."
+    )
+  return result
