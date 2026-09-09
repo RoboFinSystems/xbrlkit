@@ -32,7 +32,7 @@ from typing import Any
 
 from xbrlkit.config import CONFIG, Config
 from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
-from xbrlkit.serialize import classify_network
+from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
 from xbrlkit.text.ixbrl import _strip_html
 
@@ -151,11 +151,16 @@ def _classify_statement(n: Network) -> str | None:
   an income-taxes note an income statement; a network whose definition says
   it is a disclosure, a detail or a parenthetical is never a primary
   statement, whatever else its name contains.
+
+  The tree's root is passed as the last resort, so a filing whose definitions
+  are not in English still classifies. It is deliberately reached only after
+  the exclusions above: a parenthetical shares its root with the statement it
+  qualifies, and only the definition tells them apart.
   """
   definition = (n.definition or "").lower()
   if any(marker in definition for marker in _NOT_A_STATEMENT):
     return None
-  return classify_network(n.role_uri, n.definition)
+  return classify_network(n.role_uri, n.definition, root_qname(n.arcs))
 
 
 def _network_id(n: Network) -> str:

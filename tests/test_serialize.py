@@ -31,6 +31,7 @@ from xbrlkit.serialize._kernel import context
 from xbrlkit.serialize import (
   build_holon_graph,
   classify_network,
+  root_qname,
   to_holon,
 )
 from xbrlkit.serialize._kernel.jsonld import RS, shacl_report
@@ -503,3 +504,85 @@ def test_the_standard_label_term_does_not_shadow_rdfs_label() -> None:
   under its own name."""
   assert context.CANONICAL_CONTEXT["label"] == "rdfs:label"
   assert context.CANONICAL_CONTEXT["standardLabel"]["@id"].endswith("standardLabel")
+
+
+class _Arc:
+  """Minimal stand-in for a presentation arc."""
+
+  def __init__(self, parent: str, child: str) -> None:
+    self.from_qname = parent
+    self.to_qname = child
+
+
+class TestRootQname:
+  def test_the_root_is_the_parent_that_is_never_a_child(self) -> None:
+    arcs = [_Arc("a:Root", "a:Total"), _Arc("a:Total", "a:Line")]
+    assert root_qname(arcs) == "a:Root"
+
+  def test_several_roots_are_ambiguous(self) -> None:
+    """Nothing says which root speaks for the tree, so none does."""
+    assert root_qname([_Arc("a:One", "a:X"), _Arc("a:Two", "a:Y")]) is None
+
+  def test_no_arcs_is_no_root(self) -> None:
+    assert root_qname([]) is None
+
+
+class TestClassifyByRoot:
+  """The language-independent fallback — why an ESEF filing classifies at all."""
+
+  def test_a_swedish_definition_classifies_on_its_root(self) -> None:
+    assert (
+      classify_network(
+        "http://cloetta.com/roles/RapportOEverFinansiellStaellning",
+        "03 - Rapport över finansiell ställning",
+        "ifrs-full:StatementOfFinancialPositionAbstract",
+      )
+      == "balance_sheet"
+    )
+
+  def test_a_spanish_definition_classifies_on_its_root(self) -> None:
+    assert (
+      classify_network(
+        "http://www.bbva.es/role/EstadodeflujosdeefectivoStatement",
+        "[0000005] Estado de flujos de efectivo, método indirecto (Statement)",
+        "ifrs-full:StatementOfCashFlowsAbstract",
+      )
+      == "cash_flow_statement"
+    )
+
+  def test_the_namespace_does_not_matter(self) -> None:
+    """One table of local names serves IFRS and US GAAP alike."""
+    for ns in ("ifrs-full", "us-gaap", "acme"):
+      assert (
+        classify_network("x", "något på svenska", f"{ns}:StatementOfCashFlowsAbstract")
+        == "cash_flow_statement"
+      )
+
+  def test_a_parenthetical_is_still_excluded_by_its_root(self) -> None:
+    """The safety property: a parenthetical shares the statement's root.
+
+    Only the definition separates them, so the root must never override it.
+    """
+    assert (
+      classify_network(
+        "x",
+        "Consolidated Balance Sheets (Parenthetical)",
+        "us-gaap:StatementOfFinancialPositionAbstract",
+      )
+      is None
+    )
+
+  def test_the_definition_wins_when_it_classifies(self) -> None:
+    """The root is a last resort, not a correction."""
+    assert (
+      classify_network(
+        "x", "Consolidated Statements of Cash Flows", "us-gaap:IncomeStatementAbstract"
+      )
+      == "cash_flow_statement"
+    )
+
+  def test_an_unknown_root_classifies_nothing(self) -> None:
+    assert classify_network("x", "opaque", "us-gaap:CreditLossAbstract") is None
+
+  def test_no_root_is_the_old_behaviour(self) -> None:
+    assert classify_network("x", "Rapport över finansiell ställning") is None
