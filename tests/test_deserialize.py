@@ -401,6 +401,45 @@ def test_round_trip_keeps_the_networks(model: XbrlModel, fmt: str) -> None:
   assert [(a.to_qname, a.weight) for a in calculation.arcs] == [("us-gaap:Cash", 1.0)]
 
 
+def test_holon_round_trip_is_a_fixed_point_past_ten_arcs(model: XbrlModel) -> None:
+  """Read back and written again, a holon is the same bytes in the same arc order.
+
+  Association IRIs end in a per-structure index. ``@graph`` arrays were sorted
+  as strings, so from ten arcs on ``…/10`` sorted before ``…/2``; the reader
+  kept that order and the next write re-indexed the arcs by it — 142 of 162
+  arcs on one demo report moved on every hop and never settled.
+  """
+  from xbrlkit.model import Arc, Concept, Network
+
+  role = "http://example.com/role/Wide"
+  namespace = model.concepts["us-gaap:Assets"].namespace
+  for i in range(12):
+    qname = f"us-gaap:Line{i:02d}"
+    model.concepts[qname] = Concept(
+      qname=qname,
+      namespace=namespace,
+      name=f"Line{i:02d}",
+      period_type="instant",
+      balance="debit",
+      is_numeric=True,
+      item_type="monetaryItemType",
+      substitution_group="xbrli:item",
+    )
+  arcs = [
+    Arc(from_qname="us-gaap:Assets", to_qname=f"us-gaap:Line{i:02d}", order=float(i))
+    for i in range(12)
+  ]
+  model.networks.append(
+    Network(role_uri=role, definition="Wide", kind="presentation", arcs=arcs)
+  )
+  once = from_holon_json(to_holon(model))
+  wide = next(n for n in once.networks if n.role_uri == role)
+  assert [a.to_qname for a in wide.arcs] == [a.to_qname for a in arcs]
+  # The first write canonicalizes; from then on the holon is its own fixed point.
+  second = to_holon(once)
+  assert to_holon(from_holon_json(second)) == second
+
+
 @pytest.mark.parametrize("fmt", ["tavi", "holon"])
 def test_round_trip_keeps_the_concept_facts(model: XbrlModel, fmt: str) -> None:
   got = _through(model, fmt)
