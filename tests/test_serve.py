@@ -1182,6 +1182,12 @@ def test_an_earnings_8k_is_identified_and_points_at_the_exhibit() -> None:
 
   earnings = items_note(["2.02", "9.01"])
   assert earnings is not None and "EX-99.1" in earnings and "documents" in earnings
+  # A release furnished under Reg FD alone is not coded 2.02, and must still
+  # be routed to the exhibit — 2.02 is a strong positive signal, a weak
+  # negative one.
+  assert is_earnings_release(["2.01", "7.01", "9.01"]) is False
+  fd = items_note(["2.01", "7.01", "9.01"])
+  assert fd is not None and "documents" in fd and "read_document" in fd
   # Every coded 8-K says something; an uncoded filing says nothing.
   assert items_note(["7.01"]) is not None
   assert items_note(["9.01"]) is not None

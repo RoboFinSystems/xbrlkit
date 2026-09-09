@@ -9,10 +9,17 @@ either — every 8-K looks the same from the outside.
 **The item numbers are the answer, and EDGAR publishes them.** The submissions
 record carries an ``items`` field per filing (``"2.02,9.01"``), and Item 2.02 —
 *Results of Operations and Financial Condition* — is the SEC's own marker for
-an earnings release. A filer who reports quarterly results by press release
-codes it 2.02, always, because the rule requires it.
+an earnings release. It is the usual coding: NVIDIA's last twenty-five earnings
+8-Ks are every one of them ``2.02,9.01``.
 
-That makes an earnings 8-K identifiable **before** anything is fetched or read.
+**It is not the only one, and this module does not assume it is.** A filer may
+furnish the same release under Item 7.01 (Regulation FD) instead — beside a
+completed acquisition, say — and then the earnings release is attached with no
+2.02 anywhere on the filing. So 2.02 is a strong *positive* signal and a weak
+*negative* one: :func:`items_note` sends 7.01 and a bare 9.01 to the exhibits
+too, and anything hunting for results should not filter on 2.02 alone.
+
+Either way an 8-K is identifiable **before** anything is fetched or read.
 It matters because the numbers a company leads with — adjusted EBITDA,
 non-GAAP margin, segment colour, guidance — appear in that exhibit and nowhere
 in any XBRL, and they arrive weeks before the 10-Q that eventually restates
@@ -92,7 +99,12 @@ def describe_items(codes: list[str] | None) -> list[dict[str, str]]:
 
 
 def is_earnings_release(codes: list[str] | None) -> bool:
-  """Whether this filing is coded as reporting results — Item 2.02."""
+  """Whether this filing is coded as reporting results — Item 2.02.
+
+  A positive answer is reliable; a negative one is not. A release furnished
+  under Item 7.01 alone carries the same content with no 2.02 on the filing,
+  which is why :func:`items_note` routes on more than this.
+  """
   return EARNINGS_ITEM in (codes or [])
 
 
