@@ -69,6 +69,43 @@ and notebooks.
 A JSON report reads as **XBRL** with no document behind it, so the text tools
 answer over its tagged text blocks.
 
+## The 8-K is the exception worth knowing
+
+An 8-K is a wrapper, and the wrapper is what carries the XBRL. MariMed's
+2025-05-07 filing is typical: **20 facts, all cover-page, no numeric facts, no
+statements, 3,600 characters of text** — while the earnings release attached to
+it as `EX-99.1` is **242,826 bytes**. `fact_grid` and `statement` have nothing
+to say about a filing like that, and the answer is never in the tagged content.
+
+**EDGAR says which 8-K is which, and `describe_filing` now returns it.** The
+submissions record carries item numbers per filing, and they are the SEC's own
+classification of what the report is about:
+
+| item | what it means | where the substance is |
+| --- | --- | --- |
+| **2.02** | Results of Operations and Financial Condition | **the earnings release**, normally `EX-99.1` |
+| 7.01 | Regulation FD Disclosure | an exhibit — a deck, a script, a release |
+| 9.01 | Financial Statements and Exhibits | says exhibits exist, not what they are |
+
+So an earnings 8-K is identifiable **before** anything is fetched:
+
+```json
+"items": [{"item": "2.02", "name": "Results of Operations and Financial Condition"}, …],
+"items_note": "Item 2.02 — this is an earnings release. The results are in the
+               attached exhibit (usually EX-99.1), not in this filing's XBRL …"
+```
+
+and `next` leads with `documents` rather than the fact tools.
+
+**Why this matters more than a routing convenience.** The exhibit carries what
+the company leads with — adjusted EBITDA, non-GAAP margin, segment detail,
+guidance. Those are not untagged by oversight; **no XBRL taxonomy holds them**,
+so the structured filing cannot contain the answer. And the release lands weeks
+before the 10-Q that restates part of it in GAAP. For a reader who wants to know
+what a company just reported, an Item 2.02 exhibit is a primary source, not a
+supplement to the periodic report — and it is the natural companion to the MD&A,
+which is untagged in the 10-Q too.
+
 ## Two switches shape the answers
 
 `--pure` is a faithful reading of the filing and nothing more: no statement

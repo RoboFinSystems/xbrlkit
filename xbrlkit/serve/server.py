@@ -90,6 +90,16 @@ OTHER DOCUMENTS
 content is: an 8-K is boilerplate with the press release attached as EX-99.1, \
 and a 13F-HR's primary document is a cover page whose holdings are all in a \
 second document. documents lists them; read_document reads one.
+- **8-K: go to the exhibit.** An 8-K's tagged content is its cover page — \
+twenty dei facts, no statements — so fact_grid and statement have nothing to \
+say about it and the answer is always in what was filed alongside. \
+describe_filing returns the SEC's own item codes, which say what the report \
+is about: **Item 2.02 is Results of Operations and Financial Condition — an \
+earnings release**, 7.01 a Regulation FD disclosure, 9.01 that exhibits \
+exist. On a 2.02, read the EX-99.1: it carries what the company leads with — \
+non-GAAP measures, adjusted EBITDA, segment detail, guidance — which no XBRL \
+anywhere holds, and it lands weeks before the 10-Q that restates part of it \
+in GAAP. Treat it as a primary source, not as a supplement to the 10-Q.
 
 RECORDS (XML filings)
 - records returns the form's own tables — a Form 4's transactions and \
@@ -320,7 +330,10 @@ def build_server(
       "use; units; the presentation networks by role (statements and "
       "disclosures — the primary statements flagged under the product "
       "profile); the dimensional axes present; and the text sections with "
-      "their character offsets. Call this first — never guess names or keys."
+      "their character offsets. For an 8-K it also returns the SEC's own item "
+      "codes and what they mean (2.02 = an earnings release) with a note "
+      "saying where that filing's substance actually is. Call this first — "
+      "never guess names or keys."
     ),
     structured_output=False,
   )
@@ -495,11 +508,15 @@ def build_server(
     description=(
       "What else was filed with this filing — the exhibits, and any second "
       "document the content actually lives in (an 8-K's EX-99.1 press "
-      "release, a 13F's INFORMATION TABLE of holdings). Costs one small fetch "
-      "the first time and nothing after. Every document carries its URL and "
-      "says whether read_document can read it: a PDF or an image is listed "
-      "with its address so a caller that can open one may fetch it directly. "
-      "The XBRL package and the SEC's own rendered copies are not listed."
+      "release, a 13F's INFORMATION TABLE of holdings). On an 8-K this is the "
+      "tool that answers the question: its tagged content is the cover page, "
+      "so the substance is always here — and on an Item 2.02 the EX-99.1 is "
+      "the earnings release, carrying the non-GAAP measures and guidance no "
+      "XBRL holds. Costs one small fetch the first time and nothing after. "
+      "Every document carries its URL and says whether read_document can read "
+      "it: a PDF or an image is listed with its address so a caller that can "
+      "open one may fetch it directly. The XBRL package and the SEC's own "
+      "rendered copies are not listed."
     ),
     structured_output=False,
   )

@@ -34,6 +34,7 @@ from xbrlkit.config import CONFIG, Config
 from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
 from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
+from xbrlkit.edgar.items import describe_items, is_earnings_release, items_note
 from xbrlkit.text.ixbrl import _strip_html
 from xbrlkit.view import ViewerHost
 
@@ -565,6 +566,11 @@ def describe_filing(
       "primary_document": filing.primary_document,
       "extension_namespace": filing.extension_namespace,
       "taxonomies": len(filing.taxonomy_namespaces),
+      **(
+        {"items": describe_items(filing.items), "items_note": items_note(filing.items)}
+        if filing.items
+        else {}
+      ),
     },
     "entity": {
       "name": entity.name,
@@ -622,9 +628,27 @@ def describe_filing(
 
 
 def _next_steps(lf: LoadedFiling) -> list[str]:
-  """What to call next, given what this filing actually is."""
+  """What to call next, given what this filing actually is.
+
+  An 8-K leads with its exhibits whatever else is true of it: its tagged
+  content is a cover page, and the thing worth reading is attached. So when
+  the item codes say the substance is elsewhere, that goes first — above the
+  fact tools, which for an 8-K have almost nothing to work with.
+  """
+  exhibit_first: list[str] = []
+  if is_earnings_release(lf.model.filing.items):
+    exhibit_first = [
+      "documents, then read_document on the EX-99.1 — Item 2.02 means the "
+      "results are in the attached release, not in this filing's XBRL",
+    ]
+  elif lf.model.filing.items:
+    exhibit_first = [
+      "documents to list what was filed with this 8-K — its tagged content is "
+      "the cover page, so the substance is in the exhibits",
+    ]
   if not lf.has_xbrl:
     document = [
+      *exhibit_first,
       "search_text for anything in the document, read_text to page it",
     ]
     if lf.xml_document:
@@ -634,6 +658,7 @@ def _next_steps(lf: LoadedFiling) -> list[str]:
       ]
     return document
   return [
+    *exhibit_first,
     "resolve_element to turn a phrase into the concepts this filing reports",
     "fact_grid for consolidated values by concept and period",
     "statement with a network from the list above",

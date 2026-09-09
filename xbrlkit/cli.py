@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 
 from .config import Config
 from .edgar import EdgarClient, download_filing
+from .edgar.items import parse_items
 from .model import EntityIdentity, FilingMeta, XbrlModel
 from .parse import close, load_model, to_xbrl_model
 from .serialize import (
@@ -162,6 +163,7 @@ def filing_meta(
     is_inline_xbrl=bool(getattr(ref, "is_inline", True)),
     primary_document=primary_document,
     report_uri=report_uri,
+    items=parse_items(getattr(ref, "items", "")),
   )
 
 
