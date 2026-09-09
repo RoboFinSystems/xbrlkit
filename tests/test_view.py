@@ -124,13 +124,14 @@ def test_view_parser_shape() -> None:
   from xbrlkit.cli import build_parser
 
   args = build_parser().parse_args(["view", "NVDA"])
-  assert (args.source, args.format, args.host, args.port) == (
-    "NVDA",
-    "holon",
-    "127.0.0.1",
-    0,
-  )
+  assert (args.source, args.format, args.port) == ("NVDA", "holon", 0)
   assert args.open is True and args.viewer is None
+  # No --host on `view`: loopback is what makes an https page able to read it
+  # at all, so every other value is either refused by the browser or a LAN
+  # exposure with nothing to gain.
+  assert not hasattr(args, "host")
+  with pytest.raises(SystemExit):
+    build_parser().parse_args(["view", "NVDA", "--host", "0.0.0.0"])
   args = build_parser().parse_args(
     ["view", "x.tavi.json", "--as", "tavi", "--no-open", "--viewer", "http://l:5173"]
   )

@@ -433,7 +433,6 @@ def _cmd_view(args: argparse.Namespace) -> int:
     body,
     filename,
     viewer=args.viewer or DEFAULT_VIEWER,
-    host=args.host,
     port=args.port,
   )
   try:
@@ -674,9 +673,10 @@ def build_parser() -> argparse.ArgumentParser:
     default=None,
     help=f"Viewer base URL (default: {DEFAULT_VIEWER}). Its origin is the only one allowed to read the document.",
   )
-  v.add_argument(
-    "--host", default="127.0.0.1", help="Interface to bind (default: 127.0.0.1)."
-  )
+  # Deliberately no --host: loopback is the premise the whole design rests on.
+  # `http://127.0.0.1` is a potentially trustworthy origin, which is why an https
+  # viewer may read it at all; Chrome refuses 0.0.0.0 outright, and any other
+  # interface is a LAN exposure that buys nothing.
   v.add_argument(
     "--port", type=int, default=0, help="Port to bind (default: an ephemeral one)."
   )
