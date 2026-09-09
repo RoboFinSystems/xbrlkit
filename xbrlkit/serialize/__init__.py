@@ -13,7 +13,7 @@ itself emits no semantic block type.
 
 from __future__ import annotations
 
-from .classify import classify_network
+from .classify import classify_network, root_qname
 from .graph import build_holon_graph
 from .holon import to_holon
 from .lpg import GraphTables, build_lbug, to_graph_tables, write_parquet
@@ -26,6 +26,7 @@ __all__ = (
   "build_holon_graph",
   "build_lbug",
   "classify_network",
+  "root_qname",
   "to_graph_tables",
   "to_holon",
   "to_oim",
