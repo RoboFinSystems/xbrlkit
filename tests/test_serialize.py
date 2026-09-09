@@ -466,14 +466,26 @@ def test_arc_without_preferred_label_emits_none() -> None:
 
 
 def test_holon_serialization_is_deterministic() -> None:
-  """Same model, same bytes — and every @graph array is @id-sorted."""
+  """Same model, same bytes — and every @graph array is @id-sorted, naturally."""
+  from xbrlkit.serialize._kernel.holon import _natural
+
   model = _model()
   assert to_holon(model) == to_holon(model)
   doc = json.loads(to_holon(model))
   for entry in doc.get("@graph", []):
     if isinstance(entry, dict) and isinstance(entry.get("@graph"), list):
       ids = [n.get("@id", "") for n in entry["@graph"] if isinstance(n, dict)]
-      assert ids == sorted(ids)
+      assert ids == sorted(ids, key=_natural)
+
+
+def test_natural_order_puts_arc_nine_before_arc_ten() -> None:
+  """A plain string sort put ``…/10`` before ``…/2``; the index is numeric."""
+  from xbrlkit.serialize._kernel.holon import _natural
+
+  ids = [f"https://x/association/bs/presentation/{i}" for i in (10, 2, 9, 1, 11)]
+  assert sorted(ids, key=_natural) == [
+    f"https://x/association/bs/presentation/{i}" for i in (1, 2, 9, 10, 11)
+  ]
 
 
 def test_the_canonical_context_declares_each_term_once() -> None:

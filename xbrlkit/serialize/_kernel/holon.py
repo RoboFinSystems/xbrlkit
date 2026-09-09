@@ -36,6 +36,7 @@ Both call :func:`build_holon_dataset`, so the holon is derived one way.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 
 from rdflib import RDF, Dataset, Graph, URIRef
@@ -178,15 +179,34 @@ def serialize_holon_jsonld_from_graph(
   return _sort_graph_arrays(text)
 
 
+_DIGITS = re.compile(r"(\d+)")
+
+
+def _natural(text: str) -> tuple[object, ...]:
+  """A sort key that orders the numbers inside an IRI numerically.
+
+  Association IRIs end in a per-structure index (``…/presentation/9``). Sorted
+  as strings, ``…/10`` lands before ``…/2``; the reader keeps ``@graph`` order,
+  and the next write re-indexes the arcs by that order — so a holon read back
+  and written again moved most of its arcs on every hop and never settled.
+  ``re.split`` on the capturing group alternates text and number chunks, so
+  every key has a string at even positions and an int at odd ones and the
+  tuples compare.
+  """
+  return tuple(int(part) if part.isdigit() else part for part in _DIGITS.split(text))
+
+
 def _sort_graph_arrays(text: str) -> str:
   """Sort every ``@graph`` array by ``@id`` — and every string-valued property
-  array — so serialization is byte-stable across runs.
+  array — so serialization is byte-stable across runs and across round-trips.
 
   ``sort_keys`` orders dict keys but rdflib emits ``@graph`` node arrays and
   multi-valued property arrays (``@type``, ``hasAssociation``, ``factSet``) in
   hash order, so the same report shuffles between runs — noisy diffs for any
   holon checked into a repo. Neither order carries RDF meaning (the holon uses
-  no ``@list``), so both are safe to sort.
+  no ``@list``), so both are safe to sort. The sort is *natural* (numbers
+  compare as numbers, :func:`_natural`), so the arcs come out in index order
+  and a holon is a fixed point of read-then-write.
   """
   doc = json.loads(text)
 
@@ -196,9 +216,9 @@ def _sort_graph_arrays(text: str) -> str:
         if not isinstance(value, list):
           continue
         if key == "@graph":
-          value.sort(key=lambda n: n.get("@id", "") if isinstance(n, dict) else "")
+          value.sort(key=lambda n: _natural(n.get("@id", "") if isinstance(n, dict) else ""))
         elif all(isinstance(v, str) for v in value):
-          value.sort()
+          value.sort(key=_natural)
         for child in value:
           sort_node(child)
 
