@@ -6,7 +6,7 @@ parse captures the full XBRL and each serializer decides what to shed.
 
 | Target | Status | Notes |
 | --- | --- | --- |
-| **holon** (`.holon.jsonld`) | shipped | RDF/JSON-LD, renders in the [Holon Viewer](https://holon.robosystems.ai/). **Lossless against the model** — see below |
+| **holon** (`.holon.jsonld`) | shipped | RDF/JSON-LD, renders in the [xbrlkit viewer](https://xbrlkit.com/). **Lossless against the model** — see below |
 | **TAVI** (`.tavi.json`) | shipped | [Project TAVI](https://www.xbrl.org/Specification/tavi/PWD-2026-09-01/tavi-PWD-2026-09-01.html) compiled model, PWD-2026-09-01 |
 | **OIM** (`.oim.json`) | shipped | xBRL-JSON, checked fact-for-fact against Arelle's own writer |
 | **property graph** (`.lbug`, parquet) | shipped | the [RoboSystems](https://robosystems.ai) `sec` graph's tables, ids and DDL, as one LadybugDB file per filing |

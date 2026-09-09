@@ -9,9 +9,10 @@ that names it.
 The fact that makes that work: ``http://127.0.0.1`` and ``http://localhost``
 are *potentially trustworthy origins* in the browser's security model, so
 mixed-content blocking does not apply to them — an https page may fetch from a
-local http server. Verified against Chrome 152 on 2026-09-08: the viewer at
-``https://holon.robosystems.ai`` fetched and rendered a filing served here,
-with no Local Network Access prompt in the way.
+local http server. Verified against Chrome 152 on 2026-09-08: the hosted
+viewer (then at ``https://holon.robosystems.ai``, now ``https://xbrlkit.com``)
+fetched and rendered a filing served here, with no Local Network Access prompt
+in the way.
 
 The only machinery this needs, then, is a CORS header, because the viewer's
 origin is not this one.
@@ -32,9 +33,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-# The hosted viewer: reads a holon.jsonld or a tavi.json, entirely in the
-# browser. Overridable for a local build or a fork.
-DEFAULT_VIEWER = "https://holon.robosystems.ai"
+# The hosted xbrlkit viewer: reads a holon.jsonld or a tavi.json, entirely in
+# the browser. Overridable for a local build or a fork. Releases before 0.10
+# named the viewer's earlier home, https://holon.robosystems.ai, which keeps
+# serving the same app as an alias — the CORS header below names exactly one
+# origin, so the old name must keep working for those installs.
+DEFAULT_VIEWER = "https://xbrlkit.com"
 
 _CONTENT_TYPES = {
   ".jsonld": "application/ld+json",

@@ -13,7 +13,7 @@ Create a GitHub issue for the current repository based on the user's input.
    - **Parsing / modelling** (`parse/`, `model.py`) — the filing was fetched correctly but the translation into the holon model dropped or mangled something.
    - **Query / CLI surface** (`query.py`, `cli.py`, `config.py`) — the model was right but the command or query returns the wrong thing.
 
-   Rendering bugs are usually **not** this repo: the viewer is `robosystems-holon-viewer` and the rendering components are `robosystems-report-components`. If the `holon.jsonld` is correct and it still looks wrong, file it there.
+   Rendering bugs are usually **not** this repo: the viewer is `xbrlkit-viewer` and the rendering components are `robosystems-report-components`. If the `holon.jsonld` is correct and it still looks wrong, file it there.
 
 2. **Determine Issue Type** - Pick one: **Bug**, **Task**, **Feature**, **RFC**, **Spec**. This repo has **no `.github/ISSUE_TEMPLATE/` directory**, so confirm with `ls .github/ISSUE_TEMPLATE/` and `gh issue create --help` before assuming; structure the body yourself if there's nothing to mirror.
 
