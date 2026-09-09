@@ -10,7 +10,7 @@ get the model back.
 ```
   EDGAR ───────────┐
   filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-  a file you have ─┘                 ▲         ├──▶ Tavi            (compiled model)
+  XBRL zip / iXBRL ┘                 ▲         ├──▶ Tavi            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
                    holon, Tavi ──────┘         └──▶ property graph  (parquet, .lbug)
 
@@ -20,11 +20,11 @@ get the model back.
 ```
 
 Three ways in — the SEC, everyone else through
-[filings.xbrl.org](https://filings.xbrl.org), and **a file you already have**:
-an inline `.htm`, an XBRL instance `.xml`, a filing directory, a `.zip`
-taxonomy package, or an `http(s)` URL. Nothing about the middle of this
-requires EDGAR, or a regulator at all — a report that was never filed with
-anybody parses like one that was.
+[filings.xbrl.org](https://filings.xbrl.org), and **the filing itself**: an
+XBRL package or archive (`.zip`), an iXBRL document (`.htm`), a bare instance
+(`.xml`), a filing directory, or an `http(s)` URL to any of them. Nothing about
+the middle of this requires EDGAR, or a regulator at all — a report that was
+never filed with anybody parses like one that was.
 
 Four projections out, and two of those read back, so a report that was never an
 SEC filing gets the same treatment. A fifth surface, the filing's text, reads
@@ -115,9 +115,9 @@ xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:As
 # Open a filing as a rendered report in the browser — no account, no download
 xbrlkit view NVDA
 
-# A file you already have needs no EDGAR and no network — a .zip package, an
-# instance .xml, an inline .htm, a filing directory. `serve` and `view` take
-# any source; `build` and `fetch` are the EDGAR path
+# The filing itself needs no EDGAR and no network — an XBRL .zip, an iXBRL
+# .htm, a bare instance .xml, a filing directory. `serve` and `view` take any
+# source; `build` and `fetch` are the EDGAR path
 xbrlkit view ./report.zip
 xbrlkit serve ./mmm-20241231.htm
 ```
