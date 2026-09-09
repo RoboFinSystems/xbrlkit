@@ -4,7 +4,7 @@ The property that matters is the **round trip**: a model projected into a
 serialization and read back has to be the same model, and where it is not, the
 difference has to be the serialization's own gap rather than the importer's
 invention. So these tests assert both halves — what comes back, and what does
-not — and then assert the two importers agree with each other, because a Tavi
+not — and then assert the two importers agree with each other, because a TAVI
 and a holon of one filing are two descriptions of the same report and should
 answer a question the same way.
 """
@@ -420,7 +420,7 @@ def test_round_trip_keeps_the_concept_facts(model: XbrlModel, fmt: str) -> None:
 def test_tavi_loses_the_definition_networks_the_holon_keeps(
   through_tavi: XbrlModel, through_holon: XbrlModel
 ) -> None:
-  """Tavi turns the dimensional wiring into cube objects, which do not come
+  """TAVI turns the dimensional wiring into cube objects, which do not come
   back as arcs. The holon writes it as associations of its own kind, so the
   definition networks survive there — and the axes and members survive both."""
   assert not [n for n in through_tavi.networks if n.kind == "definition"]
@@ -434,7 +434,7 @@ def test_tavi_loses_the_definition_networks_the_holon_keeps(
   for got in (through_tavi, through_holon):
     assert got.concepts["us-gaap:SegmentAxis"].is_dimension_item is True
     assert got.concepts["us-gaap:NorthAmerica"].is_domain_member is True
-  # Only the holon says a hypercube is one; Tavi has no flag for it.
+  # Only the holon says a hypercube is one; TAVI has no flag for it.
   assert through_holon.concepts["us-gaap:SegmentTable"].is_hypercube_item is True
   assert through_tavi.concepts["us-gaap:SegmentTable"].is_hypercube_item is False
 
@@ -518,7 +518,7 @@ def test_holon_collapses_duplicate_facts(model: XbrlModel) -> None:
   """A holon addresses a fact by its id, and the parse derives that id from the
   fact's content (Arelle's MD5), so a filing's duplicate facts are one node.
 
-  Tavi names each fact positionally instead and keeps both. This is the one
+  TAVI names each fact positionally instead and keeps both. This is the one
   place the two serializations disagree about how many facts a filing has, and
   it is the emitters' difference rather than the importers'.
   """
@@ -598,7 +598,7 @@ def test_a_report_that_is_not_an_sec_filing_keeps_its_identity(
 ) -> None:
   """A ledger's own report identifies its entity under its own scheme.
 
-  Both importers used to lose half of that: Tavi looked for the entity's label
+  Both importers used to lose half of that: TAVI looked for the entity's label
   under a `cik:` name it had reconstructed rather than the SQName the document
   wrote, and the holon called any entity an SEC CIK because that is the model's
   default. Found on a real RoboLedger report, whose two files disagreed about
@@ -634,7 +634,7 @@ def test_a_holon_with_no_scheme_does_not_invent_an_sec_one(model: XbrlModel) -> 
 
 
 def test_both_importers_answer_the_same(model: XbrlModel, tmp_path: Path) -> None:
-  """A Tavi and a holon of one filing are two descriptions of one report, so
+  """A TAVI and a holon of one filing are two descriptions of one report, so
   every tool has to answer the same over either.
 
   This is the property the exercise turns on: the tool set is written against
@@ -752,7 +752,7 @@ def test_a_holon_that_is_not_one_is_refused() -> None:
 
 
 def test_period_literals_read_both_ways() -> None:
-  """Tavi writes an exclusive-end dateTime; earlier emitters wrote inclusive
+  """TAVI writes an exclusive-end dateTime; earlier emitters wrote inclusive
   dates. Both land on the same period."""
   exclusive = period_from_interval("2024-01-01T00:00:00/2025-01-01T00:00:00")
   inclusive = period_from_interval("2024-01-01/2024-12-31")

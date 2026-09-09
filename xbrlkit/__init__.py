@@ -3,7 +3,7 @@
 Fetch a filing from EDGAR (:mod:`xbrlkit.edgar`), parse it once into the
 neutral :class:`XbrlModel` (:mod:`xbrlkit.parse`), and project that model
 into whichever representation you need (:mod:`xbrlkit.serialize`): the
-``holon.jsonld`` RDF/JSON-LD document, the Project Tavi compiled model,
+``holon.jsonld`` RDF/JSON-LD document, the Project TAVI compiled model,
 xBRL-JSON, or the property-graph tables and a single-filing LadybugDB file.
 :mod:`xbrlkit.text` reads the filing's primary HTML into sections without
 Arelle at all; :mod:`xbrlkit.query` runs SPARQL over a built holon.

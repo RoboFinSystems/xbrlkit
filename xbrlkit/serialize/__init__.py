@@ -1,6 +1,6 @@
 """Projections of the neutral ``XbrlModel`` into portable serializations.
 
-:func:`to_holon` is the RDF/JSON-LD projection, :func:`to_tavi` the Project Tavi
+:func:`to_holon` is the RDF/JSON-LD projection, :func:`to_tavi` the Project TAVI
 compiled model, and :func:`to_oim` the xBRL-JSON (OIM) report — the only one
 with a reference implementation to check against. :func:`to_graph_tables` is
 the property-graph projection (the RoboSystems ``sec`` graph's tables), with

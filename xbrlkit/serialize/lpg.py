@@ -51,7 +51,7 @@ from ..schema import (
 
 # The RoboSystems platform's UUID5 namespace (``robosystems.utils.uuid``).
 # Ids minted against it are the platform's ids; this projection shares them
-# on purpose, where the holon / Tavi / OIM projections keep xbrlkit's own.
+# on purpose, where the holon / TAVI / OIM projections keep xbrlkit's own.
 PLATFORM_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
 # What the platform stamps on ``Report.xbrl_processor_version``.

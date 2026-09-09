@@ -56,8 +56,8 @@ from ._kernel.jsonld import (
 _FACTSET_BASE = FACTSET_BASE
 
 # Label role URI -> the vocabulary term its labels are written under. Derived
-# from the Tavi emitter's role map so the two projections name a role the same
-# way and neither can drift: Tavi's `xbrl:terseLabel` is this `rs:terseLabel`.
+# from the TAVI emitter's role map so the two projections name a role the same
+# way and neither can drift: TAVI's `xbrl:terseLabel` is this `rs:terseLabel`.
 STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
 DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
 LABEL_ROLE_TERMS: dict[str, str] = {

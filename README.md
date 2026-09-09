@@ -9,21 +9,28 @@ get the model back.
 
 ```
   EDGAR ───────────┐
-                   ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-  filings.xbrl.org ┘                 ▲         ├──▶ Tavi            (compiled model)
+  filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
+  XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
-                   holon, Tavi ──────┘         └──▶ property graph  (parquet, .lbug)
+                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbug)
 
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
+
+                   holon, TAVI ──▶ xbrlkit view ──▶ the report, rendered in a browser
 ```
 
-Two sources in — the SEC, and everyone else through
-[filings.xbrl.org](https://filings.xbrl.org) — four projections out, and two of
-those read back, so a report that was never an SEC filing gets the same
-treatment. A fifth surface, the filing's text, reads the primary HTML directly
-and needs neither Arelle nor the network. And the model itself can be served:
-`xbrlkit serve` holds a filing in memory and exposes it to an MCP client
-through shaped tools.
+Three ways in — the SEC, everyone else through
+[filings.xbrl.org](https://filings.xbrl.org), and **the filing itself**: an
+XBRL package or archive (`.zip`), an iXBRL document (`.htm`), a bare instance
+(`.xml`), a filing directory, or an `http(s)` URL to any of them. Nothing about
+the middle of this requires EDGAR, or a regulator at all — a report that was
+never filed with anybody parses like one that was.
+
+Four projections out, and two of those read back, so a report that was never an
+SEC filing gets the same treatment. A fifth surface, the filing's text, reads
+the primary HTML directly and needs neither Arelle nor the network. The model
+itself can be served: `xbrlkit serve` holds a filing in memory and exposes it
+to an MCP client through shaped tools. And `xbrlkit view` puts it on screen.
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it
 does not give you is anything ergonomic to *hold*: `ModelXbrl` is a large
@@ -40,15 +47,16 @@ that is the change that turns a kit into a junk drawer.
 | | | |
 | --- | --- | --- |
 | [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
-| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, Tavi (+ its gap report), xBRL-JSON, the property graph |
-| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a Tavi read back into the model, no Arelle |
+| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, TAVI (+ its gap report), xBRL-JSON, the property graph |
+| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a TAVI read back into the model, no Arelle |
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
 | [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | sixteen shaped tools over a filing in memory |
 
 `model.py` is the waist itself, `schema/` declares the property graph's tables,
-and `query.py` runs SPARQL over a built holon.
+`query.py` runs SPARQL over a built holon, and `view.py` is the loopback server
+behind `xbrlkit view` and the `view_filing` tool.
 
 ## Install
 
@@ -93,7 +101,7 @@ needs it — a local file, a JSON report and filings.xbrl.org all load without.
 # Build a holon.jsonld from a specific filing (-> ./output/)
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
-# The other projections: Tavi (plus its .tavi.gaps.json sidecar), xBRL-JSON,
+# The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
 # the property graph (needs the lpg extra), or every one of them
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
@@ -106,6 +114,12 @@ xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:As
 
 # Open a filing as a rendered report in the browser — no account, no download
 xbrlkit view NVDA
+
+# The filing itself needs no EDGAR and no network — an XBRL .zip, an iXBRL
+# .htm, a bare instance .xml, a filing directory. `serve` and `view` take any
+# source; `build` and `fetch` are the EDGAR path
+xbrlkit view ./report.zip
+xbrlkit serve ./mmm-20241231.htm
 ```
 
 From a source checkout, `just` wraps the same CLI: `just build 320193
@@ -178,10 +192,10 @@ inside a checkout of this repo — a `uvx` or `pip` install never sees one. Use
 the environment, the `env` block, or `--user-agent`.
 
 Both are optional: EDGAR works unattributed under the default, saying so once.
-And filings.xbrl.org, local packages and Tavi/holon JSON need no identity at all.
+And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all.
 
 Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
-`lei:`, a local package, or a holon or Tavi by path or URL — and ask for
+`lei:`, a local package, or a holon or TAVI by path or URL — and ask for
 statements, facts by concept and period, calculations, exhibits and text.
 No graph and no database sits behind any of it: every answer about a filing is
 read from that filing. The one outward call is `search_filings`, which asks
@@ -220,7 +234,7 @@ report with AI:
 
 The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
 complete, portable, self-describing report. Its chat asks the report raw
-questions (jq over a Tavi model, SPARQL over a holon); `xbrlkit serve` is the
+questions (jq over a TAVI model, SPARQL over a holon); `xbrlkit serve` is the
 other side of that pair — the same filing behind shaped tools, on your own
 machine.
 

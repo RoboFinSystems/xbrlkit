@@ -9,7 +9,7 @@ module exists to prevent.
 **1. Holon vocabulary** — :data:`HOLON_VOCAB`. The predicate namespace for the
 holon serialization (``rs:Fact``, ``rs:element``, …). This is the one
 standardisation candidate: the holon is a xbrlkit-defined serialization today,
-but it is intended to stand alongside XBRL, iXBRL and Tavi as ``xbrl-holon`` /
+but it is intended to stand alongside XBRL, iXBRL and TAVI as ``xbrl-holon`` /
 ``xbrl-jsonld`` / ``xbrl-rdf``. If that happens, this constant becomes the
 standard namespace and **nothing else here changes**.
 
@@ -20,7 +20,7 @@ must not move when the vocabulary does.
 
 **3. Instance identity** — :data:`FACTSET_BASE`, :data:`REPORT_BASE`,
 :data:`ENTITY_SCHEME`, :data:`TAVI_REPORT_BASE`. These name objects *inside one
-converted filing* — this report, this fact set, this minted Tavi fact. They
+converted filing* — this report, this fact set, this minted TAVI fact. They
 identify the converter's output rather than any shared vocabulary, so they stay
 attributable even if the holon standardises. Two systems converting the same
 filing should agree on them, which is why they are stable and content-derived

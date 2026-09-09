@@ -867,7 +867,7 @@ def test_model_export_reloads_without_arelle(
     with pytest.raises(SourceError, match="not a JSON file xbrlkit recognises"):
       session.load(str(bad))
     # A serialization xbrlkit recognises but cannot read is named as itself,
-    # not as a broken model: an empty Tavi is a Tavi.
+    # not as a broken model: an empty TAVI is a TAVI.
     tavi = tmp_path / "x.tavi.json"
     tavi.write_text(
       '{"documentInfo": {"documentType": "https://xbrl.org/PWD/2026-09-01/compiled"}}'

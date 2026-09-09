@@ -8,8 +8,8 @@ would give the same filing, read two ways, two period lists.
 
 The calendar fields are the deterministic enrichment :class:`~xbrlkit.model.Period`
 documents: derived from the dates, never read from the filing. That is why a
-serialization which drops them loses nothing — Tavi writes a bare ISO interval
-and the Tavi importer recomputes them here, from the same function that wrote
+serialization which drops them loses nothing — TAVI writes a bare ISO interval
+and the TAVI importer recomputes them here, from the same function that wrote
 them in the first place.
 """
 

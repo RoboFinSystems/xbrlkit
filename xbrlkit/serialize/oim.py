@@ -1,7 +1,7 @@
 """Project a neutral ``XbrlModel`` into an xBRL-JSON document (OIM).
 
 xBRL-JSON is the OIM report serialization (XBRL International, REC 2021-10-13).
-Unlike the holon and Tavi projections, this one has a **reference
+Unlike the holon and TAVI projections, this one has a **reference
 implementation**: Arelle's ``saveLoadableOIM`` writes the same document from the
 same filing, which makes this the only projection whose output can be checked
 against something other than our own reading of a spec.
@@ -10,15 +10,15 @@ That is the reason it exists. Arelle already emits xBRL-JSON, so a second writer
 is redundant as a *feature* — its value is as a test of the layer underneath.
 Every difference between this output and Arelle's is a fidelity bug in the parse
 or in :class:`~xbrlkit.model.XbrlModel`, and those same bugs are present, silent
-and unverifiable, in the holon and Tavi projections. Writing fact language is
+and unverifiable, in the holon and TAVI projections. Writing fact language is
 how the first one was found.
 
-The period, entity and language literals are shared with the Tavi projection
+The period, entity and language literals are shared with the TAVI projection
 (see :mod:`._values`): a period is an interval of dateTimes on the exclusive
 end — an instant at the close of 2024-12-31 is ``2025-01-01T00:00:00`` — the
 entity is ``cik:0000066740``, and a language tag is lower case. One convention
 is this projection's own: **values are canonical**, as ``xbrl:canonicalValues``
-declares, so a decimal-typed integer keeps its ``.0`` where Tavi carries the
+declares, so a decimal-typed integer keeps its ``.0`` where TAVI carries the
 lexical value as reported.
 """
 
@@ -45,7 +45,7 @@ OIM_RESERVED_NAMESPACES: dict[str, str] = {
 }
 
 # The entity SQName and its scheme binding, the period literal and the
-# language form are shared with the Tavi projection — see ``_values``.
+# language form are shared with the TAVI projection — see ``_values``.
 
 # Unit measures that mean "no unit" and are therefore left off the fact.
 PURE_MEASURES = frozenset({"xbrli:pure", "pure"})
@@ -113,7 +113,7 @@ def _facts(model: XbrlModel, namespaces: dict[str, str]) -> dict[str, object]:
     if fact.unit_id and fact.unit_id in units:
       measure = units[fact.unit_id].measure
       # A pure unit is equivalent to no unit, and OIM omits the dimension
-      # rather than writing it (Tavi says the same in section 8.5.2.3).
+      # rather than writing it (TAVI says the same in section 8.5.2.3).
       if measure not in PURE_MEASURES:
         dimensions["unit"] = measure
     for qualifier in fact.dims:
@@ -138,7 +138,7 @@ def _takes_language(concept: Concept | None) -> bool:
   It applies to OIM text facts only. Neither the item type nor the base XML
   Schema type decides this: centralIndexKeyItemType and enumerationSetItemType
   are both token-derived, and only the first takes a language. The parse
-  resolves it against the DTS type chain (see ``Concept.is_text_fact``); Tavi
+  resolves it against the DTS type chain (see ``Concept.is_text_fact``); TAVI
   draws the same line for its own text-fact definition (section 8.3).
   """
   return concept is not None and concept.is_text_fact

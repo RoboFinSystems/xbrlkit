@@ -1,7 +1,7 @@
 # Deserialize — the importers
 
 The arrows run both ways. XBRL is the source in every other path through this
-package; these read a **Tavi compiled model** or a **holon** back into
+package; these read a **TAVI compiled model** or a **holon** back into
 [`XbrlModel`](../model.py), after which every tool in the package works over it
 unchanged.
 
@@ -34,13 +34,13 @@ parsed one **id for id** rather than merely resembling it.
 
 ## What each format loses
 
-| | Tavi | holon |
+| | TAVI | holon |
 | --- | --- | --- |
 | loses | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | an element no fact, network or dimension mentions; the reference linkbase; a fact's source hash |
 | keeps | every label role, the datatype detail, the filing's namespaces | everything else — see [`serialize/`](../serialize/README.md#the-holon) |
 | facts | one per reported fact | one per **distinct** fact when the parse gave duplicates the same content-derived id |
 
-Tavi's losses are the standard's; the holon's were ours, and closing them is
+TAVI's losses are the standard's; the holon's were ours, and closing them is
 what the importers were good for.
 
 ## Reading the holon
@@ -69,7 +69,7 @@ Two round trips on the 26-filing corpus of 2024–2025 10-Ks and 10-Qs the
 
 1. **model → holon → model** is identical on all 26, across facts, labels,
    networks, concept fields, units and periods.
-2. Reading each filing from its **Tavi** and from its **holon** renders all
+2. Reading each filing from its **TAVI** and from its **holon** renders all
    **2,915 presentation networks identically** — same rows, same order, same
    labels — with the same calculation networks and the same `fact_grid`
    answers.
