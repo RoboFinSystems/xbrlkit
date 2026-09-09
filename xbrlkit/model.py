@@ -84,6 +84,12 @@ class FilingMeta(BaseModel):
   # entirely; and the whole filing for a form that carries no XBRL.
   document_name: str | None = None
 
+  # An 8-K's item numbers (`["2.02", "9.01"]`) — what the current report is
+  # about, which its form type and its tagged content both fail to say. Item
+  # 2.02 is Results of Operations and Financial Condition: the SEC's own marker
+  # for an earnings release. Empty for every other form.
+  items: list[str] = Field(default_factory=list)
+
 
 class EntityIdentity(BaseModel):
   """The reporting entity (the XBRL context entity, resolved to the filer).

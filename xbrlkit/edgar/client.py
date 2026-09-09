@@ -56,6 +56,10 @@ class FilingRef:
   # are only a document — most 8-Ks, DEF 14A, S-1, everything before the 2009
   # mandate — which have no `-xbrl.zip` to download and load as document-only.
   is_xbrl: bool = True
+  # An 8-K's item numbers as EDGAR records them ("2.02,9.01"), empty for every
+  # other form. Item 2.02 is the SEC's own marker for an earnings release, so
+  # this is what makes one identifiable without fetching anything.
+  items: str = ""
 
 
 @dataclass
@@ -200,6 +204,7 @@ class EdgarClient:
     xbrl = arrays.get("isXBRL") or []
     report_dates = arrays.get("reportDate") or []
     accepted = arrays.get("acceptanceDateTime") or []
+    items = arrays.get("items") or []
 
     def at(seq: object, i: int) -> object:
       return seq[i] if isinstance(seq, list) and i < len(seq) else None
@@ -217,6 +222,7 @@ class EdgarClient:
           report_date=str(at(report_dates, i) or ""),
           acceptance_datetime=str(at(accepted, i) or ""),
           is_xbrl=bool(at(xbrl, i)) or bool(at(inline, i)),
+          items=str(at(items, i) or ""),
         )
       )
     return refs

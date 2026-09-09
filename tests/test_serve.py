@@ -1151,3 +1151,99 @@ class TestSearchFilings:
     monkeypatch.setattr(efts, "EftsClient", _Broken)
     with pytest.raises(tools.ToolError, match="EDGAR unreachable"):
       tools.search_filings(text_query="x")
+
+
+# -- 8-K items ------------------------------------------------------------------
+
+
+def test_parse_items_handles_edgars_shapes() -> None:
+  from xbrlkit.edgar.items import parse_items
+
+  assert parse_items("2.02,9.01") == ["2.02", "9.01"]
+  assert parse_items(" 2.02 , 9.01 ,") == ["2.02", "9.01"]
+  assert parse_items("Item 2.02: Results of Operations,Item 9.01") == ["2.02", "9.01"]
+  assert parse_items("5.02;9.01") == ["5.02", "9.01"]
+  assert parse_items("2.02,2.02") == ["2.02"]
+  assert parse_items("") == [] and parse_items(None) == []
+
+
+def test_an_earnings_8k_is_identified_and_points_at_the_exhibit() -> None:
+  from xbrlkit.edgar.items import describe_items, is_earnings_release, items_note
+
+  assert is_earnings_release(["2.02", "9.01"]) is True
+  assert is_earnings_release(["8.01", "9.01"]) is False
+  named = describe_items(["2.02", "9.01"])
+  assert named[0] == {
+    "item": "2.02",
+    "name": "Results of Operations and Financial Condition",
+  }
+  # An unknown code is still returned, as itself.
+  assert describe_items(["9.99"]) == [{"item": "9.99", "name": ""}]
+
+  earnings = items_note(["2.02", "9.01"])
+  assert earnings is not None and "EX-99.1" in earnings and "documents" in earnings
+  # Every coded 8-K says something; an uncoded filing says nothing.
+  assert items_note(["7.01"]) is not None
+  assert items_note(["9.01"]) is not None
+  assert items_note(["5.07"]) is not None
+  assert items_note([]) is None
+
+
+def test_filing_meta_carries_the_items_off_an_edgar_ref() -> None:
+  from types import SimpleNamespace
+
+  from xbrlkit.cli import filing_meta
+
+  ref = SimpleNamespace(
+    form="8-K",
+    filing_date="2025-05-07",
+    report_date="2025-05-07",
+    acceptance_datetime="",
+    is_inline=True,
+    items="2.02,9.01",
+  )
+  meta = filing_meta(
+    "https://www.sec.gov", "1522767", "0001522767-25-000048", ref, "x.htm"
+  )
+  assert meta.items == ["2.02", "9.01"]
+  # A ref with no items (every form but 8-K) leaves it empty, not None.
+  bare = SimpleNamespace(
+    form="10-K",
+    filing_date="",
+    report_date=None,
+    acceptance_datetime="",
+    is_inline=True,
+  )
+  assert (
+    filing_meta("https://www.sec.gov", "1", "0000000000-00-000000", bare, "x.htm").items
+    == []
+  )
+
+
+def test_an_8k_describes_its_items_and_leads_with_the_exhibit() -> None:
+  from xbrlkit.model import EntityIdentity, FilingMeta, XbrlModel
+  from xbrlkit.serve.session import LoadedFiling
+
+  model = XbrlModel(
+    filing=FilingMeta(
+      accession="0001522767-25-000048",
+      cik="0001522767",
+      form="8-K",
+      items=["2.02", "9.01"],
+    ),
+    entity=EntityIdentity(cik="0001522767", name="MARIMED INC."),
+  )
+  lf = LoadedFiling(id="mrmd", source="x", model=model, text="cover", sections=[])
+  out = tools.describe_filing(lf)
+  assert out["filing"]["items"][0]["name"] == (
+    "Results of Operations and Financial Condition"
+  )
+  assert "EX-99.1" in out["filing"]["items_note"]
+  # The exhibit steer comes first, ahead of the text tools that would otherwise lead.
+  assert "documents" in out["next"][0] and "Item 2.02" in out["next"][0]
+
+
+def test_a_filing_with_no_items_says_nothing_about_them(loaded: LoadedFiling) -> None:
+  out = tools.describe_filing(loaded)
+  assert "items" not in out["filing"] and "items_note" not in out["filing"]
+  assert "documents" not in out["next"][0]
