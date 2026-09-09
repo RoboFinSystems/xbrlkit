@@ -619,7 +619,7 @@ def _facts(
 def _mark_text_facts(concepts: dict[str, Concept], facts: Sequence[XbrlFact]) -> None:
   """A fact carrying a language settles its concept's text-fact flag.
 
-  The same rule the Tavi importer applies, over the same evidence: the emitters
+  The same rule the TAVI importer applies, over the same evidence: the emitters
   write a language for an OIM text fact and for nothing else, so a fact that
   has one says what its type could not.
   """
@@ -639,7 +639,7 @@ def _network_kind(node: Mapping[str, Any]) -> NetworkKind | None:
 
   ``associationType`` says it outright — and says ``definition`` for the
   dimensional wiring, which is why a holon can carry the definition networks a
-  Tavi document turns into cubes and cannot give back. The arcrole is the
+  TAVI document turns into cubes and cannot give back. The arcrole is the
   fallback for a holon that omits the type.
   """
   declared = _text(node.get("associationType"))

@@ -63,7 +63,7 @@ START
 EDGAR `cik:accession`, or a ticker (`NVDA`, `NVDA 10-Q`). Outside the SEC it \
 takes `lei:<LEI>` for a filer's latest filing on filings.xbrl.org, or that \
 index's own filing id — ESEF and the national regimes, identified by LEI \
-rather than by ticker or CIK. XBRL is not the only source: a Tavi compiled \
+rather than by ticker or CIK. XBRL is not the only source: a TAVI compiled \
 model (`.tavi.json`), a holon (`.holon.jsonld`) or a model.json written by \
 export_filing loads at once — by path or by URL — and answers everything \
 below, so a report that was never an SEC filing, a ledger's own output \
@@ -263,7 +263,7 @@ def build_server(
     description=(
       "Load a filing into the server and return its description. `source` is "
       "a local path (an inline XBRL .htm, an XBRL instance .xml, a filing "
-      "directory, a .zip package, or a JSON report: a Tavi compiled model, a "
+      "directory, a .zip package, or a JSON report: a TAVI compiled model, a "
       "holon, or a model.json written by export_filing), "
       "an http(s) URL — an XBRL document Arelle can load, or a JSON report "
       "published as an artifact — an EDGAR `cik:accession` (e.g. "
@@ -630,7 +630,7 @@ def build_server(
     description=(
       "Write the loaded filing as one of xbrlkit's projections into the "
       "server's output directory and return the path: `holon` (RDF / JSON-LD, "
-      "opens in the RoboSystems holon viewer), `tavi` (the Project Tavi "
+      "opens in the RoboSystems holon viewer), `tavi` (the Project TAVI "
       "compiled model, JSON), `oim` (xBRL-JSON), `lpg` (a single-filing "
       "LadybugDB graph; needs the lpg extra), or `model` (the parse itself as "
       "JSON — load_filing reloads it without Arelle)."

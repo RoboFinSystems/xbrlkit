@@ -292,7 +292,7 @@ class FilingSession:
     """A JSON file, read into the model without Arelle.
 
     Three of the four shapes xbrlkit knows are read directly: the parse saved
-    by ``export_filing model``, a Tavi compiled model, and a holon. Each is a
+    by ``export_filing model``, a TAVI compiled model, and a holon. Each is a
     representation of the report rather than a rendering of it, so the tools
     work over it unchanged — and none of them is something Arelle can load.
     The xBRL-JSON report is the one still refused: that one *is* Arelle's, and
@@ -311,7 +311,7 @@ class FilingSession:
         raise SourceError(
           f"{path.name} is "
           f"{JSON_KIND_NAMES.get(kind, 'not a JSON file xbrlkit recognises')}"
-          "; this server reads a saved parse, a Tavi compiled model, a holon, "
+          "; this server reads a saved parse, a TAVI compiled model, a holon, "
           "and XBRL packages."
         )
     except (TaviError, HolonError, ValueError) as exc:
@@ -330,7 +330,7 @@ class FilingSession:
     suffix = clean.suffix.lower()
     if suffix in _JSON_SUFFIXES:
       # A JSON report is read here, not by Arelle, which cannot load one. This
-      # is how a report published as an artifact — a holon or a Tavi on a CDN —
+      # is how a report published as an artifact — a holon or a TAVI on a CDN —
       # is opened by its URL rather than downloaded first.
       return self._load_json(self._fetch(url), url)
     try:
@@ -661,7 +661,7 @@ class FilingSession:
       except RuntimeError as exc:
         raise SourceError(
           f"Arelle could not load {target}: not an XBRL or inline XBRL document "
-          "it recognises (a Tavi, holon or OIM file needs its importer)."
+          "it recognises (a TAVI, holon or OIM file needs its importer)."
         ) from exc
       try:
         if filing is None:
@@ -675,7 +675,7 @@ class FilingSession:
       # call whether there is a document behind it worth holding.
       raise NoXbrlFound(
         f"{target} holds no XBRL facts or concepts: not an XBRL or inline XBRL "
-        "document (a Tavi, holon or OIM file needs its importer)."
+        "document (a TAVI, holon or OIM file needs its importer)."
       )
     return _enrich_from_dei(model)
 
@@ -971,7 +971,7 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
 # What each JSON xbrlkit recognises is called, for the one it cannot yet read.
 JSON_KIND_NAMES = {
   "holon": "a holon (JSON-LD)",
-  "tavi": "a Tavi compiled model",
+  "tavi": "a TAVI compiled model",
   "oim": "an xBRL-JSON (OIM) report",
   "model": "a saved parse",
 }

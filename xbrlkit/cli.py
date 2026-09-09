@@ -7,7 +7,7 @@
     xbrlkit view NVDA                                        # -> the browser
 
 Wires the three layers: ``edgar`` (fetch) -> ``parse`` (Arelle -> XbrlModel) ->
-``serialize`` (XbrlModel -> a holon, a Tavi compiled model, an OIM report, or
+``serialize`` (XbrlModel -> a holon, a TAVI compiled model, an OIM report, or
 a property-graph database).
 
 ``--format lpg`` needs the ``lpg`` extra (``pip install "xbrlkit[lpg]"``) and
@@ -15,8 +15,8 @@ writes the filing as a single-file LadybugDB database with the same tables as
 the RoboSystems ``sec`` graph, text blocks inline.
 
 ``--format tavi`` writes a second sidecar, ``<accession>.tavi.gaps.json``: what
-the filing carries that Project Tavi has nowhere to put. That file is the point
-of the Tavi projection, not a by-product of it.
+the filing carries that Project TAVI has nowhere to put. That file is the point
+of the TAVI projection, not a by-product of it.
 """
 
 from __future__ import annotations
@@ -377,7 +377,7 @@ def _already_serialized(source: str, fmt: str) -> Path | None:
   """A local file that already *is* the requested serialization.
 
   Serving it verbatim is not only faster than a round trip through the model:
-  a Tavi document read in and written back is the round-tripped document, and
+  a TAVI document read in and written back is the round-tripped document, and
   ``.tavi.gaps.json`` exists precisely because that is not the same document.
   What the user names is what they see.
   """

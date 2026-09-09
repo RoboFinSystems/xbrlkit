@@ -1,6 +1,6 @@
 """Value literals the OIM-family projections share.
 
-xBRL-JSON (REC 2021) and Tavi (PWD 2026-09-01) are two serialisations of the
+xBRL-JSON (REC 2021) and TAVI (PWD 2026-09-01) are two serialisations of the
 same Open Information Model, and the literal forms below are where they agree:
 a period is an ISO 8601 interval of ``xs:dateTime`` values with an exclusive
 end, a language tag is lower case, and an entity is written scheme-first: the
@@ -46,7 +46,7 @@ def period_interval(period: Period) -> str:
   An instant at the close of 2024-12-31 is ``2025-01-01T00:00:00``; the 2024
   calendar year is ``2024-01-01T00:00:00/2025-01-01T00:00:00``. The parse rolls
   Arelle's next-midnight back by a day into a human-facing date, so this rolls
-  it forward again. Tavi's ``xbrlr:periodString`` says the time component
+  it forward again. TAVI's ``xbrlr:periodString`` says the time component
   cannot be omitted, which is why the projections do not write bare dates.
   """
   if period.period_type == "instant":
@@ -70,6 +70,6 @@ def language_tag(value: str | None) -> str | None:
   Tags are case-insensitive, so nothing is lost; ``en-US`` and ``en-us`` name
   the same language. xBRL-JSON makes the lower-case form mandatory
   (``xbrlje:invalidLanguageCodeCase``), and Arelle applies the same check to a
-  Tavi fact, so both projections write it that way.
+  TAVI fact, so both projections write it that way.
   """
   return value.lower() if value else None

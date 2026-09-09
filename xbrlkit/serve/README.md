@@ -48,7 +48,7 @@ The tools are the shapes a reader needs, not a query language.
 | `documents`, `read_document` | what else was filed — exhibits, an 8-K's press release, a 13F's holdings table — each with its URL and whether it reads natively; and reading one |
 | `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
 | `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset |
-| `export_filing` | the filing as holon, Tavi, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
+| `export_filing` | the filing as holon, TAVI, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
 | `view_filing` | the filing rendered as a report in the browser: it is serialized, served from an unguessable path on loopback (readable only by the viewer's origin, for as long as this server runs), and the link comes back to hand to the user |
 | `search_filings` | which filings across EDGAR match a phrase, form, date range or filer — the discovery step before `load_filing`, since every hit carries the `cik:accession` that loads it. Returns a page and the total matched; EDGAR's full-text index begins in 2001 |
 | `list_filings`, `load_filing`, `unload_filing` | the session |

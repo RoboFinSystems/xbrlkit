@@ -55,7 +55,7 @@ class FilingMeta(BaseModel):
   # Arelle loaded (the inline primary document, or the classic instance).
   report_date: date | None = None
   acceptance_datetime: str | None = None
-  # ``None`` when the source cannot say: a model imported from a Tavi
+  # ``None`` when the source cannot say: a model imported from a TAVI
   # document or a holon describes a report, and neither records whether the
   # filing behind it was inline XBRL.
   is_inline_xbrl: bool | None = True
@@ -173,18 +173,18 @@ class Concept(BaseModel):
   # otherwise the item type with "ItemType" removed ("Monetary", "String").
   nice_type: str | None = None
   # The item type's QName and namespace, so a projection can name it — a
-  # taxonomy-defined type (dei:yesNoItemType) becomes a datatype object in Tavi
+  # taxonomy-defined type (dei:yesNoItemType) becomes a datatype object in TAVI
   # rather than being folded to its base — and the XML Schema simple type it
   # ultimately derives from (Arelle's baseXsdType: "string", "decimal", …).
   item_type_qname: str | None = None
   item_type_namespace: str | None = None
   base_xsd_type: str | None = None
-  # xsi:nillable on the element. Tavi defaults it to false and a nil fact on a
+  # xsi:nillable on the element. TAVI defaults it to false and a nil fact on a
   # concept that does not declare it is an error; every us-gaap concept does.
   nillable: bool = False
   # Whether facts of this concept are OIM "text facts" — string-derived, and
   # not one of the DTR no-language item types. This is what decides whether the
-  # OIM language dimension applies, and it is the same line Tavi draws for its
+  # OIM language dimension applies, and it is the same line TAVI draws for its
   # text-fact definition. Neither `item_type` nor the base XSD type answers it:
   # centralIndexKeyItemType and enumerationSetItemType are both token-derived,
   # and only the first takes a language. Resolving it requires walking the type
@@ -273,7 +273,7 @@ class XbrlFact(BaseModel):
   # same as an empty string, and which every serialization writes as null.
   is_nil: bool = False
   # The fact's xml:lang, which XBRL carries on non-numeric facts. Both OIM and
-  # Tavi have a place for it; the parse previously kept language only on
+  # TAVI have a place for it; the parse previously kept language only on
   # labels, so every projection was silently dropping it.
   language: str | None = None
   # The media type of a text fact's value (``text/markdown`` for an authored

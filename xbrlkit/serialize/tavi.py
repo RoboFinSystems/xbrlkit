@@ -1,14 +1,14 @@
-"""Project a neutral ``XbrlModel`` into a Project Tavi compiled model.
+"""Project a neutral ``XbrlModel`` into a Project TAVI compiled model.
 
-Tavi (XBRL International, PWD 2026-09-01 — previously "OIM Taxonomy") replaces
+TAVI (XBRL International, PWD 2026-09-01 — previously "OIM Taxonomy") replaces
 the XML taxonomy + instance pair with one JSON object model: taxonomy objects
 and report objects live in a single document, and every object is a named,
 QName-addressed, referenceable thing.
 
 This is the third projection off the one parse (see :mod:`..model`): the holon
-emits RDF, ``graph`` emits the LPG/parquet shape, and this emits Tavi. Nothing
-upstream changes — the ``XbrlModel`` already carries what Tavi needs, because
-Tavi's fact model (``factDimensions``: concept/period/unit/entity plus taxonomy
+emits RDF, ``graph`` emits the LPG/parquet shape, and this emits TAVI. Nothing
+upstream changes — the ``XbrlModel`` already carries what TAVI needs, because
+TAVI's fact model (``factDimensions``: concept/period/unit/entity plus taxonomy
 dimensions as peers) is the same shape the parse has always produced.
 
 We emit a **compiled model** (``documentType`` ``…/compiled``): fully resolved,
@@ -17,13 +17,13 @@ else to read it.
 
 The one genuine transformation is dimensionality. XBRL says it with arcroles
 over ``<xs:element>``s — a hypercube is an element, an axis is an element, a
-domain and its members are elements — while Tavi gives each its own object
+domain and its members are elements — while TAVI gives each its own object
 type. :func:`_dimensional` reads the definition networks back into cube,
 dimension, domain class, domain network and member objects, which is also why
-those elements must then be kept *out* of ``concepts``: in Tavi they are no
+those elements must then be kept *out* of ``concepts``: in TAVI they are no
 longer concepts, and emitting them twice would collide on the name.
 
-**Whatever Tavi has nowhere to put** is not hidden: :func:`to_tavi_report`
+**Whatever TAVI has nowhere to put** is not hidden: :func:`to_tavi_report`
 returns a :class:`GapReport` alongside the document, split into what the model
 cannot express and what this emitter has not mapped yet, so neither is blamed
 for the other. That report is the substantive output of the exercise.
@@ -78,7 +78,7 @@ RESERVED_NAMESPACES: dict[str, str] = {
 REPORT_NS_BASE = TAVI_REPORT_BASE
 REPORT_PREFIX = "rpt"
 
-# XBRL 2.1 item type -> Tavi datatype QName. Every target here was verified
+# XBRL 2.1 item type -> TAVI datatype QName. Every target here was verified
 # against the built-in model in Appendix E; an unverified item type is recorded
 # as a gap rather than guessed, because a wrong datatype is a silent
 # correctness bug that a validator would not catch.
@@ -125,7 +125,7 @@ ITEM_TYPE_DATATYPES: dict[str, str] = {
   "enumerationSetItemType": "xbrlr:enumeration",
 }
 
-# Item types with no built-in Tavi datatype at all — a gap in the model, not in
+# Item types with no built-in TAVI datatype at all — a gap in the model, not in
 # this emitter. Kept separate so the gap report does not blame the spec for our
 # own unmapped types. Empty since the share count moved to the accounting module.
 ITEM_TYPES_WITHOUT_BUILTIN: frozenset[str] = frozenset()
@@ -147,7 +147,7 @@ XSD_SIMPLE_TYPES: frozenset[str] = frozenset(
   }
 )  # fmt: skip
 
-# Label role URI -> Tavi label type QName. Section 14.6 keeps the XBRL 2.1 and
+# Label role URI -> TAVI label type QName. Section 14.6 keeps the XBRL 2.1 and
 # Link Role Registry roles and addresses them by QName instead of URI; this map
 # is transcribed from the core model's own labelTypes, using the *prose* URIs
 # for the two entries where the core model contradicts itself (see
@@ -332,7 +332,7 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
     "issue": (
       "The language domain's example value is fr-CA. xBRL-JSON requires the "
       "lower-case form (xbrlje:invalidLanguageCodeCase), and Arelle applies "
-      "that rule to a Tavi fact — so its own converter flags its own en-US "
+      "that rule to a TAVI fact — so its own converter flags its own en-US "
       "output. BCP 47 tags are case-insensitive, so either form names the "
       "same language."
     ),
@@ -359,14 +359,14 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
 
 @dataclass
 class GapReport:
-  """What the filing carries that the Tavi model has nowhere to put.
+  """What the filing carries that the TAVI model has nowhere to put.
 
   The substantive output of the exercise: each entry is a concrete thing a real
   SEC filing expresses and PWD-2026-09-01 cannot, discovered by emitting rather
   than by reading.
   """
 
-  # Item types Tavi has no built-in datatype for. A finding against the model.
+  # Item types TAVI has no built-in datatype for. A finding against the model.
   item_types_without_builtin: dict[str, int] = field(default_factory=dict)
   # Item types this emitter has not mapped yet. A finding against us — most are
   # taxonomy-defined (dei:*) and belong in a taxonomy, not the built-in model.
@@ -404,7 +404,7 @@ class GapReport:
 def to_tavi(
   model: XbrlModel, *, report_id: str | None = None, description: str | None = None
 ) -> str:
-  """Project ``model`` into a Tavi compiled-model JSON string."""
+  """Project ``model`` into a TAVI compiled-model JSON string."""
   document, _ = to_tavi_report(model, report_id=report_id, description=description)
   return json.dumps(document, indent=2, sort_keys=False, default=str)
 
@@ -476,7 +476,7 @@ class Dimensional:
 
   XBRL expresses dimensionality as arcroles over ``<xs:element>``s: a hypercube
   is an element, an axis is an element, a domain and its members are elements.
-  Tavi makes each a distinct object type, so this pass reads the arcroles and
+  TAVI makes each a distinct object type, so this pass reads the arcroles and
   hands back the objects — plus ``claimed``, the element qnames that are now
   dimensional objects and must not also be emitted as concepts.
   """
@@ -556,7 +556,7 @@ def _dimensional(model: XbrlModel) -> Dimensional:
     return [a for a in by_role.get(role, {}).get(arcrole, []) if a.from_qname == source]
 
   # An axis with a default member is one a fact may omit: XBRL fills the gap
-  # with the default, which is exactly what Tavi's `optional` cube dimension
+  # with the default, which is exactly what TAVI's `optional` cube dimension
   # means (section 5.10.1). Defaults are declared once, globally.
   defaulted_axes: frozenset[str] = frozenset(
     arc.from_qname
@@ -844,7 +844,7 @@ def _unit_datatype(unit: str) -> str:
 
 
 def _unit_qname(measure: str) -> str | None:
-  """A measure token as the unit a Tavi fact carries, or ``None`` for pure.
+  """A measure token as the unit a TAVI fact carries, or ``None`` for pure.
 
   A pure unit is no unit (section 8.5.2.3). A share count is measured in the
   accounting module's unit. Anything else keeps the filing's own token: an
@@ -888,9 +888,9 @@ def _concepts_and_headings(
   the ``all`` arc became, under a different name, so there is no collision.
 
   Elements the dimensional pass claimed (axes, domains, members) are excluded:
-  in Tavi they are dimension, domain class and member objects, and emitting
+  in TAVI they are dimension, domain class and member objects, and emitting
   them here as well would collide on the name (``oimte:duplicateObjects``). In
-  XBRL they are all ``<xs:element>``, which is precisely the flattening Tavi
+  XBRL they are all ``<xs:element>``, which is precisely the flattening TAVI
   undoes.
 
   Returns the concepts, the headings, and the datatype objects (section 11.1)
@@ -1015,7 +1015,7 @@ def _networks_and_groups(
 ]:
   """Networks (section 10.3) plus the groups (section 10.1) that carry them.
 
-  An extended link role becomes a group: Tavi's group is the report section an
+  An extended link role becomes a group: TAVI's group is the report section an
   ELR has always stood for, and it carries that role's presentation and
   calculation networks and the cube its definition linkbase declared.
   Definition networks themselves are held back for the cube pass — their
@@ -1222,7 +1222,7 @@ def _period_value(period: Period) -> str:
 
 
 def _record_period_semantics(period: Period, gaps: GapReport) -> None:
-  """Record period meaning that Tavi's bare interval cannot carry.
+  """Record period meaning that TAVI's bare interval cannot carry.
 
   ``xbrl:period`` is an ISO 8601 interval and nothing else. The four fields the
   parse derives — the duration bucket and the calendar placement — have no home
@@ -1244,7 +1244,7 @@ def _record_period_semantics(period: Period, gaps: GapReport) -> None:
 
 
 def _decimals(value: str) -> int | None:
-  """``decimals`` is an integer in Tavi; INF means infinitely precise (absent)."""
+  """``decimals`` is an integer in TAVI; INF means infinitely precise (absent)."""
   if value.upper() in ("INF", "INFINITY"):
     return None
   try:

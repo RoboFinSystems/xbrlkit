@@ -10,13 +10,13 @@ get the model back.
 ```
   EDGAR ───────────┐
   filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-  XBRL zip / iXBRL ┘                 ▲         ├──▶ Tavi            (compiled model)
+  XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
-                   holon, Tavi ──────┘         └──▶ property graph  (parquet, .lbug)
+                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbug)
 
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 
-                   holon, Tavi ──▶ xbrlkit view ──▶ the report, rendered in a browser
+                   holon, TAVI ──▶ xbrlkit view ──▶ the report, rendered in a browser
 ```
 
 Three ways in — the SEC, everyone else through
@@ -47,8 +47,8 @@ that is the change that turns a kit into a junk drawer.
 | | | |
 | --- | --- | --- |
 | [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
-| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, Tavi (+ its gap report), xBRL-JSON, the property graph |
-| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a Tavi read back into the model, no Arelle |
+| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, TAVI (+ its gap report), xBRL-JSON, the property graph |
+| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a TAVI read back into the model, no Arelle |
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
@@ -101,7 +101,7 @@ needs it — a local file, a JSON report and filings.xbrl.org all load without.
 # Build a holon.jsonld from a specific filing (-> ./output/)
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
-# The other projections: Tavi (plus its .tavi.gaps.json sidecar), xBRL-JSON,
+# The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
 # the property graph (needs the lpg extra), or every one of them
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
@@ -192,10 +192,10 @@ inside a checkout of this repo — a `uvx` or `pip` install never sees one. Use
 the environment, the `env` block, or `--user-agent`.
 
 Both are optional: EDGAR works unattributed under the default, saying so once.
-And filings.xbrl.org, local packages and Tavi/holon JSON need no identity at all.
+And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all.
 
 Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
-`lei:`, a local package, or a holon or Tavi by path or URL — and ask for
+`lei:`, a local package, or a holon or TAVI by path or URL — and ask for
 statements, facts by concept and period, calculations, exhibits and text.
 No graph and no database sits behind any of it: every answer about a filing is
 read from that filing. The one outward call is `search_filings`, which asks
@@ -234,7 +234,7 @@ report with AI:
 
 The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
 complete, portable, self-describing report. Its chat asks the report raw
-questions (jq over a Tavi model, SPARQL over a holon); `xbrlkit serve` is the
+questions (jq over a TAVI model, SPARQL over a holon); `xbrlkit serve` is the
 other side of that pair — the same filing behind shaped tools, on your own
 machine.
 

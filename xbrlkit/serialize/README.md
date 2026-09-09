@@ -7,7 +7,7 @@ parse captures the full XBRL and each serializer decides what to shed.
 | Target | Status | Notes |
 | --- | --- | --- |
 | **holon** (`.holon.jsonld`) | shipped | RDF/JSON-LD, renders in the [Holon Viewer](https://holon.robosystems.ai/). **Lossless against the model** — see below |
-| **Tavi** (`.tavi.json`) | shipped | [Project Tavi](https://www.xbrl.org/Specification/tavi/PWD-2026-09-01/tavi-PWD-2026-09-01.html) compiled model, PWD-2026-09-01 |
+| **TAVI** (`.tavi.json`) | shipped | [Project TAVI](https://www.xbrl.org/Specification/tavi/PWD-2026-09-01/tavi-PWD-2026-09-01.html) compiled model, PWD-2026-09-01 |
 | **OIM** (`.oim.json`) | shipped | xBRL-JSON, checked fact-for-fact against Arelle's own writer |
 | **property graph** (`.lbug`, parquet) | shipped | the [RoboSystems](https://robosystems.ai) `sec` graph's tables, ids and DDL, as one LadybugDB file per filing |
 
@@ -30,9 +30,9 @@ parity is every fact on 3M FY2024 (3,150) and Boeing FY2024 (2,688), and all
 but one on Microsoft FY2024 (1,855 of 1,856); footnotes are the one construct
 the model does not carry.
 
-## Tavi, and its gap report
+## TAVI, and its gap report
 
-Tavi is a **public working draft** whose name is explicitly a working title.
+TAVI is a **public working draft** whose name is explicitly a working title.
 The emitter is written against the prose of PWD-2026-09-01, checked against the
 eight example models published with the draft, and then diffed object class by
 object class against the compiled model Arelle's `XbrlModel` plugin writes for
@@ -46,7 +46,7 @@ what this emitter chose.
 
 The one genuine transformation is dimensionality: XBRL says it with arcroles
 over `<xs:element>`s — a hypercube is an element, an axis is an element — while
-Tavi gives each its own object type, so the definition networks are read back
+TAVI gives each its own object type, so the definition networks are read back
 into cube, dimension, domain class, domain network and member objects.
 
 ## The holon

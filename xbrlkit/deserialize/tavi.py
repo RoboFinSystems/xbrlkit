@@ -1,13 +1,13 @@
-"""Read a Project Tavi compiled model back into the neutral ``XbrlModel``.
+"""Read a Project TAVI compiled model back into the neutral ``XbrlModel``.
 
-The inverse of :mod:`xbrlkit.serialize.tavi`, and the reason it exists: a Tavi
+The inverse of :mod:`xbrlkit.serialize.tavi`, and the reason it exists: a TAVI
 document is a *representation of a report*, not a rendering of one, so a
 consumer holding one should be able to ask it the same questions it asks a
 filing — which in this package means turning it into an ``XbrlModel`` once and
 letting every existing tool work unchanged. Nothing here touches Arelle: Arelle
-cannot read Tavi, and a caller who has the JSON does not need it to.
+cannot read TAVI, and a caller who has the JSON does not need it to.
 
-**What Tavi carries, and what it does not.** The document is close to lossless
+**What TAVI carries, and what it does not.** The document is close to lossless
 against this model — facts with their values, decimals, language and dimensions;
 concepts with their datatype, period type, balance and nillable flag; every
 label role; presentation and calculation networks with order, weight and
@@ -19,7 +19,7 @@ the importer's output disagree with the parse it claims to reproduce:
   exception, recomputed by :mod:`xbrlkit.periods` from the dates themselves,
   which is where the parse gets them too;
 - ``is_hypercube_item`` and the abstractness of axes, domains and members: the
-  emitter turns those elements into dimensional objects, and Tavi has no flag
+  emitter turns those elements into dimensional objects, and TAVI has no flag
   for either;
 - reference linkbase entries, ``Network.role_id``, a fact's source hash and
   raw lexical value, and a dimension's segment/scenario axis;
@@ -129,7 +129,7 @@ CORE_DIMENSIONS = frozenset(
 
 
 class TaviError(ValueError):
-  """The document is not a Tavi compiled model this importer can read."""
+  """The document is not a TAVI compiled model this importer can read."""
 
 
 @dataclass
@@ -151,19 +151,19 @@ class ImportGaps:
 
 
 def from_tavi_json(text: str) -> XbrlModel:
-  """Read a Tavi compiled model from its JSON text."""
+  """Read a TAVI compiled model from its JSON text."""
   model, _ = from_tavi_report(text)
   return model
 
 
 def from_tavi(document: Mapping[str, Any]) -> XbrlModel:
-  """Read a Tavi compiled model that is already parsed JSON."""
+  """Read a TAVI compiled model that is already parsed JSON."""
   model, _ = _read(document)
   return model
 
 
 def from_tavi_report(text: str) -> tuple[XbrlModel, ImportGaps]:
-  """Read a Tavi document, returning the model and what it could not supply."""
+  """Read a TAVI document, returning the model and what it could not supply."""
   try:
     document = json.loads(text)
   except ValueError as exc:
@@ -248,7 +248,7 @@ def _filing(
 ) -> FilingMeta:
   """Filing identity: the report namespace, the model properties, the cover page.
 
-  Tavi records the report's own dates as model properties and nothing else about
+  TAVI records the report's own dates as model properties and nothing else about
   the filing, so the accession comes from the namespace the emitter minted for
   the report and the fiscal context from the ``dei`` facts the report itself
   carries. Neither is invention: both are read out of the document.
@@ -304,9 +304,9 @@ def _cover_facts(facts: Sequence[XbrlFact]) -> dict[str, str]:
 def _concepts(
   xbrl_model: Mapping[str, Any], namespaces: Mapping[str, str], gaps: ImportGaps
 ) -> dict[str, Concept]:
-  """Every named object that was an ``<xs:element>`` before Tavi split them.
+  """Every named object that was an ``<xs:element>`` before TAVI split them.
 
-  Tavi gives concepts, headings, dimensions, domain classes and members their
+  TAVI gives concepts, headings, dimensions, domain classes and members their
   own object types; XBRL called all five an element, and so does this model.
   """
   datatypes = {
@@ -409,7 +409,7 @@ def _concept(
 
 
 def _base_type_of(datatype: str) -> str | None:
-  """The XML Schema type a built-in Tavi datatype derives from."""
+  """The XML Schema type a built-in TAVI datatype derives from."""
   if datatype.startswith("xs:"):
     return datatype[3:]
   if datatype in ("xbrlr:monetary", "xbrlr:pureType", "xbrla:sharesType"):
@@ -427,7 +427,7 @@ def _bare(
   is_dimension_item: bool = False,
   is_domain_member: bool = False,
 ) -> Concept:
-  """An element Tavi records by name alone — a heading, an axis, a member."""
+  """An element TAVI records by name alone — a heading, an axis, a member."""
   prefix, _, local = qname.partition(":")
   return Concept(
     qname=qname,
@@ -601,7 +601,7 @@ def _facts(
 ) -> tuple[list[XbrlFact], list[Any], list[Unit]]:
   """Facts, and the periods and units they use.
 
-  Periods and units are not objects a fact points at in Tavi — a fact carries
+  Periods and units are not objects a fact points at in TAVI — a fact carries
   the literal — so both lists are built from the facts themselves, exactly the
   set the filing used.
   """
@@ -712,7 +712,7 @@ def _unit(measure: str, units: dict[str, Unit], namespaces: Mapping[str, str]) -
 
 
 def _measure_source(measure: str, namespaces: Mapping[str, str]) -> tuple[str, str]:
-  """A Tavi measure as ``(token, uri)`` in the form the parse produced.
+  """A TAVI measure as ``(token, uri)`` in the form the parse produced.
 
   A filer's own unit (``ba:aircraft``) is a QName like any other, so the
   document's namespace map answers it; only where it does not is the prefix
@@ -732,7 +732,7 @@ def _measure_source(measure: str, namespaces: Mapping[str, str]) -> tuple[str, s
   if prefix == "iso4217":
     return measure, f"http://www.xbrl.org/2003/iso4217#{local}"
   if prefix == "utr":
-    # `utr` is one of Tavi's *reserved* prefixes and binds to the draft's own
+    # `utr` is one of TAVI's *reserved* prefixes and binds to the draft's own
     # namespace, which is not where the unit registry lives; the emitter put a
     # bare registry token under it, so it comes back to the registry.
     return measure, f"{UTR_NAMESPACE}#{local}"

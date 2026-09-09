@@ -1,8 +1,8 @@
-"""Tests for the Project Tavi projection (``serialize/tavi.py``).
+"""Tests for the Project TAVI projection (``serialize/tavi.py``).
 
 Covers the compiled-model envelope, the core dimensions on a fact, the
 abstract-concept split into heading objects, calculation link properties, and
-the gap report — the record of what a real filing carries that Tavi has nowhere
+the gap report — the record of what a real filing carries that TAVI has nowhere
 to put, which is the substantive output of the projection.
 
 Several expectations here were set by diffing this projection against the
@@ -380,7 +380,7 @@ def test_duration_period_is_an_iso_interval_of_datetimes() -> None:
   assert (
     shares["factDimensions"]["xbrl:period"] == "2024-01-01T00:00:00/2025-01-01T00:00:00"
   )
-  # decimals INF means infinitely precise, which Tavi expresses by omission.
+  # decimals INF means infinitely precise, which TAVI expresses by omission.
   assert "decimals" not in shares["factValues"][0]
 
 
@@ -625,7 +625,7 @@ def test_gap_report_records_dropped_period_semantics() -> None:
 
 
 def test_label_roles_map_to_the_core_model_label_types() -> None:
-  """The standard role is xbrl:label, and the negated family exists in Tavi."""
+  """The standard role is xbrl:label, and the negated family exists in TAVI."""
   labels = _document()["xbrlModel"]["labels"]
   assets = next(entry for entry in labels if entry["forObject"] == "us-gaap:Assets")
   assert assets["labelType"] == "xbrl:label"
@@ -670,7 +670,7 @@ def test_hypercube_becomes_a_cube_with_its_axis() -> None:
 
 
 def test_axis_domain_and_member_leave_the_concept_list() -> None:
-  """In Tavi they are dimension, domain class and member objects, not concepts."""
+  """In TAVI they are dimension, domain class and member objects, not concepts."""
   model = _document()["xbrlModel"]
   names = {c["name"] for c in model["concepts"]} | {
     h["name"] for h in model["headings"]

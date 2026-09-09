@@ -4,7 +4,7 @@
 XBRL is the source in every other path through this package: Arelle loads a
 filing and :mod:`xbrlkit.parse` walks it into the model, which the serializers
 then project. These importers go the other way. A caller who already holds a
-Tavi compiled model or a holon — a report that was never an SEC filing, a
+TAVI compiled model or a holon — a report that was never an SEC filing, a
 ledger's own output, a filing someone else converted — turns it into the same
 ``XbrlModel`` and gets the whole toolset over it, with no Arelle and no XBRL.
 
