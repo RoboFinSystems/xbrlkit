@@ -9,21 +9,28 @@ get the model back.
 
 ```
   EDGAR ───────────┐
-                   ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-  filings.xbrl.org ┘                 ▲         ├──▶ Tavi            (compiled model)
+  filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
+  a file you have ─┘                 ▲         ├──▶ Tavi            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
                    holon, Tavi ──────┘         └──▶ property graph  (parquet, .lbug)
 
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
+
+                   holon, Tavi ──▶ xbrlkit view ──▶ the report, rendered in a browser
 ```
 
-Two sources in — the SEC, and everyone else through
-[filings.xbrl.org](https://filings.xbrl.org) — four projections out, and two of
-those read back, so a report that was never an SEC filing gets the same
-treatment. A fifth surface, the filing's text, reads the primary HTML directly
-and needs neither Arelle nor the network. And the model itself can be served:
-`xbrlkit serve` holds a filing in memory and exposes it to an MCP client
-through shaped tools.
+Three ways in — the SEC, everyone else through
+[filings.xbrl.org](https://filings.xbrl.org), and **a file you already have**:
+an inline `.htm`, an XBRL instance `.xml`, a filing directory, a `.zip`
+taxonomy package, or an `http(s)` URL. Nothing about the middle of this
+requires EDGAR, or a regulator at all — a report that was never filed with
+anybody parses like one that was.
+
+Four projections out, and two of those read back, so a report that was never an
+SEC filing gets the same treatment. A fifth surface, the filing's text, reads
+the primary HTML directly and needs neither Arelle nor the network. The model
+itself can be served: `xbrlkit serve` holds a filing in memory and exposes it
+to an MCP client through shaped tools. And `xbrlkit view` puts it on screen.
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it
 does not give you is anything ergonomic to *hold*: `ModelXbrl` is a large
@@ -48,7 +55,8 @@ that is the change that turns a kit into a junk drawer.
 | [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | sixteen shaped tools over a filing in memory |
 
 `model.py` is the waist itself, `schema/` declares the property graph's tables,
-and `query.py` runs SPARQL over a built holon.
+`query.py` runs SPARQL over a built holon, and `view.py` is the loopback server
+behind `xbrlkit view` and the `view_filing` tool.
 
 ## Install
 
@@ -106,6 +114,12 @@ xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:As
 
 # Open a filing as a rendered report in the browser — no account, no download
 xbrlkit view NVDA
+
+# A file you already have needs no EDGAR and no network — a .zip package, an
+# instance .xml, an inline .htm, a filing directory. `serve` and `view` take
+# any source; `build` and `fetch` are the EDGAR path
+xbrlkit view ./report.zip
+xbrlkit serve ./mmm-20241231.htm
 ```
 
 From a source checkout, `just` wraps the same CLI: `just build 320193
