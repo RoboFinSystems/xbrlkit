@@ -45,7 +45,7 @@ that is the change that turns a kit into a junk drawer.
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
-| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | fourteen shaped tools over a filing in memory |
+| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | sixteen shaped tools over a filing in memory |
 
 `model.py` is the waist itself, `schema/` declares the property graph's tables,
 and `query.py` runs SPARQL over a built holon.
@@ -103,6 +103,9 @@ xbrlkit fetch --ticker NVDA
 
 # Query consolidated facts in a built holon (in-memory SPARQL)
 xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:Assets
+
+# Open a filing as a rendered report in the browser — no account, no download
+xbrlkit view NVDA
 ```
 
 From a source checkout, `just` wraps the same CLI: `just build 320193
@@ -220,6 +223,35 @@ complete, portable, self-describing report. Its chat asks the report raw
 questions (jq over a Tavi model, SPARQL over a holon); `xbrlkit serve` is the
 other side of that pair — the same filing behind shaped tools, on your own
 machine.
+
+**`xbrlkit view` joins the two.** It resolves a filing the way `serve` does,
+serializes it, and hands that one document to the viewer:
+
+```bash
+xbrlkit view NVDA                       # the latest 10-K, rendered in a browser tab
+xbrlkit view "NVDA 10-Q" --as tavi      # a different form, a different serialization
+xbrlkit view 320193:0000320193-23-000106
+xbrlkit view lei:549300E9PC51EN656011   # a filer outside EDGAR
+xbrlkit view output/x.holon.jsonld      # a document you already have, verbatim
+xbrlkit view NVDA --no-open             # print the link instead of opening it
+```
+
+Without installing anything:
+
+```bash
+uvx xbrlkit view NVDA
+```
+
+A browser cannot be handed a local path — `file://` is unreachable from an
+https page, and a file input cannot be pre-populated — so this serves the
+document instead, on an ephemeral loopback port with an unguessable path, and
+opens `holon.robosystems.ai/?url=…` pointing at it. `http://127.0.0.1` is a
+potentially trustworthy origin, so the https page may read it; the CORS header
+names the viewer's origin and no other. The document is readable there, by that
+origin, until you press Ctrl-C. `--viewer` points at a different build.
+
+From an MCP client the same thing is the `view_filing` tool: *"load NVDA"*,
+then *"show me it"*.
 
 ## License
 

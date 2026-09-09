@@ -32,6 +32,7 @@ from xbrlkit import __version__
 from xbrlkit.config import DEFAULT_USER_AGENT
 from xbrlkit.serve import tools
 from xbrlkit.serve.session import FilingSession, SourceError
+from xbrlkit.view import DEFAULT_VIEWER, ViewerHost
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -101,6 +102,11 @@ whole primary document, or the tagged text blocks alone, as the server was \
 started — returning windows with offsets; read_text pages from an offset. \
 describe_filing's `profile.text` says which, and its sections give offsets.
 
+SHOW IT
+- view_filing renders the loaded filing as a report in the browser and returns \
+a link. Reach for it when the user would rather look at the statements than \
+read them back; the link is theirs to open.
+
 RULES
 - Instants (balances, one date) and durations (flows, start..end) are \
 different period keys; compare like with like — a 12-month duration with a \
@@ -154,17 +160,22 @@ def build_server(
   *,
   pure: bool = False,
   with_document: bool | None = None,
+  viewer: str = DEFAULT_VIEWER,
 ) -> Any:
   """The ``MCPServer`` with every tool registered against ``session``.
 
   ``out_dir`` is the only place ``export_filing`` writes. ``with_document``
   defaults to the profile's own default: on for the product profile, off
-  under ``pure``.
+  under ``pure``. ``viewer`` is the page ``view_filing`` links to, and the
+  only origin allowed to read what it serves.
   """
   from mcp.server import MCPServer
 
   whole = (not pure) if with_document is None else bool(with_document)
   export_dir = Path(out_dir) if out_dir is not None else Path("output")
+  # Started on the first view_filing call and left running: the browser
+  # fetches the document after the tool has already returned.
+  viewers = ViewerHost(viewer)
   server = MCPServer(
     name="xbrlkit",
     title="xbrlkit",
@@ -635,6 +646,26 @@ def build_server(
   ) -> str:
     return run(lambda: tools.export_filing(session.get(filing), format, export_dir))
 
+  @server.tool(
+    name="view_filing",
+    description=(
+      "Open a loaded filing in the browser-based report viewer and return the "
+      "link. The document is serialized and served from an unguessable path on "
+      "this machine's loopback interface, readable only by the viewer's own "
+      "origin, for as long as this server runs. Give the returned `viewer_url` "
+      "to the user; it renders the statements, notes and cover as a report."
+    ),
+    structured_output=False,
+  )
+  def view_filing(
+    format: Annotated[
+      Literal["holon", "tavi"],
+      Field(description="The serialization the viewer reads."),
+    ] = "holon",
+    filing: Filing = None,
+  ) -> str:
+    return run(lambda: tools.view_filing(session.get(filing), format, viewers))
+
   return server
 
 
@@ -682,9 +713,12 @@ def serve(
   path: str = DEFAULT_PATH,
   pure: bool = False,
   with_document: bool | None = None,
+  viewer: str = DEFAULT_VIEWER,
 ) -> None:
   """Run the server until interrupted."""
-  server = build_server(session, out_dir, pure=pure, with_document=with_document)
+  server = build_server(
+    session, out_dir, pure=pure, with_document=with_document, viewer=viewer
+  )
   identity = session.config.identity()
   if transport == "stdio":
     # stdout is the protocol here, so the notice goes to stderr and says only

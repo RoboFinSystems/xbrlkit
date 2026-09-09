@@ -4,6 +4,7 @@
     xbrlkit build --cik 320193 --accno … --format tavi       # -> output/<accno>.tavi.json
     xbrlkit build --cik 320193 --accno … --format lpg        # -> output/<accno>.lbug
     xbrlkit fetch --ticker NVDA --form 10-K --n 1            # -> output/
+    xbrlkit view NVDA                                        # -> the browser
 
 Wires the three layers: ``edgar`` (fetch) -> ``parse`` (Arelle -> XbrlModel) ->
 ``serialize`` (XbrlModel -> a holon, a Tavi compiled model, an OIM report, or
@@ -22,8 +23,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -41,6 +44,7 @@ from .serialize import (
   to_oim_document,
   to_tavi_report,
 )
+from .view import DEFAULT_VIEWER, serve_report
 
 # Generated documents land here by default — a git-tracked folder whose contents
 # are git-ignored (see output/.gitignore). Relative to the working directory.
@@ -356,11 +360,99 @@ def _cmd_serve(args: argparse.Namespace) -> int:
       path=args.path,
       pure=args.pure,
       with_document=with_document,
+      viewer=args.viewer or DEFAULT_VIEWER,
     )
   except KeyboardInterrupt:
     pass
   finally:
     session.close()
+  return 0
+
+
+VIEW_FORMATS = ("holon", "tavi")
+VIEW_SUFFIXES = {"holon": ".holon.jsonld", "tavi": ".tavi.json"}
+
+
+def _already_serialized(source: str, fmt: str) -> Path | None:
+  """A local file that already *is* the requested serialization.
+
+  Serving it verbatim is not only faster than a round trip through the model:
+  a Tavi document read in and written back is the round-tripped document, and
+  ``.tavi.gaps.json`` exists precisely because that is not the same document.
+  What the user names is what they see.
+  """
+  from .serve.session import json_kind
+
+  path = Path(source)
+  if not path.is_file() or path.suffix.lower() not in (".json", ".jsonld"):
+    return None
+  try:
+    with path.open(encoding="utf-8", errors="replace") as handle:
+      head = handle.read(4000)
+  except OSError:
+    return None
+  return path if json_kind(head) == fmt else None
+
+
+def _view_document(source: str, fmt: str, config: Config) -> tuple[str, str]:
+  """The document to hand the viewer, and the filename to serve it under."""
+  direct = _already_serialized(source, fmt)
+  if direct is not None:
+    print(f"serving {direct} as it is", file=sys.stderr)
+    return direct.read_text(encoding="utf-8"), direct.name
+
+  from .serialize import to_holon, to_tavi_report
+  from .serve import FilingSession
+
+  session = FilingSession(config=config)
+  try:
+    print(f"loading {source} …", file=sys.stderr)
+    loaded = session.load(source)
+    model = loaded.model
+    print(
+      f"  {loaded.id}: {model.entity.name or model.entity.cik} "
+      f"{model.filing.form or ''} ({len(model.facts)} facts, "
+      f"{len(model.networks)} networks)",
+      file=sys.stderr,
+    )
+    if fmt == "holon":
+      body = to_holon(model)
+    else:
+      document, _gaps = to_tavi_report(model)
+      body = json.dumps(document, indent=2, default=str)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", loaded.id) or loaded.accession
+    return body, f"{stem}{VIEW_SUFFIXES[fmt]}"
+  finally:
+    session.close()
+
+
+def _cmd_view(args: argparse.Namespace) -> int:
+  config = _config_from_args(args)
+  body, filename = _view_document(args.source, args.format, config)
+  served = serve_report(
+    body,
+    filename,
+    viewer=args.viewer or DEFAULT_VIEWER,
+    host=args.host,
+    port=args.port,
+  )
+  try:
+    print(f"serving {filename} at {served.file_url}", file=sys.stderr)
+    print(served.viewer_url, flush=True)
+    if args.open:
+      import webbrowser
+
+      webbrowser.open(served.viewer_url)
+    print(
+      "\nThe report is readable on that port, by that viewer, while this runs.\n"
+      "Ctrl-C to stop.",
+      file=sys.stderr,
+    )
+    threading.Event().wait()
+  except KeyboardInterrupt:
+    pass
+  finally:
+    served.stop()
   return 0
 
 
@@ -544,7 +636,58 @@ def build_parser() -> argparse.ArgumentParser:
       "own text (default under --pure)."
     ),
   )
+  s.add_argument(
+    "--viewer",
+    default=None,
+    help=(
+      f"Viewer base URL for view_filing (default: {DEFAULT_VIEWER}). Its origin "
+      "is the only one allowed to read what that tool serves."
+    ),
+  )
   s.set_defaults(func=_cmd_serve)
+
+  v = sub.add_parser(
+    "view",
+    help="Open a filing in the browser-based report viewer.",
+    description=(
+      "Resolve a filing, serialize it, serve that one document on the loopback "
+      "interface, and open the viewer at a URL that names it. SOURCE is a local "
+      "path (an inline .htm, an instance .xml, a filing directory or .zip, a "
+      "holon.jsonld or a tavi.json), an http(s) URL, an EDGAR cik:accession, a "
+      "ticker with an optional form ('NVDA', 'NVDA 10-Q'), or an lei: for a "
+      "filer outside EDGAR. A local file that already is the requested "
+      "serialization is served as it is, with no parse. The server runs until "
+      "Ctrl-C; while it does, the document is readable on that port by the "
+      "viewer's origin."
+    ),
+  )
+  v.add_argument("source", help="The filing to view (see above).")
+  v.add_argument(
+    "--as",
+    dest="format",
+    choices=VIEW_FORMATS,
+    default="holon",
+    help="The serialization the viewer reads: holon (default) or tavi.",
+  )
+  v.add_argument(
+    "--viewer",
+    default=None,
+    help=f"Viewer base URL (default: {DEFAULT_VIEWER}). Its origin is the only one allowed to read the document.",
+  )
+  v.add_argument(
+    "--host", default="127.0.0.1", help="Interface to bind (default: 127.0.0.1)."
+  )
+  v.add_argument(
+    "--port", type=int, default=0, help="Port to bind (default: an ephemeral one)."
+  )
+  v.add_argument(
+    "--no-open",
+    dest="open",
+    action="store_false",
+    default=True,
+    help="Print the viewer URL without opening a browser.",
+  )
+  v.set_defaults(func=_cmd_view)
   return parser
 
 
