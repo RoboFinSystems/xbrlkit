@@ -35,6 +35,7 @@ from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlMod
 from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
 from xbrlkit.text.ixbrl import _strip_html
+from xbrlkit.view import ViewerHost
 
 MAX_HITS = 25
 DEFAULT_HITS = 10
@@ -1324,6 +1325,42 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
     "path": str(target),
     "bytes": target.stat().st_size if target.is_file() else None,
     "files": [str(p) for p in written],
+  }
+
+
+VIEW_FORMATS = ("holon", "tavi")
+
+
+def view_filing(lf: LoadedFiling, format: str, viewers: ViewerHost) -> dict[str, Any]:
+  """Serialize the filing, serve it on loopback, and return the viewer link.
+
+  The document is not written to disk: the browser is the only reader, and
+  ``export_filing`` is the tool for keeping a copy.
+  """
+  fmt = (format or "").strip().lower()
+  if fmt not in VIEW_FORMATS:
+    raise ToolError(f"format must be one of {sorted(VIEW_FORMATS)}, not {format!r}")
+  if fmt == "holon":
+    from xbrlkit.serialize import to_holon
+
+    body = to_holon(lf.model)
+  else:
+    from xbrlkit.serialize import to_tavi_report
+
+    document, _gaps = to_tavi_report(lf.model)
+    body = json.dumps(document, indent=2, default=str)
+  stem = re.sub(r"[^A-Za-z0-9._-]+", "-", lf.id) or lf.accession
+  file_url, page_url = viewers.publish(body, f"{stem}.{EXPORT_FORMATS[fmt]}")
+  return {
+    "filing": lf.id,
+    "format": fmt,
+    "viewer_url": page_url,
+    "document_url": file_url,
+    "bytes": len(body.encode("utf-8")),
+    "note": (
+      "Give viewer_url to the user. The document is served from this machine "
+      "and readable only by the viewer's origin, while this server runs."
+    ),
   }
 
 

@@ -299,7 +299,7 @@ class FilingSession:
     wants its OIM loader rather than an importer of our own.
     """
     text = path.read_text(encoding="utf-8", errors="replace")
-    kind = _json_kind(text[:4000])
+    kind = json_kind(text[:4000])
     try:
       if kind == "tavi":
         model = from_tavi_json(text)
@@ -977,7 +977,7 @@ JSON_KIND_NAMES = {
 }
 
 
-def _json_kind(head: str) -> str:
+def json_kind(head: str) -> str:
   """Which JSON xbrlkit is looking at, from its first few kilobytes."""
   if '"@context"' in head or '"@graph"' in head:
     return "holon"

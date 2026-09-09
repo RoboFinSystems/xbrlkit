@@ -641,6 +641,22 @@ def test_export_filing_writes_projection(
     tools.export_filing(loaded, "pdf", tmp_path)
 
 
+def test_view_filing_serves_it_for_the_viewer(loaded: LoadedFiling) -> None:
+  from xbrlkit.view import DEFAULT_VIEWER, ViewerHost
+
+  viewers = ViewerHost()
+  try:
+    out = tools.view_filing(loaded, "holon", viewers)
+    assert out["filing"] == loaded.id and out["bytes"] > 0
+    assert out["viewer_url"].startswith(f"{DEFAULT_VIEWER}/?url=")
+    assert out["document_url"] in out["viewer_url"]
+    assert out["document_url"].startswith("http://127.0.0.1:")
+    with pytest.raises(tools.ToolError):
+      tools.view_filing(loaded, "oim", viewers)
+  finally:
+    viewers.close()
+
+
 # -- session --------------------------------------------------------------------
 
 
@@ -956,6 +972,7 @@ async def test_server_lists_and_calls_tools(
       "documents",
       "read_document",
       "export_filing",
+      "view_filing",
     }
     described = await client.call_tool("describe_filing", {})
     payload = json.loads(described.content[0].text)
