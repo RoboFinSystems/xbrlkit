@@ -175,6 +175,10 @@ class _Structure:
   slug: str
   name: str
   order: int | None = None
+  # The producer's ids, when it supplied them: the slug is then the structure
+  # id verbatim and the fact set is named by its own id (see Network).
+  structure_id: str | None = None
+  fact_set_id: str | None = None
   # Set only when a producer supplied one; a filing leaves it None.
   block_type: str | None = None
   presentation: list[Network] = field(default_factory=list)
@@ -190,6 +194,14 @@ class _Structure:
   def renderable(self) -> bool:
     """A structure is a section only if it has a presentation tree."""
     return bool(self.presentation)
+
+
+def _factset_uri_for(st: _Structure) -> URIRef:
+  """The structure's fact-set IRI: the producer's own id when it gave one, else
+  minted from the role."""
+  if st.fact_set_id:
+    return URIRef(f"{_FACTSET_BASE}{st.fact_set_id}")
+  return _factset_uri(st.role_uri)
 
 
 def build_holon_graph(
@@ -220,7 +232,7 @@ def build_holon_graph(
 
   dim_uris = _add_dimensions(g, model, root, ns)
   membership = _fact_membership(model, structures)
-  _add_facts(g, model, root, entity_node, dim_uris, membership, ns)
+  _add_facts(g, model, root, entity_node, dim_uris, membership, structures, ns)
   _add_information_blocks(g, structures, membership, root)
   return g
 
@@ -448,12 +460,28 @@ def _add_units(g: Graph, model: XbrlModel, root: URIRef, ns: Mapping[str, str]) 
 def _plan_structures(model: XbrlModel) -> dict[str, _Structure]:
   """Group networks by extended-link role into one Structure each."""
   structs: dict[str, _Structure] = {}
+  # A producer id names one structure. An id that two roles claim is ambiguous
+  # and neither takes it — the role slug stays — so structure IRIs never
+  # collide on a producer's mistake.
+  roles_by_id: dict[str, set[str]] = {}
+  for net in model.networks:
+    if net.structure_id:
+      roles_by_id.setdefault(net.structure_id, set()).add(net.role_uri)
   for net in model.networks:
     role = net.role_uri
     st = structs.get(role)
     if st is None:
       st = _Structure(role_uri=role, slug=_slug(role), name=net.definition or role)
       structs[role] = st
+    if (
+      net.structure_id
+      and st.structure_id is None
+      and len(roles_by_id[net.structure_id]) == 1
+    ):
+      st.structure_id = net.structure_id
+      st.slug = net.structure_id
+    if net.fact_set_id and st.fact_set_id is None:
+      st.fact_set_id = net.fact_set_id
     # A presentation network's role definition is the section's display name.
     if net.kind == "presentation":
       st.presentation.append(net)
@@ -511,7 +539,7 @@ def _add_structures(
     # Structural arrangement only (RollUp when calc arcs, else Hierarchy) — no
     # equity RollForward special-case, since that needs semantic typing.
     g.add((s_uri, RDF.type, _structure_arrangement(st.has_calc, None)))
-    g.add((s_uri, RS.internalId, Literal(st.role_uri)))
+    g.add((s_uri, RS.internalId, Literal(st.structure_id or st.role_uri)))
     g.add((s_uri, RS.roleUri, Literal(st.role_uri)))
     g.add((s_uri, RS.structureName, Literal(st.name)))
     g.add((s_uri, SKOS.prefLabel, Literal(st.name)))
@@ -522,7 +550,7 @@ def _add_structures(
     if st.block_type:
       g.add((s_uri, RS.blockType, Literal(st.block_type)))
     if st.renderable:
-      g.add((s_uri, RS.factSet, _factset_uri(st.role_uri)))
+      g.add((s_uri, RS.factSet, _factset_uri_for(st)))
 
     groups = (
       ("presentation", st.presentation),
@@ -609,15 +637,29 @@ def _add_dimensions(
 def _fact_membership(
   model: XbrlModel, structures: dict[str, _Structure]
 ) -> dict[str, set[str]]:
-  """Map each fact id → the role_uris of structures whose presentation cites it."""
+  """Map each fact id → the role_uris of the structures it belongs to.
+
+  A filing says nothing about membership, so a fact belongs to every section
+  whose presentation cites its concept. An authored report pins each fact to
+  one structure (``XbrlFact.structure_id``); the pin wins, so a fact reported
+  in several statements links to its own fact set and not to every section
+  that happens to show the concept.
+  """
   by_concept: dict[str, list[str]] = {}
   for st in structures.values():
     if not st.renderable:
       continue
     for concept in st.pres_concepts:
       by_concept.setdefault(concept, []).append(st.role_uri)
+  by_structure_id = {
+    st.structure_id: st.role_uri for st in structures.values() if st.structure_id
+  }
   membership: dict[str, set[str]] = {}
   for fact in model.facts:
+    pinned = by_structure_id.get(fact.structure_id or "")
+    if pinned is not None:
+      membership[fact.id] = {pinned}
+      continue
     roles = by_concept.get(fact.concept_qname)
     if roles:
       membership[fact.id] = set(roles)
@@ -631,6 +673,7 @@ def _add_facts(
   entity_node: URIRef,
   dim_uris: dict[str, URIRef],
   membership: dict[str, set[str]],
+  structures: Mapping[str, _Structure],
   ns: Mapping[str, str],
 ) -> None:
   for fact in model.facts:
@@ -669,8 +712,9 @@ def _add_facts(
 
     if fact.content_type:
       g.add((uri, RS.contentType, Literal(fact.content_type)))
+    # The pin names the structure the way its network does: verbatim.
     if fact.structure_id:
-      g.add((uri, RS.structure, _scoped(root, "structure", _slug(fact.structure_id))))
+      g.add((uri, RS.structure, _scoped(root, "structure", fact.structure_id)))
 
     g.add((uri, RS.internalId, Literal(fact.id)))
 
@@ -681,7 +725,7 @@ def _add_facts(
         g.add((uri, RS.dimension, d_uri))
 
     for role in membership.get(fact.id, ()):  # a fact may sit in several sections
-      g.add((uri, RS.factSet, _factset_uri(role)))
+      g.add((uri, RS.factSet, _factset_uri_for(structures[role])))
 
 
 # ── Information Blocks (one per renderable structure with member facts) ──────
@@ -706,7 +750,7 @@ def _add_information_blocks(
     # Link the block to its structure so the renderer orders/matches by identity
     # (structure), not a semantic type; the shared factSet groups the facts.
     g.add((ib_uri, RS.structure, _scoped(root, "structure", st.slug)))
-    g.add((ib_uri, RS.factSet, _factset_uri(st.role_uri)))
+    g.add((ib_uri, RS.factSet, _factset_uri_for(st)))
 
 
 __all__ = ["build_holon_graph", "holon_root"]

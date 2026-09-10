@@ -611,6 +611,8 @@ def _facts(
         value_kind="numeric" if unit is not None else "text",
         is_nil=_bool(declared_nil) if declared_nil is not None else value_str is None,
         language=_text(node.get("language")),
+        # The pin an authored report put on the fact, by the structure's own id.
+        structure_id=_reference(node.get("structure")).rsplit("/", 1)[-1] or None,
       )
     )
   return facts
@@ -670,11 +672,22 @@ def _networks(
   statement renders under standard labels the filer did not choose.
   """
   definitions: dict[str, str] = {}
+  # A producer that named its structures wrote the name as internalId (a
+  # filing's structure carries the role there); its fact set is then the one
+  # the structure node points at, by its own id.
+  structure_ids: dict[str, str] = {}
+  fact_set_ids: dict[str, str] = {}
   for node in structures:
     role_uri = _text(node.get("roleUri"))
     name = _text(node.get("structureName")) or _text(node.get("prefLabel"))
     if role_uri and name:
       definitions.setdefault(role_uri, name)
+    internal = _text(node.get("internalId"))
+    if role_uri and internal and internal != role_uri:
+      structure_ids.setdefault(role_uri, internal)
+      fact_set = _reference(node.get("factSet"))
+      if fact_set:
+        fact_set_ids.setdefault(role_uri, fact_set.rsplit("/", 1)[-1])
 
   grouped: dict[tuple[str, NetworkKind], list[Mapping[str, Any]]] = {}
   for node in associations:
@@ -700,6 +713,8 @@ def _networks(
         role_uri=role_uri,
         definition=definitions.get(role_uri),
         kind=kind,
+        structure_id=structure_ids.get(role_uri),
+        fact_set_id=fact_set_ids.get(role_uri),
         arcs=[
           Arc(
             from_qname=source,

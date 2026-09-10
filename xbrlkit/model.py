@@ -336,6 +336,16 @@ class Network(BaseModel):
   # column, so a producer may supply it and the writers pass it through.
   # (serialization-waist phase 2)
   block_type: str | None = None
+  # The producer's own id for the structure this network belongs to. A filing
+  # has none — the role URI is the structure's identity and the holon slugs it
+  # — but an authored report names its structures itself and its other
+  # serializations already carry that name, so the holon uses it verbatim: the
+  # structure, its associations and its Information Block then have the same
+  # IRIs in every projection of the report. (serialization-waist phase 3)
+  structure_id: str | None = None
+  # The producer's id for the fact set behind the structure, the same way; the
+  # holon mints ``rs:factSet`` from the role otherwise.
+  fact_set_id: str | None = None
 
 
 class XbrlModel(BaseModel):
