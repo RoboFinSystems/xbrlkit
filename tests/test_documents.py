@@ -33,15 +33,15 @@ FORM4 = """<?xml version="1.0"?>
   <documentType>4</documentType>
   <periodOfReport>2026-09-01</periodOfReport>
   <issuer>
-    <issuerCik>0001522767</issuerCik>
-    <issuerName>MARIMED INC.</issuerName>
-    <issuerTradingSymbol>MRMD</issuerTradingSymbol>
+    <issuerCik>0001234567</issuerCik>
+    <issuerName>ACME CORP.</issuerName>
+    <issuerTradingSymbol>ACME</issuerTradingSymbol>
     <issuerForeignTradingSymbol/>
   </issuer>
   <reportingOwner>
     <reportingOwnerId>
-      <rptOwnerCik>0001866577</rptOwnerCik>
-      <rptOwnerName>Shaw Timothy</rptOwnerName>
+      <rptOwnerCik>0007654321</rptOwnerCik>
+      <rptOwnerName>Doe Jane</rptOwnerName>
     </reportingOwnerId>
   </reportingOwner>
   <nonDerivativeTable>
@@ -70,7 +70,7 @@ NOTE_8 = """<p>NOTE 8 NOTES RECEIVABLE</p>
 <p>At December 31, 2018 and 2017, notes receivable were comprised of the
 following:</p>
 <table><tr><td></td><td>2018</td><td>2017</td></tr>
-<tr><td>First State Compassion Center</td><td>578,723</td><td>624,275</td></tr>
+<tr><td>Acme Wholesale</td><td>578,723</td><td>624,275</td></tr>
 </table>"""
 
 # A classic filing's narrative: no `ix:` markup anywhere, and the note the
@@ -97,12 +97,12 @@ def _text_block_model(value: str) -> XbrlModel:
   return XbrlModel(
     filing=FilingMeta(
       accession="0000000000-19-000001",
-      cik="0001522767",
+      cik="0001234567",
       form="10-K",
       report_date=date(2018, 12, 31),
       is_inline_xbrl=False,
     ),
-    entity=EntityIdentity(cik="0001522767", name="MariMed Inc."),
+    entity=EntityIdentity(cik="0001234567", name="Acme Corp."),
     concepts={
       qname: Concept(
         qname=qname,
@@ -120,7 +120,7 @@ def _text_block_model(value: str) -> XbrlModel:
         id="f1",
         concept_qname=qname,
         period_id="D-2018",
-        entity_cik="0001522767",
+        entity_cik="0001234567",
         value_str=value,
         value_kind="text",
       )
@@ -145,7 +145,7 @@ def test_ownership_xml_reads_as_fields_and_records() -> None:
   assert doc.root == "ownershipDocument"
   assert doc.form_hint == "4"
   # `value` wrappers collapse; empty elements are left out.
-  assert doc.fields["issuer.issuerName"] == "MARIMED INC."
+  assert doc.fields["issuer.issuerName"] == "ACME CORP."
   assert "issuer.issuerForeignTradingSymbol" not in doc.fields
   tables = {t.name: t for t in doc.tables}
   # One transaction under a `*Table` container is still a record table.
@@ -166,7 +166,7 @@ def test_ownership_xml_reads_as_fields_and_records() -> None:
 
 def test_xml_renders_every_value_so_it_can_be_searched() -> None:
   text = render(parse_xml_document(FORM4))
-  for value in ("MARIMED INC.", "Shaw Timothy", "65000", "one-for-one"):
+  for value in ("ACME CORP.", "Doe Jane", "65000", "one-for-one"):
     assert value in text
 
 
@@ -193,8 +193,8 @@ def test_a_block_is_matched_on_its_prose_not_into_its_table() -> None:
   renderings disagree; matching stops at the table so the block still lands."""
   model = _text_block_model(
     "<p>At December 31, 2018 and 2017, notes receivable were comprised of the "
-    "following:</p><table><tr><td>First</td><td>State</td><td>Compassion</td>"
-    "<td>Center</td></tr></table>"
+    "following:</p><table><tr><td>Acme</td><td>Wholesale</td><td>578,723</td>"
+    "<td>624,275</td></tr></table>"
   )
   _text, sections = build_text(model, CLASSIC_10K)
   assert [s.offset for s in sections if s.kind == "text_block"] != [None]
@@ -235,8 +235,8 @@ def test_xml_document_takes_its_identity_from_the_form(tmp_path: Path) -> None:
     assert lf.has_xbrl is False and lf.xml_document is not None
     assert lf.model.filing.form == "4"
     assert lf.model.filing.report_date == date(2026, 9, 1)
-    assert lf.model.entity.cik == "0001522767"
-    assert lf.model.entity.ticker == "MRMD"
+    assert lf.model.entity.cik == "0001234567"
+    assert lf.model.entity.ticker == "ACME"
     described = tools.describe_filing(lf)
     assert [r["name"] for r in described["sections"]["records"]] == [
       "nonDerivativeTransaction",
@@ -256,7 +256,7 @@ def test_records_returns_the_rows_and_names_the_tables(tmp_path: Path) -> None:
     out = tools.records(lf, table="nonDerivativeTransaction")
     assert out["form"] == "4"
     assert out["tables"][0]["row_count"] == 1
-    assert out["fields"]["issuer.issuerTradingSymbol"] == "MRMD"
+    assert out["fields"]["issuer.issuerTradingSymbol"] == "ACME"
     with pytest.raises(tools.ToolError, match="nonDerivativeTransaction"):
       tools.records(lf, table="holdings")
   finally:
@@ -278,7 +278,7 @@ def test_the_xbrl_tools_say_when_a_filing_has_no_xbrl(tmp_path: Path) -> None:
       with pytest.raises(tools.ToolError, match="carries no XBRL"):
         call()
     # And the text tools still work, which is the point.
-    assert tools.search_text(lf, "Shaw")["total"] == 1
+    assert tools.search_text(lf, "Doe")["total"] == 1
   finally:
     session.close()
 
@@ -287,8 +287,8 @@ def test_a_pdf_filing_is_named_rather_than_loaded_empty() -> None:
   from xbrlkit.edgar import FilingRef
 
   ref = FilingRef(
-    cik="0001522767",
-    accession="0001522767-20-000001",
+    cik="0001234567",
+    accession="0001234567-20-000001",
     form="ARS",
     filing_date="2020-04-01",
     primary_document="annual-report.pdf",
@@ -299,7 +299,7 @@ def test_a_pdf_filing_is_named_rather_than_loaded_empty() -> None:
   try:
     # The refusal is decided before anything is fetched, so no client is used.
     with pytest.raises(SourceError, match=r"\.pdf document"):
-      session._load_document_only(None, "1522767", ref.accession, ref, "src")
+      session._load_document_only(None, "1234567", ref.accession, ref, "src")
   finally:
     session.close()
 
@@ -308,7 +308,7 @@ def test_filing_refs_carry_whether_edgar_holds_xbrl() -> None:
   from xbrlkit.edgar.client import EdgarClient
 
   refs = EdgarClient._refs_from_arrays(
-    "0001522767",
+    "0001234567",
     {
       "accessionNumber": ["0001-19-000001", "0002-26-000002"],
       "form": ["10-K", "4"],
@@ -338,7 +338,7 @@ INDEX_PAGE = """<html><body>
 </table>
 <table summary="Data Files">
 <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
-<tr><td>5</td><td>XBRL INSTANCE FILE</td><td>mrmd-20181231.xml</td><td>EX-101.INS</td><td>907209</td></tr>
+<tr><td>5</td><td>XBRL INSTANCE FILE</td><td>acme-20181231.xml</td><td>EX-101.INS</td><td>907209</td></tr>
 </table>
 </body></html>
 """
@@ -370,7 +370,7 @@ def test_other_documents_keeps_the_content_and_drops_the_redundant() -> None:
   # Gone only where the content is already had: the primary, its own rendered
   # twin, and the XBRL package loaded from the zip.
   names = {d.document for d in kept}
-  assert not names & {"primary_doc.xml", "primary_doc.html", "mrmd-20181231.xml"}
+  assert not names & {"primary_doc.xml", "primary_doc.html", "acme-20181231.xml"}
 
 
 def test_a_document_this_cannot_read_is_listed_with_where_it_is() -> None:
@@ -793,7 +793,7 @@ def test_the_new_source_forms_do_not_collide_with_the_old_ones() -> None:
   assert not _LEI_RE.match("NVDA") and not _FXO_RE.match("NVDA")
   assert not _FXO_RE.match("0001493152-19-005497")
   assert _ACCESSION_RE.match("0001493152-19-005497")
-  assert _CIK_ACCESSION_RE.match("1522767:0001493152-19-005497")
+  assert _CIK_ACCESSION_RE.match("1234567:0001234567-19-000001")
   assert _TICKER_RE.match("NVDA")
   # A ticker is at most ten characters, so an LEI cannot be read as one.
   assert not _TICKER_RE.match(lei)
