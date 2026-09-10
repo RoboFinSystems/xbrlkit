@@ -1209,7 +1209,7 @@ def test_filing_meta_carries_the_items_off_an_edgar_ref() -> None:
     items="2.02,9.01",
   )
   meta = filing_meta(
-    "https://www.sec.gov", "1522767", "0001522767-25-000048", ref, "x.htm"
+    "https://www.sec.gov", "1234567", "0001234567-25-000048", ref, "x.htm"
   )
   assert meta.items == ["2.02", "9.01"]
   # A ref with no items (every form but 8-K) leaves it empty, not None.
@@ -1232,14 +1232,14 @@ def test_an_8k_describes_its_items_and_leads_with_the_exhibit() -> None:
 
   model = XbrlModel(
     filing=FilingMeta(
-      accession="0001522767-25-000048",
-      cik="0001522767",
+      accession="0001234567-25-000048",
+      cik="0001234567",
       form="8-K",
       items=["2.02", "9.01"],
     ),
-    entity=EntityIdentity(cik="0001522767", name="MARIMED INC."),
+    entity=EntityIdentity(cik="0001234567", name="ACME CORP."),
   )
-  lf = LoadedFiling(id="mrmd", source="x", model=model, text="cover", sections=[])
+  lf = LoadedFiling(id="acme", source="x", model=model, text="cover", sections=[])
   out = tools.describe_filing(lf)
   assert out["filing"]["items"][0]["name"] == (
     "Results of Operations and Financial Condition"

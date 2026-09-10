@@ -71,10 +71,10 @@ answer over its tagged text blocks.
 
 ## The 8-K is the exception worth knowing
 
-An 8-K is a wrapper, and the wrapper is what carries the XBRL. MariMed's
-2025-05-07 filing is typical: **20 facts, all cover-page, no numeric facts, no
-statements, 3,600 characters of text** — while the earnings release attached to
-it as `EX-99.1` is **242,826 bytes**. `fact_grid` and `statement` have nothing
+An 8-K is a wrapper, and the wrapper is what carries the XBRL. A typical
+earnings 8-K: **about 20 facts, all cover-page, no numeric facts, no
+statements, a few thousand characters of text** — while the earnings release
+attached to it as `EX-99.1` runs to hundreds of kilobytes. `fact_grid` and `statement` have nothing
 to say about a filing like that, and the answer is never in the tagged content.
 
 **EDGAR says which 8-K is which, and `describe_filing` now returns it.** The
