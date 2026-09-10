@@ -465,6 +465,92 @@ def test_arc_without_preferred_label_emits_none() -> None:
       assert "preferredLabelRole" not in n
 
 
+def _holon_nodes(model: XbrlModel) -> list[dict[str, Any]]:
+  doc = json.loads(to_holon(model))
+  return [n for graph in doc["@graph"] for n in graph["@graph"] if "@type" in n]
+
+
+def _typed(nodes: list[dict[str, Any]], term: str) -> list[dict[str, Any]]:
+  return [n for n in nodes if term in _as_list(n["@type"])]
+
+
+def _as_list(value: Any) -> list[Any]:
+  return value if isinstance(value, list) else [value]
+
+
+def _with_producer_ids(model: XbrlModel) -> XbrlModel:
+  """The model as an authored report hands it over: its own structure and
+  fact-set ids on one statement's networks, and each fact pinned to it."""
+  statement = next(n.role_uri for n in model.networks if n.kind == "presentation")
+  for network in model.networks:
+    if network.role_uri == statement:
+      network.structure_id = "struct_01"
+      network.fact_set_id = "fs_01"
+  for fact in model.facts:
+    fact.structure_id = "struct_01"
+  return model
+
+
+def test_holon_slugs_the_role_when_the_producer_named_nothing() -> None:
+  """A filing's structure is its role: the IRI is the role's slug and the
+  internalId the role itself — unchanged by the producer-id path."""
+  structures = _typed(_holon_nodes(_model()), "rs:Structure")
+  assert structures
+  for structure in structures:
+    assert len(structure["@id"].rsplit("/", 1)[-1]) == 16
+    assert structure["internalId"] == structure["roleUri"]
+
+
+def test_holon_uses_the_producers_structure_and_fact_set_ids() -> None:
+  """An authored report's other serializations already name its structures and
+  fact sets; the holon names them the same way so the IRIs agree across every
+  projection of the report — the structure, its associations, its Information
+  Block, the fact set, and each fact's pin."""
+  nodes = _holon_nodes(_with_producer_ids(_model()))
+  root = _typed(nodes, "rs:Report")[0]["@id"]
+  structure = next(
+    n
+    for n in _typed(nodes, "rs:Structure")
+    if n["@id"] == f"{root}/structure/struct_01"
+  )
+  assert structure["internalId"] == "struct_01"
+  assert structure["factSet"] == "https://robosystems.ai/factset/fs_01"
+  block = next(
+    n
+    for n in _typed(nodes, "rs:InformationBlock")
+    if n["@id"] == f"{root}/ib/struct_01"
+  )
+  assert block["structure"] == structure["@id"]
+  assert block["factSet"] == "https://robosystems.ai/factset/fs_01"
+  own = [
+    a for a in _typed(nodes, "rs:Association") if a["role"] == structure["roleUri"]
+  ]
+  assert own
+  assert all(a["@id"].startswith(f"{root}/association/struct_01/") for a in own)
+  for fact in _typed(nodes, "rs:Fact"):
+    assert fact["structure"] == structure["@id"]
+    assert fact["factSet"] == "https://robosystems.ai/factset/fs_01"
+
+
+def test_an_id_two_roles_claim_is_ignored() -> None:
+  """A producer's mistake must not collapse two structures onto one IRI."""
+  model = _model()
+  first = model.networks[0]
+  model.networks.append(
+    Network(
+      role_uri="http://acme.com/role/Elsewhere",
+      definition="Elsewhere",
+      kind="presentation",
+      arcs=[Arc(from_qname=a.from_qname, to_qname=a.to_qname) for a in first.arcs],
+    )
+  )
+  for network in model.networks:
+    network.structure_id = "shared"
+  structures = _typed(_holon_nodes(model), "rs:Structure")
+  assert len(structures) == len({n.role_uri for n in model.networks})
+  assert not any(n["@id"].endswith("/structure/shared") for n in structures)
+
+
 def test_holon_serialization_is_deterministic() -> None:
   """Same model, same bytes — and every @graph array is @id-sorted, naturally."""
   from xbrlkit.serialize._kernel.holon import _natural

@@ -401,6 +401,28 @@ def test_round_trip_keeps_the_networks(model: XbrlModel, fmt: str) -> None:
   assert [(a.to_qname, a.weight) for a in calculation.arcs] == [("us-gaap:Cash", 1.0)]
 
 
+def test_holon_round_trip_keeps_the_producers_ids(model: XbrlModel) -> None:
+  """The structure and fact-set ids an authored report supplied come back, and
+  so does each fact's pin."""
+  for network in model.networks:
+    if network.role_uri == BALANCE_SHEET:
+      network.structure_id = "struct_01"
+      network.fact_set_id = "fs_01"
+  for fact in model.facts:
+    fact.structure_id = "struct_01"
+  got = from_holon_json(to_holon(model))
+  by_kind = {(n.role_uri, n.kind): n for n in got.networks}
+  assert by_kind[(BALANCE_SHEET, "presentation")].structure_id == "struct_01"
+  assert by_kind[(BALANCE_SHEET, "presentation")].fact_set_id == "fs_01"
+  assert by_kind[(BALANCE_SHEET, "calculation")].structure_id == "struct_01"
+  assert all(f.structure_id == "struct_01" for f in got.facts)
+
+
+def test_holon_round_trip_leaves_a_filings_ids_unset(model: XbrlModel) -> None:
+  got = from_holon_json(to_holon(model))
+  assert all(n.structure_id is None and n.fact_set_id is None for n in got.networks)
+
+
 def test_holon_round_trip_is_a_fixed_point_past_ten_arcs(model: XbrlModel) -> None:
   """Read back and written again, a holon is the same bytes in the same arc order.
 
