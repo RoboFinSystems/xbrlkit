@@ -932,6 +932,44 @@ def test_provenance_survives_both_projections(model: XbrlModel, fmt: str) -> Non
   assert sum(f.provenance is not None for f in got.facts) == 1
 
 
+@pytest.mark.parametrize("fmt", ["tavi", "holon"])
+def test_three_authored_fact_provenance_anchors_survive_both_projections(
+  model: XbrlModel, fmt: str
+) -> None:
+  """The LodgeiT fixture: three producer facts, each anchored to evidence."""
+  from xbrlkit.model import FactProvenance
+
+  authored = model.model_copy(deep=True)
+  anchors = {
+    "f1": FactProvenance(
+      source="urn:lodgeit:ledger-row:assets",
+      kind="ledger_row",
+      content_hash="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      attributed_to="urn:lodgeit:agent:clawdog",
+    ),
+    "f2": FactProvenance(
+      source="urn:lodgeit:working-paper:cash-reconciliation#cash",
+      kind="working_paper_cell",
+      content_hash="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      attributed_to="urn:lodgeit:reviewer:andrew",
+    ),
+    "f3": FactProvenance(
+      source="urn:lodgeit:filing-profile:document-type",
+      kind="agent_assertion",
+      content_hash="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      attributed_to="urn:lodgeit:system:clawdog-report-writer",
+    ),
+  }
+  for fact in authored.facts:
+    fact.provenance = anchors.get(fact.id)
+
+  got = _through(authored, fmt)
+
+  by_id = {fact.id: fact for fact in got.facts}
+  assert {fid: by_id[fid].provenance for fid in anchors} == anchors
+  assert sum(fact.provenance is not None for fact in got.facts) == 3
+
+
 def test_tavi_round_trip_keeps_the_producers_fact_ids(model: XbrlModel) -> None:
   """A map keyed by a producer's fact ids survives the TAVI round trip — the
   invariant the first outside adopter asked for, which positional names broke."""
