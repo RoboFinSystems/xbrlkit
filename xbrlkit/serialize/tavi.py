@@ -44,12 +44,14 @@ decide it, the disagreement is recorded below as an ambiguity.
 
 from __future__ import annotations
 
+import re
+
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ..model import Arc, Concept, Network, Period, XbrlFact, XbrlModel
-from ..namespaces import TAVI_REPORT_BASE
+from ..model import Arc, Concept, FactProvenance, Network, Period, XbrlFact, XbrlModel
+from ..namespaces import HOLON_VOCAB, PROV_VOCAB, TAVI_REPORT_BASE
 from ._values import (
   entity_prefix,
   entity_sqname,
@@ -354,6 +356,22 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
       "mandates and what keeps a large or precise decimal exact."
     ),
   },
+  {
+    "id": "fact-value-name-required-vs-example",
+    "where": "section 8.4.1 vs. the section 8.3.1 example",
+    "issue": (
+      "Section 8.4.1 marks the fact value object's `name` (required); the fact "
+      "object example in 8.3.1 writes its fact value with no name, while the "
+      "valueSources examples in 8.4.1 name theirs (`aapl:f-9_val`). The fact "
+      "object's own `name` is `(optional)` in its property line and `base "
+      "object: (required)` in the line beneath it."
+    ),
+    "choice": (
+      "no name on the fact value — the 8.3.1 example's shape, which every "
+      "reader of this document has accepted — until the editors say which "
+      "line is the rule."
+    ),
+  },
 )
 
 
@@ -378,6 +396,9 @@ class GapReport:
   dropped_period_semantics: list[dict[str, object]] = field(default_factory=list)
   facts_without_cube: int = 0
   dimensional_facts: int = 0
+  # Producer fact ids that were not valid SQName local names as given, or that
+  # repeated, and were adjusted to be written as the fact's name.
+  renamed_facts: int = 0
   notes: list[str] = field(default_factory=list)
 
   def to_dict(self) -> dict[str, object]:
@@ -396,6 +417,7 @@ class GapReport:
         "unmapped_label_roles": dict(sorted(self.unmapped_label_roles.items())),
         "facts_without_cube": self.facts_without_cube,
         "dimensional_facts": self.dimensional_facts,
+        "renamed_facts": self.renamed_facts,
       },
       "notes": self.notes,
     }
@@ -436,6 +458,7 @@ def to_tavi_report(
     "name": f"{REPORT_PREFIX}:Report",
     "modelType": "xbrl:report",
     "properties": _model_properties(model),
+    "propertyTypes": _property_types(model),
     "entities": _entities(model),
     "units": _units(model),
     "dataTypes": datatypes,
@@ -717,6 +740,11 @@ def _namespaces(model: XbrlModel, report_id: str) -> dict[str, str]:
   # any other scheme) needs it bound.
   prefix, scheme = entity_prefix(model.entity)
   namespaces[prefix] = scheme
+  # A fact's provenance is written under PROV-O and our own vocabulary; both
+  # are bound only when a fact carries one, so a filing's document is unchanged.
+  if any(fact.provenance is not None for fact in model.facts):
+    namespaces["prov"] = PROV_VOCAB
+    namespaces["rs"] = HOLON_VOCAB
 
   by_uri = {uri: prefix for prefix, uri in namespaces.items()}
   for concept in model.concepts.values():
@@ -1136,6 +1164,7 @@ def _facts(
   units = {unit.id: unit for unit in model.units}
   entity = entity_sqname(model.entity)
   facts: list[dict[str, object]] = []
+  names: set[str] = set()
 
   for index, fact in enumerate(model.facts):
     concept = model.concepts.get(fact.concept_qname)
@@ -1176,7 +1205,7 @@ def _facts(
       gaps.facts_without_cube += 1
 
     entry: dict[str, object] = {
-      "name": f"{REPORT_PREFIX}:f-{index}",
+      "name": _fact_name(fact, index, names, gaps),
       "factDimensions": dimensions,
     }
     if not fact.is_nil:
@@ -1190,8 +1219,85 @@ def _facts(
         if decimals is not None:
           fact_value["decimals"] = decimals
       entry["factValues"] = [fact_value]
+    if fact.provenance is not None:
+      properties = _provenance_properties(fact.provenance)
+      if properties:
+        entry["properties"] = properties
     facts.append(entry)
   return facts
+
+
+# The characters an SQName local name may not carry (section 3.3 / xbrl:SQName:
+# an NCName that may also start with a digit).
+_NOT_SQNAME_LOCAL = re.compile(r"[^A-Za-z0-9_.\-]")
+
+
+def _fact_name(fact: XbrlFact, index: int, names: set[str], gaps: GapReport) -> str:
+  """The fact's name (section 8.3.1): the producer's own id when it gave one.
+
+  A fact that came through Arelle carries the parser's hash and no id of its
+  own, and is named by position as before, so a filing's document is
+  byte-identical to what it was. A fact a producer authored — a ledger's, a
+  reader's — has no hash and keeps its id, under the report prefix: that is
+  the slot the spec provides for a fact "so it can be referenced by other
+  objects", and a round trip through TAVI used to rename every fact through it.
+  An id that is not a valid local name is cleaned, and a repeat suffixed, and
+  both are counted in the gap report.
+  """
+  if fact.source_hash is None and fact.id:
+    local = fact.id
+    prefix, _, rest = local.partition(":")
+    if prefix == REPORT_PREFIX and rest:
+      local = rest
+    cleaned = _NOT_SQNAME_LOCAL.sub("-", local).strip("-") or f"f-{index}"
+    name = f"{REPORT_PREFIX}:{cleaned}"
+    if name in names:
+      name = f"{REPORT_PREFIX}:{cleaned}-{index}"
+    if name != f"{REPORT_PREFIX}:{local}":
+      gaps.renamed_facts += 1
+  else:
+    name = f"{REPORT_PREFIX}:f-{index}"
+  names.add(name)
+  return name
+
+
+# Provenance on a fact, as model-defined properties (sections 5.13 / 11.6):
+# PROV-O's terms where PROV-O has them, ours for the two it does not name.
+PROVENANCE_PROPERTIES: tuple[tuple[str, str, str], ...] = (
+  ("source", "prov:hadPrimarySource", "xs:anyURI"),
+  ("kind", "rs:sourceKind", "xs:string"),
+  ("content_hash", "rs:contentHash", "xs:string"),
+  ("attributed_to", "prov:wasAttributedTo", "xs:anyURI"),
+)
+
+
+def _property_types(model: XbrlModel) -> list[dict[str, object]]:
+  """The property type objects (section 11.6) the facts' provenance needs.
+
+  Declared only when a fact carries provenance: section 3.1 forbids a
+  property no type declares, and the type is what makes the property mean
+  the same thing to the next reader. ``definitional`` is false — where a fact
+  came from is contextual metadata, not part of its identity (11.6.1).
+  """
+  if not any(fact.provenance is not None for fact in model.facts):
+    return []
+  return [
+    {
+      "name": qname,
+      "dataType": datatype,
+      "definitional": False,
+      "allowedObjects": ["xbrl:factObject"],
+    }
+    for _, qname, datatype in PROVENANCE_PROPERTIES
+  ]
+
+
+def _provenance_properties(provenance: FactProvenance) -> list[dict[str, object]]:
+  return [
+    {"property": qname, "value": getattr(provenance, attr)}
+    for attr, qname, _ in PROVENANCE_PROPERTIES
+    if getattr(provenance, attr)
+  ]
 
 
 def _fact_value(fact: XbrlFact) -> str | None:

@@ -1360,12 +1360,19 @@ def view_filing(lf: LoadedFiling, format: str, viewers: ViewerHost) -> dict[str,
   """Serialize the filing, serve it on loopback, and return the viewer link.
 
   The document is not written to disk: the browser is the only reader, and
-  ``export_filing`` is the tool for keeping a copy.
+  ``export_filing`` is the tool for keeping a copy. A filing loaded from a
+  document that already is the requested serialization is served as it was
+  loaded, not re-projected through the model — the model has no slot for
+  everything a producer's document may say.
   """
   fmt = (format or "").strip().lower()
   if fmt not in VIEW_FORMATS:
     raise ToolError(f"format must be one of {sorted(VIEW_FORMATS)}, not {format!r}")
-  if fmt == "holon":
+  served = "projected from the model"
+  if lf.source_kind == fmt and lf.source_document is not None:
+    body = lf.source_document
+    served = "as loaded"
+  elif fmt == "holon":
     from xbrlkit.serialize import to_holon
 
     body = to_holon(lf.model)
@@ -1382,6 +1389,7 @@ def view_filing(lf: LoadedFiling, format: str, viewers: ViewerHost) -> dict[str,
     "viewer_url": page_url,
     "document_url": file_url,
     "bytes": len(body.encode("utf-8")),
+    "served": served,
     "note": (
       "Give viewer_url to the user. The document is served from this machine "
       "and readable only by the viewer's origin, while this server runs."

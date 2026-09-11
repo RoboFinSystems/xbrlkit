@@ -1253,3 +1253,38 @@ def test_a_filing_with_no_items_says_nothing_about_them(loaded: LoadedFiling) ->
   out = tools.describe_filing(loaded)
   assert "items" not in out["filing"] and "items_note" not in out["filing"]
   assert "documents" not in out["next"][0]
+
+
+def test_view_filing_serves_a_loaded_document_as_it_was_loaded(tmp_path: Path) -> None:
+  """A holon loaded from disk is served for the viewer as it is. The
+  re-projection through the model dropped what the model has no slot for,
+  and the viewer rendered a different document from the one the user opened."""
+  from urllib.request import urlopen
+
+  from xbrlkit.serialize import to_holon
+  from xbrlkit.view import ViewerHost
+
+  document = json.loads(to_holon(_model()))
+  for graph in document["@graph"]:
+    for node in graph["@graph"]:
+      if "Entity" in str(node.get("@type")):
+        node["country"] = "US"  # a producer's term the model cannot hold
+  text = json.dumps(document, indent=2)
+  holon = tmp_path / "acme.holon.jsonld"
+  holon.write_text(text)
+  session = FilingSession()
+  viewers = ViewerHost()
+  try:
+    loaded = session.load(str(holon))
+    assert loaded.source_kind == "holon"
+    out = tools.view_filing(loaded, "holon", viewers)
+    assert out["served"] == "as loaded"
+    assert out["bytes"] == len(text.encode("utf-8"))
+    with urlopen(out["document_url"]) as response:
+      assert response.read().decode("utf-8") == text
+    assert tools.view_filing(loaded, "tavi", viewers)["served"] == (
+      "projected from the model"
+    )
+  finally:
+    viewers.close()
+    session.close()

@@ -836,3 +836,104 @@ def test_a_tavi_without_a_report_namespace_still_reads() -> None:
   assert got.filing.accession == "unknown"
   assert got.entity.cik == "0001234567"
   assert len(got.facts) == 5
+
+
+# -- what a producer's holon says, and gets back ----------------------------------
+
+
+def _authored(model: XbrlModel) -> XbrlModel:
+  """The fixture as a report a producer authored: a named, typed and ordered
+  structure, a markdown text block, and one fact that says where it came from."""
+  from xbrlkit.model import FactProvenance
+
+  for network in model.networks:
+    if network.role_uri == BALANCE_SHEET:
+      network.structure_id = "struct_01"
+      network.fact_set_id = "fs_01"
+      network.block_type = "balance_sheet"
+      network.structure_order = 100
+  for fact in model.facts:
+    fact.structure_id = "struct_01"
+  model.facts[0].provenance = FactProvenance(
+    source="src:trial-balance#assets",
+    kind="trial_balance_line",
+    content_hash="sha256:0f0f",
+    attributed_to="https://example.com/agents/close-bot",
+  )
+  next(f for f in model.facts if f.unit_id is None).content_type = "text/markdown"
+  return model
+
+
+def test_an_authored_holon_gives_the_producer_its_own_terms_back(
+  model: XbrlModel,
+) -> None:
+  """A section's type and order, a text block's media type and a fact's
+  provenance come back as written. The writer emitted every one of these and
+  the reader read none — found on a RoboLedger report whose statements lost
+  their titles and whose markdown flattened when the server re-served it."""
+  authored = _authored(model)
+  got = from_holon_json(to_holon(authored))
+  by_kind = {(n.role_uri, n.kind): n for n in got.networks}
+  balance_sheet = by_kind[(BALANCE_SHEET, "presentation")]
+  assert balance_sheet.block_type == "balance_sheet"
+  assert balance_sheet.structure_order == 100
+  assert balance_sheet.fact_set_id == "fs_01"
+  assert {n.structure_order for n in got.networks if n.role_uri != BALANCE_SHEET} <= {
+    None
+  }
+  assert next(f for f in got.facts if f.content_type).content_type == "text/markdown"
+  first = next(f for f in got.facts if f.id == authored.facts[0].id)
+  assert first.provenance == authored.facts[0].provenance
+  assert all(f.provenance is None for f in got.facts if f.id != first.id)
+
+
+def test_an_authored_holon_is_a_fixed_point_of_read_then_write(
+  model: XbrlModel,
+) -> None:
+  once = to_holon(_authored(model))
+  assert to_holon(from_holon_json(once)) == once
+
+
+def test_a_producer_may_write_the_holon_its_own_way(model: XbrlModel) -> None:
+  """The RoboLedger shape: no report node at all, ``rs:structureOrder`` as a
+  compact IRI rather than the context's term, the fact set named on the
+  Information Block rather than the structure, and a term the model has no
+  slot for. The report keeps its identity, the order and the set are read,
+  and the term is reported rather than silently dropped."""
+  document = json.loads(to_holon(_authored(model)))
+  for graph in document["@graph"]:
+    graph["@graph"] = [
+      node for node in graph["@graph"] if "Report" not in str(node.get("@type"))
+    ]
+    for node in graph["@graph"]:
+      types = str(node.get("@type"))
+      if "Structure" in types:
+        if "structureOrder" in node:
+          node["rs:structureOrder"] = node.pop("structureOrder")
+        node.pop("factSet", None)
+      if "InformationBlock" in types:
+        node["taxonomyName"] = "rs-gaap-presentation v1"
+  got, gaps = from_holon_report(json.dumps(document))
+  assert got.filing.accession == model.filing.accession
+  balance_sheet = next(
+    n for n in got.networks if n.role_uri == BALANCE_SHEET and n.kind == "presentation"
+  )
+  assert balance_sheet.structure_order == 100
+  assert balance_sheet.fact_set_id == "fs_01"
+  assert "information block taxonomyId and taxonomyName" in gaps.missing
+
+
+@pytest.mark.parametrize("fmt", ["tavi", "holon"])
+def test_provenance_survives_both_projections(model: XbrlModel, fmt: str) -> None:
+  authored = _authored(model)
+  got = _through(authored, fmt)
+  first = next(f for f in got.facts if f.id == authored.facts[0].id)
+  assert first.provenance == authored.facts[0].provenance
+  assert sum(f.provenance is not None for f in got.facts) == 1
+
+
+def test_tavi_round_trip_keeps_the_producers_fact_ids(model: XbrlModel) -> None:
+  """A map keyed by a producer's fact ids survives the TAVI round trip — the
+  invariant the first outside adopter asked for, which positional names broke."""
+  got = from_tavi_json(to_tavi(model))
+  assert [f.id for f in got.facts] == [f.id for f in model.facts]

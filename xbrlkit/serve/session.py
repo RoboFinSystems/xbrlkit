@@ -103,6 +103,13 @@ class LoadedFiling:
   # and each one read on first read. Nothing is fetched until something asks.
   other_documents: list[FilingDocument] | None = None
   read_documents: dict[str, "ReadDocument"] = field(default_factory=dict)
+  # The document the filing was loaded from, when it already is one of the
+  # serializations this server hands out (a holon, a TAVI), and which one.
+  # ``view_filing`` serves that document as it is rather than a re-projection
+  # of the model: a producer's document may say things the model has no slot
+  # for, and the reader who asked to see the report asked to see that one.
+  source_document: str | None = None
+  source_kind: str | None = None
 
   @property
   def has_xbrl(self) -> bool:
@@ -322,7 +329,16 @@ class FilingSession:
       if candidate.is_file():
         target = candidate
     model = _enrich_from_dei(model)
-    return self._finish(_local_id(path, model), source, model, target, path.parent)
+    served = kind in ("tavi", "holon")
+    return self._finish(
+      _local_id(path, model),
+      source,
+      model,
+      target,
+      path.parent,
+      source_document=text if served else None,
+      source_kind=kind if served else None,
+    )
 
   def _load_url(self, url: str) -> LoadedFiling:
     clean = Path(url.split("?", 1)[0])
@@ -687,6 +703,8 @@ class FilingSession:
     target: Path | None,
     package_dir: Path | None,
     document: Path | None = None,
+    source_document: str | None = None,
+    source_kind: str | None = None,
   ) -> LoadedFiling:
     """Assemble the :class:`LoadedFiling`.
 
@@ -710,6 +728,8 @@ class FilingSession:
       load_target=target,
       package_dir=package_dir,
       block_text=block_text,
+      source_document=source_document,
+      source_kind=source_kind,
       block_sections=block_sections,
       has_document=read is not None,
       xml_document=read.xml_document if read else None,

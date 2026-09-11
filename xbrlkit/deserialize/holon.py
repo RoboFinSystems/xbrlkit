@@ -46,6 +46,7 @@ from ..model import (
   Concept,
   DimQualifier,
   EntityIdentity,
+  FactProvenance,
   FilingMeta,
   Label,
   Network,
@@ -55,7 +56,13 @@ from ..model import (
   XbrlFact,
   XbrlModel,
 )
-from ..namespaces import CONCEPT_BASE, ENTITY_SCHEME, HOLON_VOCAB
+from ..namespaces import (
+  CONCEPT_BASE,
+  ENTITY_SCHEME,
+  HOLON_VOCAB,
+  PROV_VOCAB,
+  REPORT_BASE,
+)
 from ..serialize._values import CIK_SCHEME
 from ..serialize.tavi import LABEL_ROLE_TYPES
 from ..parse.ids import unit_id
@@ -73,6 +80,7 @@ FACT = "Fact"
 DIMENSION = "Dimension"
 STRUCTURE = "Structure"
 ASSOCIATION = "Association"
+INFORMATION_BLOCK = "InformationBlock"
 
 # Vocabulary term -> label role URI, inverted from the emitter's own map so a
 # role a holon writes and a role this reads cannot drift apart. `prefLabel` and
@@ -189,6 +197,7 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   )
 
   entity = _entity(by_type.get(ENTITY, []))
+  _note_producer_vocabulary(by_type, gaps)
   concepts = _concepts(by_type.get(ELEMENT, []), prefixes)
   periods = _periods(by_type.get(PERIOD, []))
   units = _units(by_type.get(UNIT, []), prefixes)
@@ -198,9 +207,16 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   )
   _mark_text_facts(concepts, facts)
   networks = _networks(
-    by_type.get(ASSOCIATION, []), by_type.get(STRUCTURE, []), prefixes, concepts
+    by_type.get(ASSOCIATION, []),
+    by_type.get(STRUCTURE, []),
+    by_type.get(INFORMATION_BLOCK, []),
+    by_type.get(FACT, []),
+    prefixes,
+    concepts,
   )
-  filing = _filing(by_type.get(REPORT, []), entity, concepts)
+  filing = _filing(
+    by_type.get(REPORT, []), entity, concepts, _report_id(document, by_type)
+  )
 
   return (
     XbrlModel(
@@ -306,6 +322,72 @@ def _reference(value: Any) -> str:
   return target if isinstance(target, str) else ""
 
 
+def _prop(node: Mapping[str, Any], term: str) -> Any:
+  """A vocabulary property however the document spelled it.
+
+  A holon written against the canonical context carries the bare term; one
+  written by a producer whose context does not define the term carries the
+  compact IRI ``rs:<term>``; a holon written expanded carries the full IRI.
+  The RoboLedger holon writes ``rs:structureOrder`` beside bare ``blockType``,
+  so one reader has to take all three.
+  """
+  for key in (term, f"{VOCAB_PREFIX}{term}", f"{HOLON_VOCAB}{term}"):
+    if key in node:
+      return node[key]
+  return None
+
+
+def _prov(node: Mapping[str, Any], term: str) -> Any:
+  """A PROV-O property, compact (``prov:<term>``), bare or expanded."""
+  for key in (f"prov:{term}", term, f"{PROV_VOCAB}{term}"):
+    if key in node:
+      return node[key]
+  return None
+
+
+def _report_id(
+  document: Mapping[str, Any], by_type: Mapping[str, Sequence[Mapping[str, Any]]]
+) -> str | None:
+  """The report's own id, from its IRI.
+
+  The report node's ``@id`` when there is one; else the named graphs' ids —
+  ``<report>#scene`` and its siblings — which a holon has even when the
+  producer wrote no report node at all. The id is the IRI's tail under the
+  report base, the form :func:`~xbrlkit.serialize.graph.holon_root` mints.
+  """
+  candidates: list[str] = []
+  for node in by_type.get(REPORT, []):
+    candidates.append(_text(node.get("@id")) or "")
+  for graph in _list(document.get("@graph")):
+    entry = _mapping(graph)
+    if "@graph" in entry:
+      candidates.append(_text(entry.get("@id")) or "")
+  for iri in candidates:
+    iri = iri.split("#", 1)[0]
+    if iri.startswith(REPORT_BASE) and len(iri) > len(REPORT_BASE):
+      return iri[len(REPORT_BASE) :]
+  return None
+
+
+def _note_producer_vocabulary(
+  by_type: Mapping[str, Sequence[Mapping[str, Any]]], gaps: ImportGaps
+) -> None:
+  """Record the producer's terms the model has no slot for.
+
+  A holon may say more than the model can hold — a taxonomy's id and name on
+  an Information Block, the entity's country. The reader does not invent
+  slots for them; it says they were there, so a caller that needs the whole
+  document keeps the document rather than the model.
+  """
+  if any(
+    _prop(node, "taxonomyId") is not None or _prop(node, "taxonomyName") is not None
+    for node in by_type.get(INFORMATION_BLOCK, [])
+  ):
+    gaps.missing.append("information block taxonomyId and taxonomyName")
+  if any(_prop(node, "country") is not None for node in by_type.get(ENTITY, [])):
+    gaps.missing.append("entity country")
+
+
 # -- identity --------------------------------------------------------------------
 
 
@@ -340,11 +422,18 @@ def _filing(
   nodes: Sequence[Mapping[str, Any]],
   entity: EntityIdentity,
   concepts: Mapping[str, Concept],
+  report_id: str | None,
 ) -> FilingMeta:
-  """The report node is the whole of the filing's identity in a holon."""
+  """The report node is the whole of the filing's identity in a holon.
+
+  A filing's identity is its accession number. A report that is not a filing
+  has none, and its identity is the report IRI every node in the holon hangs
+  off — so that is read back as the accession, and a second write scopes its
+  IRIs under the same report rather than under ``report/unknown``.
+  """
   node = _mapping(nodes[0]) if nodes else {}
   return FilingMeta(
-    accession=_text(node.get("accessionNumber")) or "unknown",
+    accession=_text(node.get("accessionNumber")) or report_id or "unknown",
     cik=entity.cik,
     form=_text(node.get("form")),
     is_inline_xbrl=None,
@@ -388,6 +477,11 @@ def _concepts(
       item_type = declared.split(":", 1)[-1]
     elif domain and domain != "string":
       item_type = HOLON_ITEM_TYPES.get(domain, domain)
+    elif _bool(node.get("monetary")):
+      # A producer that wrote no domain and no declared type may still have
+      # said the element is monetary; without this the next write called it
+      # a plain decimal and the flag flipped to false on the way through.
+      item_type = "monetaryItemType"
     else:
       item_type = None
     pref_label = _text(node.get("prefLabel"))
@@ -611,11 +705,27 @@ def _facts(
         value_kind="numeric" if unit is not None else "text",
         is_nil=_bool(declared_nil) if declared_nil is not None else value_str is None,
         language=_text(node.get("language")),
+        content_type=_text(_prop(node, "contentType")),
         # The pin an authored report put on the fact, by the structure's own id.
         structure_id=_reference(node.get("structure")).rsplit("/", 1)[-1] or None,
+        provenance=_provenance(node),
       )
     )
   return facts
+
+
+def _provenance(node: Mapping[str, Any]) -> FactProvenance | None:
+  """The fact's provenance, from the PROV-O terms the writer uses plus the two
+  of our own (kind and hash) that PROV has no word for."""
+  source = _reference(_prov(node, "hadPrimarySource")) or None
+  attributed = _reference(_prov(node, "wasAttributedTo")) or None
+  kind = _text(_prop(node, "sourceKind"))
+  content_hash = _text(_prop(node, "contentHash"))
+  if not any((source, attributed, kind, content_hash)):
+    return None
+  return FactProvenance(
+    source=source, kind=kind, content_hash=content_hash, attributed_to=attributed
+  )
 
 
 def _mark_text_facts(concepts: dict[str, Concept], facts: Sequence[XbrlFact]) -> None:
@@ -660,6 +770,8 @@ def _network_kind(node: Mapping[str, Any]) -> NetworkKind | None:
 def _networks(
   associations: Sequence[Mapping[str, Any]],
   structures: Sequence[Mapping[str, Any]],
+  blocks: Sequence[Mapping[str, Any]],
+  facts: Sequence[Mapping[str, Any]],
   prefixes: Mapping[str, str],
   concepts: dict[str, Concept],
 ) -> list[Network]:
@@ -670,6 +782,11 @@ def _networks(
   the standard one. Those are hung back on the concept as it goes past, because
   the renderer looks the preferred label up on the concept, and without them a
   statement renders under standard labels the filer did not choose.
+
+  The structure node carries the section's own description — its block type
+  and its place in the report's sequence — and a producer's fact set may be
+  named on the structure, on its Information Block, or only on the facts
+  pinned to it; all three are read, so the next write names it the same way.
   """
   definitions: dict[str, str] = {}
   # A producer that named its structures wrote the name as internalId (a
@@ -677,17 +794,48 @@ def _networks(
   # the structure node points at, by its own id.
   structure_ids: dict[str, str] = {}
   fact_set_ids: dict[str, str] = {}
+  block_types: dict[str, str] = {}
+  orders: dict[str, int] = {}
+  # Fact sets by structure slug, from the Information Blocks and the facts,
+  # for a producer that wrote the set there rather than on the structure.
+  sets_by_slug: dict[str, str] = {}
+  for node in blocks:
+    slug = _reference(node.get("structure")).rsplit("/", 1)[-1] or (
+      _text(node.get("internalId")) or ""
+    )
+    fact_set = _reference(node.get("factSet"))
+    if slug and fact_set:
+      sets_by_slug.setdefault(slug, fact_set.rsplit("/", 1)[-1])
+  for node in facts:
+    slug = _reference(node.get("structure")).rsplit("/", 1)[-1]
+    for fact_set in _list(node.get("factSet")):
+      ref = _reference(fact_set)
+      if slug and ref:
+        sets_by_slug.setdefault(slug, ref.rsplit("/", 1)[-1])
   for node in structures:
     role_uri = _text(node.get("roleUri"))
     name = _text(node.get("structureName")) or _text(node.get("prefLabel"))
     if role_uri and name:
       definitions.setdefault(role_uri, name)
+    if not role_uri:
+      continue
+    block_type = _text(_prop(node, "blockType"))
+    if block_type:
+      block_types.setdefault(role_uri, block_type)
     internal = _text(node.get("internalId"))
-    if role_uri and internal and internal != role_uri:
+    if internal and internal != role_uri:
       structure_ids.setdefault(role_uri, internal)
-      fact_set = _reference(node.get("factSet"))
-      if fact_set:
-        fact_set_ids.setdefault(role_uri, fact_set.rsplit("/", 1)[-1])
+      # A filing's holon carries an order too — the rank the writer gave the
+      # section — but that is the writer's, not the filing's, and reading it
+      # back would make the filing look authored. Only a producer that named
+      # the structure is taken to have ordered it.
+      order = _int(_prop(node, "structureOrder"))
+      if order is not None:
+        orders.setdefault(role_uri, order)
+      fact_set = _reference(node.get("factSet")) or ""
+      set_id = fact_set.rsplit("/", 1)[-1] if fact_set else sets_by_slug.get(internal)
+      if set_id:
+        fact_set_ids.setdefault(role_uri, set_id)
 
   grouped: dict[tuple[str, NetworkKind], list[Mapping[str, Any]]] = {}
   for node in associations:
@@ -713,6 +861,8 @@ def _networks(
         role_uri=role_uri,
         definition=definitions.get(role_uri),
         kind=kind,
+        block_type=block_types.get(role_uri),
+        structure_order=orders.get(role_uri),
         structure_id=structure_ids.get(role_uri),
         fact_set_id=fact_set_ids.get(role_uri),
         arcs=[
@@ -774,6 +924,13 @@ def _bool(value: Any, *, default: bool = False) -> bool:
   if text is None:
     return default
   return text.lower() == "true"
+
+
+def _int(value: Any) -> int | None:
+  try:
+    return int(str(_text(value)))
+  except (TypeError, ValueError):
+    return None
 
 
 def _float(value: Any) -> float | None:

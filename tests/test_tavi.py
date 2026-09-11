@@ -397,7 +397,8 @@ def test_text_fact_carries_its_language_in_lower_case() -> None:
 
 
 def test_nil_fact_has_no_fact_value() -> None:
-  nil = next(f for f in _document()["xbrlModel"]["facts"] if f["name"] == "rpt:f-5")
+  # The fixture's facts carry no parser hash, so each is named by its own id.
+  nil = next(f for f in _document()["xbrlModel"]["facts"] if f["name"] == "rpt:f6")
   assert nil["factDimensions"]["xbrl:concept"] == "us-gaap:Assets"
   assert "factValues" not in nil
 
@@ -811,3 +812,75 @@ def test_both_formats_derive_a_shared_stem(tmp_path: Any) -> None:
   assert (tmp_path / "acme.holon.jsonld").exists()
   assert (tmp_path / "acme.tavi.json").exists()
   assert (tmp_path / "acme.tavi.gaps.json").exists()
+
+
+# -- fact names and provenance (sections 8.3.1, 5.13, 11.6) -----------------------
+
+
+def test_a_fact_that_came_through_arelle_is_named_by_position() -> None:
+  """A parsed fact carries the parser's hash and keeps the positional name, so
+  a filing's document is byte-identical to what it was before producer ids."""
+  model = _model()
+  for fact in model.facts:
+    fact.source_hash = "d41d8cd98f00b204e9800998ecf8427e"
+  document, _ = to_tavi_report(model)
+  names = [f["name"] for f in document["xbrlModel"]["facts"]]
+  assert names[:2] == ["rpt:f-0", "rpt:f-1"]
+
+
+def test_a_producers_fact_id_is_the_facts_name() -> None:
+  document, gaps = to_tavi_report(_model())
+  names = [f["name"] for f in document["xbrlModel"]["facts"]]
+  assert names[:2] == ["rpt:f1", "rpt:f2"]
+  assert gaps.renamed_facts == 0
+
+
+def test_an_id_that_is_not_a_local_name_is_cleaned_and_a_repeat_suffixed() -> None:
+  model = _model()
+  model.facts[0].id = "src:trial balance#assets"
+  model.facts[1].id = "f3"  # the third fact's id
+  document, gaps = to_tavi_report(model)
+  names = [f["name"] for f in document["xbrlModel"]["facts"]]
+  assert names[0] == "rpt:src-trial-balance-assets"
+  assert names[1] == "rpt:f3"
+  assert names[2] == "rpt:f3-2"
+  assert len(set(names)) == len(names)
+  assert gaps.renamed_facts == 2
+
+
+def test_provenance_is_written_as_declared_properties() -> None:
+  from xbrlkit.model import FactProvenance
+
+  model = _model()
+  model.facts[0].provenance = FactProvenance(
+    source="src:trial-balance#assets",
+    kind="trial_balance_line",
+    content_hash="sha256:0f0f",
+    attributed_to="https://example.com/agents/close-bot",
+  )
+  document, _ = to_tavi_report(model)
+  xbrl_model = document["xbrlModel"]
+  assert xbrl_model["facts"][0]["properties"] == [
+    {"property": "prov:hadPrimarySource", "value": "src:trial-balance#assets"},
+    {"property": "rs:sourceKind", "value": "trial_balance_line"},
+    {"property": "rs:contentHash", "value": "sha256:0f0f"},
+    {
+      "property": "prov:wasAttributedTo",
+      "value": "https://example.com/agents/close-bot",
+    },
+  ]
+  assert "properties" not in xbrl_model["facts"][1]
+  declared = {p["name"]: p for p in xbrl_model["propertyTypes"]}
+  assert declared["prov:hadPrimarySource"]["dataType"] == "xs:anyURI"
+  assert declared["rs:sourceKind"]["allowedObjects"] == ["xbrl:factObject"]
+  assert all(p["definitional"] is False for p in declared.values())
+  namespaces = document["documentInfo"]["namespaces"]
+  assert namespaces["prov"] == "http://www.w3.org/ns/prov#"
+  assert namespaces["rs"] == "https://robosystems.ai/vocab/"
+
+
+def test_a_model_without_provenance_declares_nothing_for_it() -> None:
+  document, _ = to_tavi_report(_model())
+  assert "propertyTypes" not in document["xbrlModel"]
+  assert "prov" not in document["documentInfo"]["namespaces"]
+  assert not any("properties" in f for f in document["xbrlModel"]["facts"])

@@ -32,6 +32,10 @@ from __future__ import annotations
 # --- 1. Holon vocabulary (the standardisation candidate) ---------------------
 
 HOLON_VOCAB = "https://robosystems.ai/vocab/"
+# PROV-O, the W3C provenance vocabulary: the holon writes a fact's provenance
+# with it (`prov:hadPrimarySource`, `prov:wasAttributedTo`) rather than with
+# terms of our own.
+PROV_VOCAB = "http://www.w3.org/ns/prov#"
 
 # --- 3. Instance identity (names objects within one converted filing) --------
 
@@ -50,6 +54,7 @@ TAVI_REPORT_BASE = f"{_INSTANCE_BASE}/tavi/report"
 ENTITY_SCHEME = "http://robosystems.ai/entity"
 
 __all__ = (
+  "PROV_VOCAB",
   "CONCEPT_BASE",
   "DATATYPE_BASE",
   "ENTITY_SCHEME",

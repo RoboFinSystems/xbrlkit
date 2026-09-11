@@ -39,6 +39,7 @@ from datetime import date
 from typing import Any
 
 from ..model import (
+  FactProvenance,
   Arc,
   Concept,
   DimQualifier,
@@ -51,7 +52,8 @@ from ..model import (
   XbrlFact,
   XbrlModel,
 )
-from ..namespaces import TAVI_REPORT_BASE
+from ..namespaces import HOLON_VOCAB, PROV_VOCAB, TAVI_REPORT_BASE
+from ..serialize.tavi import PROVENANCE_PROPERTIES, REPORT_PREFIX
 from ..parse.ids import unit_id
 from ..periods import period_from_interval
 from ..serialize._values import CIK_SCHEME
@@ -139,6 +141,8 @@ class ImportGaps:
   missing: list[str] = field(default_factory=list)
   unmapped_datatypes: dict[str, int] = field(default_factory=dict)
   unmapped_label_types: dict[str, int] = field(default_factory=dict)
+  # Properties on facts this reader has no slot for, by property QName.
+  unmapped_fact_properties: dict[str, int] = field(default_factory=dict)
   typed_dimensions: int = 0
 
   def to_dict(self) -> dict[str, object]:
@@ -146,6 +150,7 @@ class ImportGaps:
       "missing": sorted(self.missing),
       "unmapped_datatypes": dict(sorted(self.unmapped_datatypes.items())),
       "unmapped_label_types": dict(sorted(self.unmapped_label_types.items())),
+      "unmapped_fact_properties": dict(sorted(self.unmapped_fact_properties.items())),
       "typed_dimensions": self.typed_dimensions,
     }
 
@@ -609,6 +614,7 @@ def _facts(
   periods: dict[str, Any] = {}
   units: dict[str, Unit] = {}
   facts: list[XbrlFact] = []
+  report_prefix = _report_prefix(namespaces)
 
   for entry in _sequence(xbrl_model.get("facts")):
     obj = _mapping(entry)
@@ -662,7 +668,7 @@ def _facts(
     language = dimensions.get("xbrl:language")
     facts.append(
       XbrlFact(
-        id=str(obj.get("name", f"f-{len(facts)}")),
+        id=_fact_id(obj.get("name"), len(facts), report_prefix),
         concept_qname=concept_qname,
         period_id=period.id,
         unit_id=unit.id if unit is not None else None,
@@ -676,10 +682,73 @@ def _facts(
         value_kind="numeric" if unit is not None else "text",
         is_nil=not values,
         language=str(language) if isinstance(language, str) else None,
+        provenance=_fact_provenance(obj, namespaces, gaps),
       )
     )
 
   return facts, list(periods.values()), list(units.values())
+
+
+def _report_prefix(namespaces: Mapping[str, str]) -> str:
+  """The prefix this document binds to its own report namespace."""
+  for prefix, uri in namespaces.items():
+    if uri.startswith(TAVI_REPORT_BASE):
+      return prefix
+  return REPORT_PREFIX
+
+
+def _fact_id(name: Any, position: int, report_prefix: str) -> str:
+  """The fact's id from its name, the report prefix taken off.
+
+  The emitter writes a producer's fact id as the local name under the report
+  prefix; reading the prefix off gives the producer its id back, which is
+  what makes a map keyed by fact id survive a TAVI round trip. A name under
+  any other prefix is kept whole: it is somebody else's QName, not our id.
+  """
+  if not isinstance(name, str) or not name:
+    return f"f-{position}"
+  prefix, _, local = name.partition(":")
+  if prefix == report_prefix and local:
+    return local
+  return name
+
+
+def _expand(qname: str, namespaces: Mapping[str, str]) -> str:
+  prefix, _, local = qname.partition(":")
+  uri = namespaces.get(prefix)
+  if not uri or not local:
+    return qname
+  return f"{uri}{local}" if uri.endswith(("#", "/")) else f"{uri}#{local}"
+
+
+# Expanded property IRI -> ``FactProvenance`` field, for the four provenance
+# properties: a document is matched on the IRI, whatever prefix it bound.
+_PROVENANCE_IRIS: dict[str, str] = {
+  _expand(qname, {"prov": PROV_VOCAB, "rs": HOLON_VOCAB}): attr
+  for attr, qname, _ in PROVENANCE_PROPERTIES
+}
+
+
+def _fact_provenance(
+  obj: Mapping[str, Any], namespaces: Mapping[str, str], gaps: ImportGaps
+) -> FactProvenance | None:
+  """A fact's provenance from its properties; any other property is counted."""
+  found: dict[str, str] = {}
+  for entry in _sequence(obj.get("properties")):
+    prop = _mapping(entry)
+    qname = str(prop.get("property", ""))
+    value = prop.get("value")
+    if isinstance(value, list) and len(value) == 1:
+      value = value[0]
+    attr = _PROVENANCE_IRIS.get(_expand(qname, namespaces))
+    if attr is None or value is None:
+      if qname:
+        gaps.unmapped_fact_properties[qname] = (
+          gaps.unmapped_fact_properties.get(qname, 0) + 1
+        )
+      continue
+    found[attr] = str(value)
+  return FactProvenance(**found) if found else None
 
 
 def _unit(measure: str, units: dict[str, Unit], namespaces: Mapping[str, str]) -> Unit:
