@@ -34,11 +34,11 @@ from decimal import Decimal
 
 from collections.abc import Mapping
 
-from rdflib import RDF, RDFS, XSD, Graph, Literal, URIRef
+from rdflib import RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
 
 from ..model import Concept, Network, Unit, XbrlModel
 from .tavi import LABEL_ROLE_TYPES
-from ..namespaces import FACTSET_BASE, REPORT_BASE
+from ..namespaces import FACTSET_BASE, PROV_VOCAB, REPORT_BASE
 from ._kernel.jsonld import (
   LINK,
   RS,
@@ -115,11 +115,16 @@ def namespace_bindings(model: XbrlModel) -> dict[str, str]:
       namespace = uri[: -len(local) - 1] if local and uri.endswith(f"#{local}") else ""
       if local and namespace:
         seen.setdefault(prefix, set()).add(namespace)
-  return {
+  bindings = {
     prefix: _namespace_stem(next(iter(namespaces)))
     for prefix, namespaces in sorted(seen.items())
     if len(namespaces) == 1
   }
+  # PROV-O is bound only when something is written in it, so a filing's holon
+  # — which has no provenance to write — is byte-identical to what it was.
+  if any(fact.provenance is not None for fact in model.facts):
+    bindings.setdefault("prov", PROV_VOCAB)
+  return bindings
 
 
 def _measure_parts(unit: Unit) -> list[tuple[str, str]]:
@@ -142,6 +147,18 @@ def _namespace_stem(namespace: str) -> str:
 
 def _factset_uri(role_uri: str) -> URIRef:
   return URIRef(f"{_FACTSET_BASE}{_slug(role_uri)}")
+
+
+# The W3C provenance vocabulary, for a fact's origin: an authored report says
+# which ledger row or rule produced a fact, and PROV-O already has the words.
+PROV = Namespace(PROV_VOCAB)
+# Something with a scheme is written as an IRI, anything else as a literal:
+# `src:trial-balance#assets` and `https://…` are references, `Cadence` a name.
+_IRI_SHAPE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:\S+$")
+
+
+def _iri_or_literal(value: str) -> URIRef | Literal:
+  return URIRef(value) if _IRI_SHAPE.match(value) else Literal(value)
 
 
 def holon_root(report_id: str) -> URIRef:
@@ -482,6 +499,8 @@ def _plan_structures(model: XbrlModel) -> dict[str, _Structure]:
       st.slug = net.structure_id
     if net.fact_set_id and st.fact_set_id is None:
       st.fact_set_id = net.fact_set_id
+    if net.structure_order is not None and st.order is None:
+      st.order = net.structure_order
     # A presentation network's role definition is the section's display name.
     if net.kind == "presentation":
       st.presentation.append(net)
@@ -497,6 +516,11 @@ def _plan_structures(model: XbrlModel) -> dict[str, _Structure]:
     else:
       st.definition.append(net)
 
+  # A producer that ordered its sections keeps its order, and only its order:
+  # a section it left unranked stays unranked, so the holon says what the
+  # producer said and a holon read back and written again is the same holon.
+  if any(st.order is not None for st in structs.values()):
+    return structs
   # Section order: rank structures by their role-definition number sorted as a
   # *string* (matching the SEC adapter's `ORDER BY number`), so 6-digit ecd
   # governance roles don't sort ahead of the 7-digit filer statements.
@@ -718,6 +742,19 @@ def _add_facts(
 
     g.add((uri, RS.internalId, Literal(fact.id)))
 
+    # Where the fact came from, in PROV-O where PROV-O has the word and in
+    # our vocabulary for the two things it does not name (kind and hash).
+    if fact.provenance is not None:
+      prov = fact.provenance
+      if prov.source:
+        g.add((uri, PROV.hadPrimarySource, _iri_or_literal(prov.source)))
+      if prov.attributed_to:
+        g.add((uri, PROV.wasAttributedTo, _iri_or_literal(prov.attributed_to)))
+      if prov.kind:
+        g.add((uri, RS.sourceKind, Literal(prov.kind)))
+      if prov.content_hash:
+        g.add((uri, RS.contentHash, Literal(prov.content_hash)))
+
     for dim in fact.dims:
       key = _dim_key(dim.axis_qname, dim.member_qname, dim.typed_value)
       d_uri = dim_uris.get(key)
@@ -751,6 +788,10 @@ def _add_information_blocks(
     # (structure), not a semantic type; the shared factSet groups the facts.
     g.add((ib_uri, RS.structure, _scoped(root, "structure", st.slug)))
     g.add((ib_uri, RS.factSet, _factset_uri_for(st)))
+    # The block's type, the same as its structure's, when a producer said it:
+    # a consumer that matches a block to its structure by type needs it here.
+    if st.block_type:
+      g.add((ib_uri, RS.blockType, Literal(st.block_type)))
 
 
 __all__ = ["build_holon_graph", "holon_root"]

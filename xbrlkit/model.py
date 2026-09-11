@@ -253,6 +253,32 @@ class DimQualifier(BaseModel):
   axis_type: AxisType | None = None
 
 
+class FactProvenance(BaseModel):
+  """Where a fact came from, as its producer states it.
+
+  A filing has none of this: its facts are read from the document, and where
+  in the document is a locator, not a derivation. A report produced from a
+  ledger knows which trial-balance line, journal entry, rule or agent asserted
+  each fact, and that is what this carries. The holon writes it as PROV-O
+  (``prov:hadPrimarySource`` / ``prov:wasAttributedTo``) and the TAVI
+  projection as fact properties under declared property types; both readers
+  restore it. The typed object exists so no producer has to mint a bare
+  ``source_ref`` string of its own.
+  """
+
+  # IRI of the evidence the fact was derived from — a ledger row, a
+  # trial-balance line, a document span, a prior fact.
+  source: str | None = None
+  # The producer's word for what the source is (``trial_balance_line``,
+  # ``journal_entry``, ``rule_output``, ``agent_assertion``); free text.
+  kind: str | None = None
+  # A content hash of the source, algorithm-prefixed (``sha256:<hex>``), so a
+  # reader can check the evidence has not moved under the fact.
+  content_hash: str | None = None
+  # IRI or name of the agent, rule or system that asserted the fact.
+  attributed_to: str | None = None
+
+
 class XbrlFact(BaseModel):
   """One reported fact. Numeric ⇔ the fact carries a unit (XBRL convention)."""
 
@@ -291,6 +317,9 @@ class XbrlFact(BaseModel):
   # so this stays ``None`` there; a multi-FactSet authored report needs the
   # pin. (serialization-waist phase 2)
   structure_id: str | None = None
+  # Where the fact came from, when the producer said. A filing leaves it
+  # ``None``; an authored report may carry it, and both projections keep it.
+  provenance: FactProvenance | None = None
 
 
 class Arc(BaseModel):
@@ -336,6 +365,11 @@ class Network(BaseModel):
   # column, so a producer may supply it and the writers pass it through.
   # (serialization-waist phase 2)
   block_type: str | None = None
+  # The producer's own place for the section in the report's sequence. A
+  # filing has none — the holon ranks its sections from the role definitions'
+  # leading numbers — but an authored report orders its sections itself, and a
+  # holon that carried an order must give the same order back.
+  structure_order: int | None = None
   # The producer's own id for the structure this network belongs to. A filing
   # has none — the role URI is the structure's identity and the holon slugs it
   # — but an authored report names its structures itself and its other
