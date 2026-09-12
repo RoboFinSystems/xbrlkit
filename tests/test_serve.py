@@ -966,6 +966,8 @@ async def test_server_lists_and_calls_tools(
       "fact_grid",
       "statement",
       "calculation",
+      "disclosures",
+      "information_block",
       "search_text",
       "read_text",
       "records",

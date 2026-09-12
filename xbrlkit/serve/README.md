@@ -45,6 +45,8 @@ The tools are the shapes a reader needs, not a query language.
 | `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
 | `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |
 | `calculation` | what sums to a total: the calculation children with weights, computed against reported, per period |
+| `disclosures` | the sections as families read from the filer's own role titles — a note with its policies, tables and details — as a list with counts, or one family's index by topic |
+| `information_block` | one section read whole: rows in filing order with consolidated values, the same rows by the section's own axes, its calculation arcs footed per period, and its text blocks with offsets — the heavy call after `disclosures` |
 | `documents`, `read_document` | what else was filed — exhibits, an 8-K's press release, a 13F's holdings table — each with its URL and whether it reads natively; and reading one |
 | `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
 | `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset |
