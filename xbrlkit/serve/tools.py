@@ -1238,7 +1238,7 @@ def calculation(
   return out
 
 
-# -- information blocks: the index and the full block --------------------------
+# -- disclosures and information blocks: the map and the block ------------------
 
 
 Blocks = tuple[list[InformationBlock], dict[str, list[XbrlFact]], list[Disclosure]]
@@ -1309,7 +1309,7 @@ def _block_summary(
   return row
 
 
-def information_block(
+def disclosures(
   lf: LoadedFiling, topic: str | None = None, *, pure: bool = False
 ) -> dict[str, Any]:
   """The filing's sections as families — a note with its policies, tables
@@ -1325,7 +1325,7 @@ def information_block(
     ]
     if not hits:
       raise ToolError(
-        f"No disclosure matches {topic!r}; call information_block with no topic to list them"
+        f"No disclosure matches {topic!r}; call disclosures with no topic to list them"
       )
     if len(hits) > 1:
       names = [f.name for f in hits[:12]]
@@ -1341,7 +1341,7 @@ def information_block(
       "block_count": len(fam.blocks),
       "note": (
         "one entry per role in this family, in filing order; `id` is what "
-        "information_block_full and statement take; `facts` counts numeric facts "
+        "information_block and statement take; `facts` counts numeric facts "
         "this section admits, `dimensional_facts` those broken out by its axes"
       ),
     }
@@ -1372,9 +1372,9 @@ def information_block(
     "count": len(rows),
     "note": (
       "families read from the filer's own role titles, in filing order — "
-      "statements, the cover page and the notes alike; call information_block "
-      "with a topic for one family's blocks, then information_block_full for "
-      "the one you need"
+      "statements, the cover page and the notes alike; call disclosures with a "
+      "topic for one family's blocks, then information_block for the one you "
+      "need"
     ),
   }
 
@@ -1404,7 +1404,7 @@ def _member_key(f: XbrlFact, axis_order: dict[str, int]) -> str:
   return " | ".join(keys)
 
 
-def information_block_full(
+def information_block(
   lf: LoadedFiling,
   block: str,
   periods: list[str] | None = None,
