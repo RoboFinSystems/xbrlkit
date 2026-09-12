@@ -1516,7 +1516,16 @@ def information_block(
       "concept": qname,
       "label": _label_for_role(concept, label_role),
     }
-    if concept is not None and concept.is_abstract:
+    # Headers, and the axes, domains and members a filer lists in the tree,
+    # carry no facts of their own; a filer's extension member is often not
+    # declared abstract, and would read as an empty data row without this.
+    structural = concept is not None and (
+      concept.is_abstract
+      or concept.is_dimension_item
+      or concept.is_domain_member
+      or concept.is_hypercube_item
+    )
+    if structural:
       row["abstract"] = True
     else:
       values: dict[str, Any] = {}
@@ -1789,7 +1798,8 @@ def information_block(
       "whose only facts fall outside them keeps its most recent one"
     )
   out["note"] = (
-    "rows follow the presentation tree; `values` are consolidated (no "
+    "rows follow the presentation tree, `abstract` marking headers, axes, "
+    "domains and members; `values` are consolidated (no "
     "dimensional qualifier), `members` the same row broken out by this "
     "section's own axes — a member key joins one member per axis; "
     "`members_omitted` and `periods_omitted` on a row count the breakdowns "
