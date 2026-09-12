@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pyarrow.parquet as pq
 import pytest
@@ -29,6 +29,7 @@ from xbrlkit.serialize.lpg import (
   PLATFORM_NAMESPACE,
   GraphTables,
   build_lbug,
+  copy_statement,
   graph_id,
   parse_structure_definition,
   to_graph_tables,
@@ -643,3 +644,16 @@ class TestParquetAndDatabase:
     finally:
       conn.close()
       db.close()
+
+  def test_copy_statement_takes_the_posix_path_on_windows(self):
+    """LadybugDB reads a string literal's backslashes as escapes, so a Windows
+    path handed to COPY verbatim is a parser error: ``\\n`` in ``\\nodes`` is
+    a newline. The statement carries the posix form on every platform."""
+    parquet = PureWindowsPath(
+      r"C:\Users\user\AppData\Local\Temp\xbrlkit-lpg-1\nodes\Fact.parquet"
+    )
+    statement = copy_statement("Fact", parquet)
+    assert statement == (
+      'COPY Fact FROM "C:/Users/user/AppData/Local/Temp/xbrlkit-lpg-1/nodes/Fact.parquet"'
+    )
+    assert "\\" not in statement

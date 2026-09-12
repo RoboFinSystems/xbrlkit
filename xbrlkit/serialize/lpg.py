@@ -29,7 +29,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from ..model import Concept, Network, Period, XbrlFact, XbrlModel
@@ -678,11 +678,20 @@ def build_lbug(tables: GraphTables, path: Path) -> Path:
         parquet = parquet_files.get(spec.name)
         if parquet is None:
           continue
-        conn.execute(f'COPY {spec.name} FROM "{parquet}"')
+        conn.execute(copy_statement(spec.name, parquet))
     finally:
       conn.close()
       db.close()
   return path
+
+
+def copy_statement(table: str, parquet: PurePath) -> str:
+  """The ``COPY FROM`` that loads one parquet file into ``table``.
+
+  The path goes in as posix: LadybugDB reads a string literal's backslashes as
+  escape sequences, so a Windows path passed verbatim is a parser error.
+  """
+  return f'COPY {table} FROM "{parquet.as_posix()}"'
 
 
 # ---- helpers ------------------------------------------------------------------
