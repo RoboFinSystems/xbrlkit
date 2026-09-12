@@ -59,6 +59,7 @@ MAX_BLOCK_ROWS = 400
 # cube is bounded, a small table is never cut. `max_members` is the caller's
 # explicit ceiling when given.
 BLOCK_MEMBER_CHARS = 16_000
+BLOCK_COLUMN_CHARS = 16_000
 MEMBER_CELL_CHARS = 36
 MAX_BLOCK_MEMBERS_CAP = 200
 AXIS_MEMBERS_LISTED = 64
@@ -1587,7 +1588,19 @@ def information_block(
 
   keys.sort(key=column_rank, reverse=True)
   if not wanted:
-    keys = keys[:MAX_STATEMENT_COLUMNS]
+    # Columns are kept in that order up to a cell budget, never fewer than
+    # the statement's eight: a sparse narrative table keeps its issuance
+    # dates, a wide statement stays bounded.
+    kept_keys: list[str] = []
+    cells = 0
+    for k in keys:
+      cost = used_periods[k] * MEMBER_CELL_CHARS
+      if len(kept_keys) >= MAX_STATEMENT_COLUMNS and cells + cost > BLOCK_COLUMN_CHARS:
+        break
+      kept_keys.append(k)
+      cells += cost
+    keys = kept_keys
+  columns_omitted = len(used_periods) - len(keys)
   keys.sort(
     key=lambda k: (
       _end_of(period_by_key.get(k)),
@@ -1597,19 +1610,38 @@ def information_block(
     reverse=True,
   )
   keep = set(keys)
+
+  def newest(period_keys: set[str]) -> str:
+    return max(
+      period_keys,
+      key=lambda k: (_end_of(period_by_key.get(k)), _span_days(period_by_key.get(k))),
+    )
+
   for row in rows:
+    row_periods: set[str] = set(row.get("values", {}))
+    for vals in row.get("members", {}).values():
+      row_periods |= set(vals)
+    if not row_periods:
+      continue
+    shown = row_periods & keep
+    if not shown and not wanted:
+      # The column cut never leaves a row blank: its most recent period
+      # stands in for it, outside the columns, and the count says the rest.
+      shown = {newest(row_periods)}
     if "values" in row:
-      row["values"] = {k: v for k, v in row["values"].items() if k in keep}
+      row["values"] = {k: v for k, v in row["values"].items() if k in shown}
       if not row["values"]:
         del row["values"]
     if "members" in row:
       trimmed = {
-        m: {k: v for k, v in vals.items() if k in keep}
+        m: {k: v for k, v in vals.items() if k in shown}
         for m, vals in row["members"].items()
       }
       row["members"] = {m: vals for m, vals in trimmed.items() if vals}
       if not row["members"]:
         del row["members"]
+    if len(row_periods) > len(shown):
+      row["periods_omitted"] = len(row_periods) - len(shown)
 
   # The section's axes, with the members that carry facts here.
   axes_out: list[dict[str, Any]] = []
@@ -1750,11 +1782,18 @@ def information_block(
   out["truncated"] = truncated
   if members_omitted:
     out["members_omitted"] = members_omitted
+  if columns_omitted:
+    out["periods_omitted"] = columns_omitted
+    out["periods_tip"] = (
+      "pass `periods` (keys, end dates or years) to choose the columns; a row "
+      "whose only facts fall outside them keeps its most recent one"
+    )
   out["note"] = (
     "rows follow the presentation tree; `values` are consolidated (no "
     "dimensional qualifier), `members` the same row broken out by this "
-    "section's own axes — a member key joins one member per axis, and "
-    "`members_omitted` on a row counts the breakdowns dropped from it; "
+    "section's own axes — a member key joins one member per axis; "
+    "`members_omitted` and `periods_omitted` on a row count the breakdowns "
+    "and columns dropped from it, and a row is never left blank by either cut; "
     "`calculation` lists each total's children with weights, how many of the "
     "shown periods foot on consolidated values, and any difference; `text` "
     "entries are tagged text blocks — read one with read_text from its offset"

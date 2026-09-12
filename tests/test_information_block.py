@@ -13,7 +13,7 @@ footing check, the text pointer — is checked without Arelle or the network.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -846,6 +846,77 @@ def test_member_budget_bounds_a_large_cube(model):
     r for r in capped["rows"] if r["concept"] == "us-gaap:OperatingLeaseCost"
   )
   assert len(operating["members"]) == 199  # 200 kept, one of them on another row
+
+
+def test_column_budget_marks_rows_and_never_blanks_one(model):
+  """A wide block keeps eight columns at least, then only what the budget
+  allows; a row says how many columns it lost, and a row whose facts all
+  fall outside the kept columns keeps its most recent one."""
+  wide = model.model_copy(deep=True)
+  wide.concepts["us-gaap:SubleaseIncome"] = Concept(
+    qname="us-gaap:SubleaseIncome", namespace=US_GAAP, name="SubleaseIncome"
+  )
+  pres = next(
+    n for n in wide.networks if n.kind == "presentation" and n.role_uri == COST_ROLE
+  )
+  pres.arcs.append(
+    Arc(
+      from_qname="us-gaap:LeasesLineItems", to_qname="us-gaap:SubleaseIncome", order=5
+    )
+  )
+
+  def fact(fid: str, concept: str, period: str, value: float) -> XbrlFact:
+    return XbrlFact(
+      id=fid,
+      concept_qname=concept,
+      period_id=period,
+      unit_id="usd",
+      entity_cik="0001234567",
+      value_str=str(value),
+      numeric_value=value,
+      value_kind="numeric",
+    )
+
+  # Two hundred dated periods with three facts each is more than the cell
+  # budget holds, so the newest fill the columns and the oldest are cut.
+  dated: list[str] = []
+  for i in range(200):
+    end = date(2024, 1, 1) + timedelta(days=i)
+    wide.periods.append(Period(id=f"I-x{i}", period_type="instant", end=end))
+    dated.append(end.isoformat())
+    for concept in (
+      "us-gaap:VariableLeaseCost",
+      "us-gaap:LeaseCost",
+      "us-gaap:ShortTermLeaseCost",
+    ):
+      wide.facts.append(fact(f"{concept}-{i}", concept, f"I-x{i}", 7.0))
+  # The oldest dated period only: cut from the columns.
+  wide.facts.append(fact("sub", "us-gaap:SubleaseIncome", "I-x0", 3.0))
+  text, sections = build_text(wide, html=None)
+  lf = LoadedFiling(
+    id="wide", source="memory", model=wide, text=text, sections=sections
+  )
+  out = tools.information_block(lf, "Lease Cost", whole=False)
+
+  columns = [c["key"] for c in out["columns"]]
+  used = 202  # the two years and the dated periods
+  assert 8 <= len(columns) < used and columns[0] == "2024-01-01..2024-12-31"
+  assert out["periods_omitted"] == used - len(columns)
+  assert "periods_tip" in out
+  rows = {r["concept"]: r for r in out["rows"]}
+  # Present in the year and every dated period; lost what the columns lost.
+  assert rows["us-gaap:VariableLeaseCost"]["periods_omitted"] == 201 - len(columns)
+  assert rows["us-gaap:OperatingLeaseCost"]["periods_omitted"] == 1  # 2023
+  sublease = rows["us-gaap:SubleaseIncome"]
+  assert sublease["values"] == {dated[0]: 3.0} and dated[0] not in columns
+  assert "periods_omitted" not in sublease
+
+  # Chosen columns are honoured exactly: no promotion, but the count stays.
+  chosen = tools.information_block(lf, "Lease Cost", periods=["2023"], whole=False)
+  rows = {r["concept"]: r for r in chosen["rows"]}
+  assert "values" not in rows["us-gaap:SubleaseIncome"]
+  assert rows["us-gaap:SubleaseIncome"]["periods_omitted"] == 1
+  assert chosen["periods_omitted"] == used - 1
 
 
 def test_information_block_without_a_cube_shows_consolidated_only(loaded):
