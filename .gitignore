@@ -142,3 +142,7 @@ CLAUDE.local.md
 
 .gemini/
 GEMINI.md
+
+# direnv
+.envrc
+.direnv/
