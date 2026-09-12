@@ -35,12 +35,12 @@ from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlMod
 from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
 from xbrlkit.edgar.items import describe_items, is_earnings_release, items_note
-from xbrlkit.structures import (
+from xbrlkit.information_block import (
   Disclosure,
-  Structure,
+  InformationBlock,
   fact_membership,
   group_disclosures,
-  plan_structures,
+  plan_blocks,
 )
 from xbrlkit.text.ixbrl import _strip_html
 from xbrlkit.view import ViewerHost
@@ -1238,23 +1238,23 @@ def calculation(
   return out
 
 
-# -- structures: disclosures and information blocks ---------------------------
+# -- information blocks: the index and the full block --------------------------
 
 
-Structures = tuple[list[Structure], dict[str, list[XbrlFact]], list[Disclosure]]
+Blocks = tuple[list[InformationBlock], dict[str, list[XbrlFact]], list[Disclosure]]
 
 
-def structures_for(lf: LoadedFiling) -> Structures:
+def blocks_for(lf: LoadedFiling) -> Blocks:
   """The filing's roles read whole, their facts, and the families they form —
   computed once per loaded filing."""
-  cached = getattr(lf, "_structures", None)
+  cached = getattr(lf, "_blocks", None)
   if cached is not None:
     return cached
-  structures = plan_structures(lf.model)
-  membership = fact_membership(lf.model, structures)
-  families = group_disclosures(structures)
-  out: Structures = (structures, membership, families)
-  lf._structures = out  # pyright: ignore[reportAttributeAccessIssue]
+  blocks = plan_blocks(lf.model)
+  membership = fact_membership(lf.model, blocks)
+  families = group_disclosures(blocks)
+  out: Blocks = (blocks, membership, families)
+  lf._blocks = out  # pyright: ignore[reportAttributeAccessIssue]
   return out
 
 
@@ -1272,21 +1272,24 @@ def _is_text_block(model: XbrlModel, f: XbrlFact) -> bool:
 
 
 def _block_summary(
-  st: Structure,
+  st: InformationBlock,
   facts: list[XbrlFact],
   idx: Index,
   model: XbrlModel,
   *,
   pure: bool,
 ) -> dict[str, Any]:
-  numeric = [f for f in _dedup(facts) if f.value_kind == "numeric"]
+  facts = _dedup(facts)
+  counted = [f for f in facts if not _is_text_block(model, f)]
   row: dict[str, Any] = {
     "id": st.id,
     "level": st.level,
     "name": st.subtitle or st.name,
-    "facts": len(numeric),
+    "facts": len(counted),
     "concepts": len(st.concepts),
   }
+  if st.block_type:
+    row["block_type"] = st.block_type
   if not pure:
     kind = idx.classification.get(st.role_uri)
     if kind:
@@ -1294,7 +1297,7 @@ def _block_summary(
   axes = [a.qname for a in st.axes]
   if axes:
     row["axes"] = axes
-    row["dimensional_facts"] = sum(1 for f in numeric if f.dims)
+    row["dimensional_facts"] = sum(1 for f in counted if f.dims)
   if st.has_calc:
     row["calc"] = True
   blocks: dict[str, int] = {}
@@ -1306,14 +1309,14 @@ def _block_summary(
   return row
 
 
-def disclosures(
+def information_block(
   lf: LoadedFiling, topic: str | None = None, *, pure: bool = False
 ) -> dict[str, Any]:
   """The filing's sections as families — a note with its policies, tables
   and details — or one family's index when ``topic`` names it."""
   _require_xbrl(lf, "presentation networks")
   model, idx = lf.model, index_for(lf)
-  _structures, membership, families = structures_for(lf)
+  _blocks, membership, families = blocks_for(lf)
 
   if topic and topic.strip():
     t = topic.strip().lower()
@@ -1322,7 +1325,7 @@ def disclosures(
     ]
     if not hits:
       raise ToolError(
-        f"No disclosure matches {topic!r}; call disclosures with no topic to list them"
+        f"No disclosure matches {topic!r}; call information_block with no topic to list them"
       )
     if len(hits) > 1:
       names = [f.name for f in hits[:12]]
@@ -1338,7 +1341,7 @@ def disclosures(
       "block_count": len(fam.blocks),
       "note": (
         "one entry per role in this family, in filing order; `id` is what "
-        "information_block and statement take; `facts` counts numeric facts "
+        "information_block_full and statement take; `facts` counts numeric facts "
         "this section admits, `dimensional_facts` those broken out by its axes"
       ),
     }
@@ -1349,10 +1352,10 @@ def disclosures(
     text_blocks: set[str] = set()
     for st in fam.blocks:
       for f in _dedup(membership.get(st.role_uri, [])):
-        if f.value_kind == "numeric":
-          fact_ids.add(f.id)
-        elif _is_text_block(model, f):
+        if _is_text_block(model, f):
           text_blocks.add(f.concept_qname)
+        else:
+          fact_ids.add(f.id)
     row: dict[str, Any] = {
       "disclosure": fam.name,
       "blocks": len(fam.blocks),
@@ -1368,21 +1371,22 @@ def disclosures(
     "disclosures": rows,
     "count": len(rows),
     "note": (
-      "families read from the filer's own role titles, in filing order; "
-      "call disclosures with a topic for one family's blocks, then "
-      "information_block for the one you need"
+      "families read from the filer's own role titles, in filing order — "
+      "statements, the cover page and the notes alike; call information_block "
+      "with a topic for one family's blocks, then information_block_full for "
+      "the one you need"
     ),
   }
 
 
-def _find_structure(
-  idx: Index, structures: list[Structure], block: str, *, pure: bool
-) -> Structure:
+def _find_block(
+  idx: Index, blocks: list[InformationBlock], block: str, *, pure: bool
+) -> InformationBlock:
   network = _find_network(idx, block, pure=pure)
-  for st in structures:
+  for st in blocks:
     if st.role_uri == network.role_uri:
       return st
-  raise ToolError(f"No structure for {block!r}")  # pragma: no cover
+  raise ToolError(f"No information block for {block!r}")  # pragma: no cover
 
 
 def _tolerance(decimals: str | None) -> float:
@@ -1400,7 +1404,7 @@ def _member_key(f: XbrlFact, axis_order: dict[str, int]) -> str:
   return " | ".join(keys)
 
 
-def information_block(
+def information_block_full(
   lf: LoadedFiling,
   block: str,
   periods: list[str] | None = None,
@@ -1416,8 +1420,8 @@ def information_block(
   with a footing check, and its text blocks with offsets."""
   _require_xbrl(lf, "presentation networks")
   model, idx = lf.model, index_for(lf)
-  structures, membership, families = structures_for(lf)
-  st = _find_structure(idx, structures, block, pure=pure)
+  blocks, membership, families = blocks_for(lf)
+  st = _find_block(idx, blocks, block, pure=pure)
   max_rows = max(1, min(int(max_rows or MAX_BLOCK_ROWS), MAX_BLOCK_ROWS))
   max_members = max(
     1, min(int(max_members or MAX_BLOCK_MEMBERS), MAX_BLOCK_MEMBERS_CAP)
@@ -1685,6 +1689,8 @@ def information_block(
     "disclosure": st.disclosure,
     "level": st.level,
   }
+  if st.block_type:
+    head["block_type"] = st.block_type
   if not pure:
     kind = idx.classification.get(st.role_uri)
     if kind:

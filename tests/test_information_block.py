@@ -1,4 +1,4 @@
-"""Tests for ``structures`` and the two section tools built on it.
+"""Tests for ``information_block`` and the two tools built on it.
 
 A hand-authored filing carries what the rules need: an income statement with
 a calculation network, a balance sheet with its parenthetical, and a leases
@@ -33,7 +33,7 @@ from xbrlkit.model import (
 )
 from xbrlkit.serve import FilingSession, LoadedFiling, build_text
 from xbrlkit.serve import tools
-from xbrlkit.structures import (
+from xbrlkit.information_block import (
   DIM_ALL,
   DIM_DIMENSION_DEFAULT,
   DIM_DIMENSION_DOMAIN,
@@ -43,7 +43,7 @@ from xbrlkit.structures import (
   group_disclosures,
   parse_definition,
   parse_level,
-  plan_structures,
+  plan_blocks,
 )
 
 US_GAAP = "http://fasb.org/us-gaap/2024-01-31"
@@ -258,6 +258,7 @@ def _model() -> XbrlModel:
         ),
       ],
       role_id="IncomeStatement",
+      block_type="income_statement",
     ),
     Network(
       role_uri=IS_ROLE,
@@ -489,14 +490,14 @@ def test_parse_level(category, name, expected):
   assert parse_level(category, name) == expected
 
 
-# -- structures and families -----------------------------------------------------
+# -- blocks and families -----------------------------------------------------------
 
 
-def test_plan_structures_groups_networks_by_role_in_edgar_order(model):
-  structures = plan_structures(model)
-  by_role = {s.role_uri: s for s in structures}
-  assert [s.number for s in structures][:3] == ["0000001", "0000002", "0000003"]
-  assert structures[-1].role_uri == IFRS_ROLE  # unnumbered sorts last
+def test_plan_blocks_groups_networks_by_role_in_edgar_order(model):
+  blocks = plan_blocks(model)
+  by_role = {s.role_uri: s for s in blocks}
+  assert [s.number for s in blocks][:3] == ["0000001", "0000002", "0000003"]
+  assert blocks[-1].role_uri == IFRS_ROLE  # unnumbered sorts last
   cost = by_role[COST_ROLE]
   assert len(cost.presentation) == 1 and cost.has_calc and len(cost.hypercubes) == 1
   assert cost.level == "details" and cost.disclosure == "Leases"
@@ -507,7 +508,7 @@ def test_plan_structures_groups_networks_by_role_in_edgar_order(model):
 
 
 def test_hypercube_is_walked_from_the_roles_definition_arcs(model):
-  cost = next(s for s in plan_structures(model) if s.role_uri == COST_ROLE)
+  cost = next(s for s in plan_blocks(model) if s.role_uri == COST_ROLE)
   (cube,) = cost.hypercubes
   assert cube.qname == "us-gaap:LeaseCostTable"
   assert cube.primary_items == ["us-gaap:LeasesLineItems"]
@@ -520,7 +521,7 @@ def test_hypercube_is_walked_from_the_roles_definition_arcs(model):
 
 
 def test_group_disclosures_reads_families_off_the_titles(model):
-  families = group_disclosures(plan_structures(model))
+  families = group_disclosures(plan_blocks(model))
   by_name = {f.name: f for f in families}
   assert by_name["Leases"].levels == {"note": 1, "tables": 1, "details": 2}
   assert by_name["Consolidated Balance Sheets"].levels == {
@@ -531,9 +532,9 @@ def test_group_disclosures_reads_families_off_the_titles(model):
   assert by_name["[310000] Statement of comprehensive income"].levels == {"other": 1}
 
 
-def test_fact_membership_admits_by_the_sections_own_cube(model):
-  structures = plan_structures(model)
-  membership = fact_membership(model, structures)
+def test_fact_membership_admits_by_the_blocks_own_cube(model):
+  blocks = plan_blocks(model)
+  membership = fact_membership(model, blocks)
   cost_ids = {f.id for f in membership[COST_ROLE]}
   assert {"oc24", "vc24", "lc24", "ocw", "ocg", "lcw"} <= cost_ids
   assert "ocus" not in cost_ids  # geography is not an axis of this cube
@@ -545,8 +546,8 @@ def test_fact_membership_admits_by_the_sections_own_cube(model):
 # -- the two tools ------------------------------------------------------------------
 
 
-def test_disclosures_lists_families_with_counts(loaded):
-  out = tools.disclosures(loaded)
+def test_information_block_lists_families_with_counts(loaded):
+  out = tools.information_block(loaded)
   rows = {r["disclosure"]: r for r in out["disclosures"]}
   leases = rows["Leases"]
   assert leases["blocks"] == 4
@@ -558,8 +559,8 @@ def test_disclosures_lists_families_with_counts(loaded):
   assert out["count"] == len(rows)
 
 
-def test_disclosures_topic_indexes_one_family(loaded):
-  fam = tools.disclosures(loaded, "leases")
+def test_information_block_topic_indexes_one_family(loaded):
+  fam = tools.information_block(loaded, "leases")
   assert fam["disclosure"] == "Leases" and fam["block_count"] == 4
   levels = [b["level"] for b in fam["blocks"]]
   assert levels == ["note", "tables", "details", "details"]
@@ -573,17 +574,18 @@ def test_disclosures_topic_indexes_one_family(loaded):
   assert "axes" not in maturity and maturity["facts"] == 2
 
 
-def test_disclosures_topic_errors_are_correctable(loaded):
+def test_information_block_topic_errors_are_correctable(loaded):
   with pytest.raises(tools.ToolError, match="No disclosure matches"):
-    tools.disclosures(loaded, "goodwill")
+    tools.information_block(loaded, "goodwill")
   with pytest.raises(tools.ToolError, match="2 disclosures match"):
-    tools.disclosures(loaded, "consolidated")
+    tools.information_block(loaded, "consolidated")
 
 
-def test_information_block_pivots_a_details_table_by_its_own_axis(loaded):
-  out = tools.information_block(loaded, "Lease Cost", whole=False)
+def test_information_block_full_pivots_a_details_table_by_its_own_axis(loaded):
+  out = tools.information_block_full(loaded, "Lease Cost", whole=False)
   head = out["block"]
   assert head["disclosure"] == "Leases" and head["level"] == "details"
+  assert "block_type" not in head  # a filing never classifies its own roles
   assert head["id"] == "LeasesLeaseCostDetails"
   assert [s["level"] for s in head["siblings"]] == ["note", "tables", "details"]
   assert [c["key"] for c in out["columns"]] == [
@@ -623,9 +625,10 @@ def test_information_block_pivots_a_details_table_by_its_own_axis(loaded):
   assert "text" not in out and out["truncated"] is False
 
 
-def test_information_block_reports_a_total_that_does_not_foot(loaded):
-  out = tools.information_block(loaded, "income statement", whole=False)
+def test_information_block_full_reports_a_total_that_does_not_foot(loaded):
+  out = tools.information_block_full(loaded, "income statement", whole=False)
   assert out["block"]["kind"] == "income_statement"
+  assert out["block"]["block_type"] == "income_statement"  # the producer's word
   assert out["block"]["level"] == "statement"
   assert "siblings" not in out["block"]
   (calc,) = out["calculation"]
@@ -637,8 +640,8 @@ def test_information_block_reports_a_total_that_does_not_foot(loaded):
   assert revenue["label"] == "Total revenues"
 
 
-def test_information_block_points_at_the_text_blocks(loaded):
-  out = tools.information_block(loaded, "Leases (Tables)", whole=False)
+def test_information_block_full_points_at_the_text_blocks(loaded):
+  out = tools.information_block_full(loaded, "Leases (Tables)", whole=False)
   assert out["block"]["level"] == "tables"
   (entry,) = out["text"]
   assert entry["concept"] == "us-gaap:LeaseCostTableTextBlock"
@@ -653,20 +656,24 @@ def test_information_block_points_at_the_text_blocks(loaded):
     .lstrip()
     .startswith(entry["preview"][:20].split("\n")[0].strip()[:10])
   )
-  note = tools.information_block(loaded, "0000010 - Disclosure - Leases", whole=False)
+  note = tools.information_block_full(
+    loaded, "0000010 - Disclosure - Leases", whole=False
+  )
   assert note["block"]["level"] == "note"
   assert note["text"][0]["concept"] == "us-gaap:LesseeOperatingLeasesTextBlock"
 
 
-def test_information_block_member_and_period_filters(loaded):
-  widgets = tools.information_block(loaded, "Lease Cost", member="widgets", whole=False)
+def test_information_block_full_member_and_period_filters(loaded):
+  widgets = tools.information_block_full(
+    loaded, "Lease Cost", member="widgets", whole=False
+  )
   operating = next(
     r for r in widgets["rows"] if r["concept"] == "us-gaap:OperatingLeaseCost"
   )
   assert list(operating["members"]) == ["acme:WidgetsMember"]
   assert [m["member"] for m in widgets["axes"][0]["members"]] == ["acme:WidgetsMember"]
 
-  one_year = tools.information_block(
+  one_year = tools.information_block_full(
     loaded, "Lease Cost", periods=["2024"], whole=False
   )
   assert [c["key"] for c in one_year["columns"]] == ["2024-01-01..2024-12-31"]
@@ -675,7 +682,9 @@ def test_information_block_member_and_period_filters(loaded):
   )
   assert operating["values"] == {"2024-01-01..2024-12-31": 100.0}
 
-  capped = tools.information_block(loaded, "Lease Cost", max_members=1, whole=False)
+  capped = tools.information_block_full(
+    loaded, "Lease Cost", max_members=1, whole=False
+  )
   assert capped["members_omitted"] == 1
   operating = next(
     r for r in capped["rows"] if r["concept"] == "us-gaap:OperatingLeaseCost"
@@ -683,8 +692,8 @@ def test_information_block_member_and_period_filters(loaded):
   assert list(operating["members"]) == ["acme:WidgetsMember"]
 
 
-def test_information_block_without_a_cube_shows_consolidated_only(loaded):
-  out = tools.information_block(loaded, "Maturities", whole=False)
+def test_information_block_full_without_a_cube_shows_consolidated_only(loaded):
+  out = tools.information_block_full(loaded, "Maturities", whole=False)
   assert "axes" not in out
   total = next(
     r
@@ -696,13 +705,13 @@ def test_information_block_without_a_cube_shows_consolidated_only(loaded):
 
 
 def test_pure_profile_reads_the_filers_words_only(loaded):
-  out = tools.information_block(
+  out = tools.information_block_full(
     loaded, "Consolidated Statements of Income", pure=True, whole=False
   )
   assert "kind" not in out["block"]
   assert out["block"]["level"] == "statement"  # the filer's own category
   assert "duration" not in out["columns"][0]
-  fam = tools.disclosures(loaded, "leases", pure=True)
+  fam = tools.information_block(loaded, "leases", pure=True)
   assert all("kind" not in b for b in fam["blocks"])
 
 
@@ -718,13 +727,15 @@ async def test_server_registers_the_section_tools(loaded: LoadedFiling, tmp_path
   try:
     async with Client(server) as client:
       names = {t.name for t in (await client.list_tools()).tools}
-      assert {"disclosures", "information_block"} <= names
-      listed = json.loads((await client.call_tool("disclosures", {})).content[0].text)
+      assert {"information_block", "information_block_full"} <= names
+      listed = json.loads(
+        (await client.call_tool("information_block", {})).content[0].text
+      )
       assert listed["count"] >= 4
       block = json.loads(
         (
           await client.call_tool(
-            "information_block", {"block": "Lease Cost", "member": "gadgets"}
+            "information_block_full", {"block": "Lease Cost", "member": "gadgets"}
           )
         )
         .content[0]
@@ -735,7 +746,7 @@ async def test_server_registers_the_section_tools(loaded: LoadedFiling, tmp_path
         "acme:GadgetsMember"
       ]
       missing = json.loads(
-        (await client.call_tool("information_block", {"block": "goodwill"}))
+        (await client.call_tool("information_block_full", {"block": "goodwill"}))
         .content[0]
         .text
       )

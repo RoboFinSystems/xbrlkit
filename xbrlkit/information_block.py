@@ -1,12 +1,13 @@
-"""Structures — a filing's networks grouped by extended-link role, and the
-disclosures those roles form.
+"""Information blocks — a filing's networks grouped by extended-link role, and
+the disclosures those roles form.
 
 XBRL scatters one section of a report across up to three linkbases that
 share nothing but a role URI: the presentation tree that orders it, the
 calculation arcs that foot it, and the definition arcs that declare its
-hypercube. A :class:`Structure` is the role read whole — Charlie Hoffman's
-*Block*, the platform's Information Block — and it is the unit a reader
-asks for: "the maturities table of the leases note", not "the presentation
+hypercube. An :class:`InformationBlock` is the role read whole — Charlie
+Hoffman's *Block*, the RoboSystems platform's primary construct, where a
+``structures`` row and a Block run 1:1 — and it is the unit a reader asks
+for: "the maturities table of the leases note", not "the presentation
 network whose role ends in ``LeasesMaturitiesDetails``".
 
 A :class:`Disclosure` is the family a filer's role definitions spell out.
@@ -150,8 +151,14 @@ class Hypercube:
 
 
 @dataclass
-class Structure:
-  """One extended-link role read whole: its networks, its concepts, its cube."""
+class InformationBlock:
+  """One extended-link role read whole: its networks, its concepts, its cube.
+
+  The same object the platform's ``InformationBlockEnvelope`` describes,
+  read from a filing: what a filing cannot know — the concept-arrangement
+  pattern, rules, verification, provenance — stays with the producer, and
+  ``block_type`` is carried through only when a producer supplied it.
+  """
 
   role_uri: str
   role_id: str | None
@@ -167,6 +174,10 @@ class Structure:
   # A producer's own id for the structure, when its networks carried one
   # (serialization-waist phase 3); a filing leaves it None.
   structure_id: str | None = None
+  # The producer's block type (``balance_sheet``, ``rollforward`` …), when
+  # its networks carried one. A filing never sets it: classifying a role is
+  # enrichment, and xbrlkit does not guess.
+  block_type: str | None = None
   presentation: list[Network] = field(default_factory=list)
   calculation: list[Network] = field(default_factory=list)
   definition_networks: list[Network] = field(default_factory=list)
@@ -214,12 +225,12 @@ class Structure:
 
 @dataclass
 class Disclosure:
-  """A family of structures under one title: the note and its tables."""
+  """A family of blocks under one title: the note and its tables."""
 
   name: str
   category: str | None
   number: str | None
-  blocks: list[Structure] = field(default_factory=list)
+  blocks: list[InformationBlock] = field(default_factory=list)
 
   @property
   def levels(self) -> dict[str, int]:
@@ -232,11 +243,11 @@ class Disclosure:
 _ORDER_PREFIX = re.compile(r"^\s*(\d+)")
 
 
-def order_key(structure: Structure) -> tuple[str, str]:
+def order_key(block: InformationBlock) -> tuple[str, str]:
   """EDGAR's own order: the definition number sorted as a *string* (so the
   six-digit governance roles do not overtake the seven-digit filer ones),
   unnumbered roles last."""
-  return (structure.number or "~", structure.role_uri)
+  return (block.number or "~", block.role_uri)
 
 
 ArcsFrom = Callable[[str, str, str], list[Arc]]
@@ -325,15 +336,15 @@ def build_hypercubes(
   return list(cubes.values())
 
 
-def plan_structures(model: XbrlModel) -> list[Structure]:
-  """Every role in the filing as one :class:`Structure`, in EDGAR order."""
-  by_role: dict[str, Structure] = {}
+def plan_blocks(model: XbrlModel) -> list[InformationBlock]:
+  """Every role in the filing as one :class:`InformationBlock`, in EDGAR order."""
+  by_role: dict[str, InformationBlock] = {}
   for network in model.networks:
     st = by_role.get(network.role_uri)
     if st is None:
       number, category, name = parse_definition(network.definition)
       level, title, subtitle = parse_level(category, name or network.role_uri)
-      st = Structure(
+      st = InformationBlock(
         role_uri=network.role_uri,
         role_id=network.role_id,
         definition=network.definition,
@@ -362,6 +373,8 @@ def plan_structures(model: XbrlModel) -> list[Structure]:
       st.structure_id = network.structure_id
     if network.kind == "presentation":
       st.presentation.append(network)
+      if st.block_type is None and network.block_type:
+        st.block_type = network.block_type
       for arc in network.arcs:
         st.concepts.add(arc.from_qname)
         st.concepts.add(arc.to_qname)
@@ -377,15 +390,15 @@ def plan_structures(model: XbrlModel) -> list[Structure]:
   return sorted(by_role.values(), key=order_key)
 
 
-def group_disclosures(structures: list[Structure]) -> list[Disclosure]:
-  """Structures under one title, in the order the first of each appears.
+def group_disclosures(blocks: list[InformationBlock]) -> list[Disclosure]:
+  """Blocks under one title, in the order the first of each appears.
 
-  Only structures with a presentation tree join a family — a role that
+  Only blocks with a presentation tree join a family — a role that
   carries calculation or definition arcs alone is scaffolding for a
   section named elsewhere, not a section of its own.
   """
   families: dict[tuple[str, str], Disclosure] = {}
-  for st in structures:
+  for st in blocks:
     if not st.renderable:
       continue
     key = (st.disclosure.lower(), (st.category or "").lower())
@@ -398,22 +411,22 @@ def group_disclosures(structures: list[Structure]) -> list[Disclosure]:
 
 
 def fact_membership(
-  model: XbrlModel, structures: list[Structure]
+  model: XbrlModel, blocks: list[InformationBlock]
 ) -> dict[str, list[XbrlFact]]:
-  """Role URI → the facts that belong to that structure.
+  """Role URI → the facts that belong to that block.
 
   A fact belongs to every section whose presentation cites its concept and
-  whose cube admits its dimensions (:meth:`Structure.admits`). An authored
+  whose cube admits its dimensions (:meth:`InformationBlock.admits`). An authored
   report that pinned a fact to one structure (``XbrlFact.structure_id``)
   keeps the pin.
   """
-  by_concept: dict[str, list[Structure]] = defaultdict(list)
-  for st in structures:
+  by_concept: dict[str, list[InformationBlock]] = defaultdict(list)
+  for st in blocks:
     if not st.renderable:
       continue
     for concept in st.concepts:
       by_concept[concept].append(st)
-  by_structure_id = {st.structure_id: st for st in structures if st.structure_id}
+  by_structure_id = {st.structure_id: st for st in blocks if st.structure_id}
   out: dict[str, list[XbrlFact]] = defaultdict(list)
   for fact in model.facts:
     pinned = by_structure_id.get(fact.structure_id or "")
