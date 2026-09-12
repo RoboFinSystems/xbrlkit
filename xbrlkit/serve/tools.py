@@ -35,6 +35,13 @@ from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlMod
 from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
 from xbrlkit.edgar.items import describe_items, is_earnings_release, items_note
+from xbrlkit.information_block import (
+  Disclosure,
+  InformationBlock,
+  fact_membership,
+  group_disclosures,
+  plan_blocks,
+)
 from xbrlkit.text.ixbrl import _strip_html
 from xbrlkit.view import ViewerHost
 
@@ -47,6 +54,16 @@ MAX_READ = 8000
 MAX_GRID_ROWS = 500
 MAX_STATEMENT_ROWS = 400
 MAX_STATEMENT_COLUMNS = 8
+MAX_BLOCK_ROWS = 400
+# Member breakdowns are kept up to a response budget, not a count: a large
+# cube is bounded, a small table is never cut. `max_members` is the caller's
+# explicit ceiling when given.
+BLOCK_MEMBER_CHARS = 16_000
+BLOCK_COLUMN_CHARS = 16_000
+MEMBER_CELL_CHARS = 36
+MAX_BLOCK_MEMBERS_CAP = 200
+AXIS_MEMBERS_LISTED = 64
+BLOCK_TEXT_PREVIEW = 240
 TEXT_PREVIEW = 160
 DESCRIBE_PERIODS = 30
 DESCRIBE_AXES = 30
@@ -1223,6 +1240,585 @@ def calculation(
   out["note"] = (
     "computed = sum(weight × child) over the children with a consolidated fact "
     "in that period and unit; missing lists children without one"
+  )
+  return out
+
+
+# -- disclosures and information blocks: the map and the block ------------------
+
+
+Blocks = tuple[list[InformationBlock], dict[str, list[XbrlFact]], list[Disclosure]]
+
+
+def blocks_for(lf: LoadedFiling) -> Blocks:
+  """The filing's roles read whole, their facts, and the families they form —
+  computed once per loaded filing."""
+  cached = getattr(lf, "_blocks", None)
+  if cached is not None:
+    return cached
+  blocks = plan_blocks(lf.model)
+  membership = fact_membership(lf.model, blocks)
+  families = group_disclosures(blocks)
+  out: Blocks = (blocks, membership, families)
+  lf._blocks = out  # pyright: ignore[reportAttributeAccessIssue]
+  return out
+
+
+def _text_block_sections(lf: LoadedFiling, whole: bool) -> dict[str, TextSection]:
+  """Text-block sections by id — the block's concept qname, on every path."""
+  _text, sections = lf.readable(whole)
+  return {s.id: s for s in sections if s.kind == "text_block"}
+
+
+def _is_text_block(model: XbrlModel, f: XbrlFact) -> bool:
+  if f.value_kind != "text":
+    return False
+  concept = model.concepts.get(f.concept_qname)
+  return concept is not None and concept.is_textblock
+
+
+def _block_summary(
+  st: InformationBlock,
+  facts: list[XbrlFact],
+  idx: Index,
+  model: XbrlModel,
+  *,
+  pure: bool,
+) -> dict[str, Any]:
+  facts = _dedup(facts)
+  counted = [f for f in facts if not _is_text_block(model, f)]
+  row: dict[str, Any] = {
+    "id": st.id,
+    "level": st.level,
+    "name": st.subtitle or st.name,
+    "facts": len(counted),
+    "concepts": len(st.concepts),
+  }
+  if st.block_type:
+    row["block_type"] = st.block_type
+  if not pure:
+    kind = idx.classification.get(st.role_uri)
+    if kind:
+      row["kind"] = kind
+  axes = [a.qname for a in st.axes]
+  if axes:
+    row["axes"] = axes
+    row["dimensional_facts"] = sum(1 for f in counted if f.dims)
+  if st.has_calc:
+    row["calc"] = True
+  blocks: dict[str, int] = {}
+  for f in facts:
+    if _is_text_block(model, f) and f.concept_qname not in blocks:
+      blocks[f.concept_qname] = len(_strip_html(f.value_str or ""))
+  if blocks:
+    row["text_blocks"] = [{"concept": q, "chars": n} for q, n in blocks.items()]
+  return row
+
+
+def disclosures(
+  lf: LoadedFiling, topic: str | None = None, *, pure: bool = False
+) -> dict[str, Any]:
+  """The filing's sections as families — a note with its policies, tables
+  and details — or one family's index when ``topic`` names it."""
+  _require_xbrl(lf, "presentation networks")
+  model, idx = lf.model, index_for(lf)
+  _blocks, membership, families = blocks_for(lf)
+
+  if topic and topic.strip():
+    t = topic.strip().lower()
+    hits = [f for f in families if f.name.lower() == t] or [
+      f for f in families if t in f.name.lower()
+    ]
+    if not hits:
+      raise ToolError(
+        f"No disclosure matches {topic!r}; call disclosures with no topic to list them"
+      )
+    if len(hits) > 1:
+      names = [f.name for f in hits[:12]]
+      raise ToolError(f"{len(hits)} disclosures match {topic!r}; choose one: {names}")
+    fam = hits[0]
+    return {
+      "disclosure": fam.name,
+      "category": fam.category,
+      "blocks": [
+        _block_summary(st, membership.get(st.role_uri, []), idx, model, pure=pure)
+        for st in fam.blocks
+      ],
+      "block_count": len(fam.blocks),
+      "note": (
+        "one entry per role in this family, in filing order; `id` is what "
+        "information_block and statement take; `facts` counts numeric facts "
+        "this section admits, `dimensional_facts` those broken out by its axes"
+      ),
+    }
+
+  rows: list[dict[str, Any]] = []
+  for fam in families:
+    fact_ids: set[str] = set()
+    text_blocks: set[str] = set()
+    for st in fam.blocks:
+      for f in _dedup(membership.get(st.role_uri, [])):
+        if _is_text_block(model, f):
+          text_blocks.add(f.concept_qname)
+        else:
+          fact_ids.add(f.id)
+    row: dict[str, Any] = {
+      "disclosure": fam.name,
+      "blocks": len(fam.blocks),
+      "levels": fam.levels,
+      "facts": len(fact_ids),
+    }
+    if fam.category and fam.category != "Disclosure":
+      row["category"] = fam.category
+    if text_blocks:
+      row["text_blocks"] = len(text_blocks)
+    rows.append(row)
+  return {
+    "disclosures": rows,
+    "count": len(rows),
+    "note": (
+      "families read from the filer's own role titles, in filing order — "
+      "statements, the cover page and the notes alike; call disclosures with a "
+      "topic for one family's blocks, then information_block for the one you "
+      "need"
+    ),
+  }
+
+
+def _find_block(
+  idx: Index, blocks: list[InformationBlock], block: str, *, pure: bool
+) -> InformationBlock:
+  network = _find_network(idx, block, pure=pure)
+  for st in blocks:
+    if st.role_uri == network.role_uri:
+      return st
+  raise ToolError(f"No information block for {block!r}")  # pragma: no cover
+
+
+def _tolerance(decimals: str | None) -> float:
+  """Half a unit at the fact's stated precision — a total reported to the
+  million foots when it is within half a million of its children."""
+  precision = _precision(decimals)
+  if math.isinf(precision):
+    return 0.5 if precision < 0 else 0.0
+  return 0.5 * 10 ** (-precision)
+
+
+def _member_key(f: XbrlFact, axis_order: dict[str, int]) -> str:
+  parts = sorted(f.dims, key=lambda d: axis_order.get(d.axis_qname, len(axis_order)))
+  keys = [d.member_qname or f"{d.axis_qname}={d.typed_value}" for d in parts]
+  return " | ".join(keys)
+
+
+def information_block(
+  lf: LoadedFiling,
+  block: str,
+  periods: list[str] | None = None,
+  member: str | None = None,
+  max_rows: int = MAX_BLOCK_ROWS,
+  max_members: int | None = None,
+  *,
+  pure: bool = False,
+  whole: bool = True,
+) -> dict[str, Any]:
+  """One section read whole: rows in presentation order with consolidated
+  values, the same rows by the section's own axes, its calculation arcs
+  with a footing check, and its text blocks with offsets.
+
+  Member breakdowns are kept most-reported first, up to the response budget
+  (or ``max_members`` when the caller sets one); a row is never left blank
+  by that cut, and every row says how many breakdowns it lost."""
+  _require_xbrl(lf, "presentation networks")
+  model, idx = lf.model, index_for(lf)
+  blocks, membership, families = blocks_for(lf)
+  st = _find_block(idx, blocks, block, pure=pure)
+  max_rows = max(1, min(int(max_rows or MAX_BLOCK_ROWS), MAX_BLOCK_ROWS))
+  member_limit = (
+    max(1, min(int(max_members), MAX_BLOCK_MEMBERS_CAP))
+    if max_members is not None
+    else None
+  )
+  member_l = (member or "").strip().lower()
+  axis_order = {a.qname: i for i, a in enumerate(st.axes)}
+
+  consolidated: dict[str, list[XbrlFact]] = defaultdict(list)
+  dimensional: dict[str, list[tuple[str, XbrlFact]]] = defaultdict(list)
+  text_facts: dict[str, XbrlFact] = {}
+  member_counts: dict[str, int] = defaultdict(int)
+  axis_member_counts: dict[tuple[str, str], int] = defaultdict(int)
+  for f in _dedup(membership.get(st.role_uri, [])):
+    if _is_text_block(model, f):
+      text_facts.setdefault(f.concept_qname, f)
+      continue
+    if not f.dims:
+      consolidated[f.concept_qname].append(f)
+      continue
+    key = _member_key(f, axis_order)
+    if member_l and member_l not in key.lower():
+      continue
+    dimensional[f.concept_qname].append((key, f))
+    member_counts[key] += 1
+    for d in f.dims:
+      axis_member_counts[(d.axis_qname, d.member_qname or d.typed_value or "")] += 1
+  ranked = sorted(member_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+  kept_members: list[str] = []
+  if member_limit is not None:
+    kept_members = [k for k, _ in ranked[:member_limit]]
+  else:
+    spent = 0
+    for key, n in ranked:
+      cost = len(key) + MEMBER_CELL_CHARS * n
+      if kept_members and (
+        spent + cost > BLOCK_MEMBER_CHARS or len(kept_members) >= MAX_BLOCK_MEMBERS_CAP
+      ):
+        break
+      kept_members.append(key)
+      spent += cost
+  keep_members = set(kept_members)
+  members_omitted = len(member_counts) - len(kept_members)
+
+  # The axes, domains and members of this block's own cube: a filer lists
+  # them in the presentation tree, often without declaring the extension
+  # members abstract, and none of them carries facts of its own.
+  structural_names: set[str] = set()
+  for cube in st.hypercubes:
+    structural_names.add(cube.qname)
+    for axis in cube.axes:
+      structural_names.add(axis.qname)
+      if axis.domain:
+        structural_names.add(axis.domain)
+      structural_names.update(axis.members)
+
+  # The presentation walk, as `statement` makes it.
+  network = st.presentation[0]
+  children: dict[str, list[Arc]] = defaultdict(list)
+  parents: set[str] = set()
+  for n in st.presentation:
+    for arc in n.arcs:
+      children[arc.from_qname].append(arc)
+      parents.add(arc.to_qname)
+  for arcs in children.values():
+    arcs.sort(key=lambda a: a.order if a.order is not None else 0.0)
+  roots = [q for q in children if q not in parents]
+  if not roots and network.arcs:
+    roots = [network.arcs[0].from_qname]
+
+  rows: list[dict[str, Any]] = []
+  used_periods: dict[str, int] = defaultdict(int)
+  truncated = False
+
+  def cell(f: XbrlFact) -> Any:
+    if f.is_nil:
+      return None
+    if f.value_kind == "numeric":
+      return f.numeric_value
+    text = _strip_html(f.value_str or "")
+    return text if len(text) <= TEXT_PREVIEW else f"[text {len(text)} chars]"
+
+  def visit(
+    qname: str, depth: int, label_role: str | None, trail: tuple[str, ...]
+  ) -> None:
+    nonlocal truncated
+    if len(rows) >= max_rows:
+      truncated = True
+      return
+    concept = model.concepts.get(qname)
+    row: dict[str, Any] = {
+      "depth": depth,
+      "concept": qname,
+      "label": _label_for_role(concept, label_role),
+    }
+    # Headers, axes, hypercubes and the cube's members carry no facts of
+    # their own. (``is_domain_member`` is not the test: in XDT every primary
+    # item is a domain member, so that flag is true of a line item too.)
+    structural = qname in structural_names or (
+      concept is not None
+      and (
+        concept.is_abstract or concept.is_dimension_item or concept.is_hypercube_item
+      )
+    )
+    if structural:
+      row["abstract"] = True
+    else:
+      values: dict[str, Any] = {}
+      for f in consolidated.get(qname, []):
+        key = _period_key(idx.periods.get(f.period_id))
+        if key is None:
+          continue
+        values[key] = cell(f)
+        used_periods[key] += 1
+      by_member: dict[str, dict[str, Any]] = {}
+      breakdowns = dimensional.get(qname, [])
+      if breakdowns:
+        keys_here = {mkey for mkey, _ in breakdowns}
+        shown = keys_here & keep_members
+        if not values and not shown:
+          # The cap never leaves a row blank: its most-reported breakdown
+          # stands in for it, and the count below says what it lost.
+          shown = {min(keys_here, key=lambda k: (-member_counts[k], k))}
+        for mkey, f in breakdowns:
+          if mkey not in shown:
+            continue
+          key = _period_key(idx.periods.get(f.period_id))
+          if key is None:
+            continue
+          by_member.setdefault(mkey, {})[key] = cell(f)
+          used_periods[key] += 1
+        if len(keys_here) > len(shown):
+          row["members_omitted"] = len(keys_here) - len(shown)
+      if values:
+        row["values"] = values
+      if by_member:
+        row["members"] = by_member
+    rows.append(row)
+    if qname in trail or depth > 14:
+      return
+    for arc in children.get(qname, []):
+      visit(arc.to_qname, depth + 1, arc.preferred_label, trail + (qname,))
+
+  for root in roots:
+    visit(root, 0, None, ())
+
+  period_by_key = {_period_key(p): p for p in model.periods}
+  wanted = {w.strip() for w in periods if w and w.strip()} if periods else None
+  keys = list(used_periods)
+  if wanted:
+    keys = [k for k in keys if _period_wanted(period_by_key.get(k), k, wanted)]
+  # An annual report's details tables carry the quarterly note figures too;
+  # left to recency alone they take five of the eight columns and push the
+  # third fiscal year out. Under the product profile the form's own span —
+  # a year, and balances — comes first; the pure profile keeps recency.
+  annual_form = not pure and (model.filing.form or "").upper() in (
+    "10-K",
+    "10-K/A",
+    "20-F",
+    "40-F",
+  )
+
+  def column_rank(k: str) -> tuple[Any, ...]:
+    p = period_by_key.get(k)
+    own_span = p is not None and (
+      p.period_type == "instant" or p.duration_type == "annual"
+    )
+    return (
+      own_span if annual_form else True,
+      _end_of(p),
+      _span_days(p),
+      used_periods[k],
+    )
+
+  keys.sort(key=column_rank, reverse=True)
+  if not wanted:
+    # Columns are kept in that order up to a cell budget, never fewer than
+    # the statement's eight: a sparse narrative table keeps its issuance
+    # dates, a wide statement stays bounded.
+    kept_keys: list[str] = []
+    cells = 0
+    for k in keys:
+      cost = used_periods[k] * MEMBER_CELL_CHARS
+      if len(kept_keys) >= MAX_STATEMENT_COLUMNS and cells + cost > BLOCK_COLUMN_CHARS:
+        break
+      kept_keys.append(k)
+      cells += cost
+    keys = kept_keys
+  columns_omitted = len(used_periods) - len(keys)
+  keys.sort(
+    key=lambda k: (
+      _end_of(period_by_key.get(k)),
+      _span_days(period_by_key.get(k)),
+      used_periods[k],
+    ),
+    reverse=True,
+  )
+  keep = set(keys)
+
+  def newest(period_keys: set[str]) -> str:
+    return max(
+      period_keys,
+      key=lambda k: (_end_of(period_by_key.get(k)), _span_days(period_by_key.get(k))),
+    )
+
+  for row in rows:
+    row_periods: set[str] = set(row.get("values", {}))
+    for vals in row.get("members", {}).values():
+      row_periods |= set(vals)
+    if not row_periods:
+      continue
+    shown = row_periods & keep
+    if not shown and not wanted:
+      # The column cut never leaves a row blank: its most recent period
+      # stands in for it, outside the columns, and the count says the rest.
+      shown = {newest(row_periods)}
+    if "values" in row:
+      row["values"] = {k: v for k, v in row["values"].items() if k in shown}
+      if not row["values"]:
+        del row["values"]
+    if "members" in row:
+      trimmed = {
+        m: {k: v for k, v in vals.items() if k in shown}
+        for m, vals in row["members"].items()
+      }
+      row["members"] = {m: vals for m, vals in trimmed.items() if vals}
+      if not row["members"]:
+        del row["members"]
+    if len(row_periods) > len(shown):
+      row["periods_omitted"] = len(row_periods) - len(shown)
+
+  # The section's axes, with the members that carry facts here.
+  axes_out: list[dict[str, Any]] = []
+  for axis in st.axes:
+    present = sorted(
+      ((m, n) for (a, m), n in axis_member_counts.items() if a == axis.qname and m),
+      key=lambda kv: (-kv[1], kv[0]),
+    )
+    entry: dict[str, Any] = {
+      "axis": axis.qname,
+      "label": _pref_label(model.concepts.get(axis.qname), axis.qname),
+      "members": [
+        {
+          "member": m,
+          "label": _pref_label(model.concepts.get(m), m),
+          "facts": n,
+        }
+        for m, n in present[:AXIS_MEMBERS_LISTED]
+      ],
+    }
+    if len(present) > AXIS_MEMBERS_LISTED:
+      entry["members_omitted"] = len(present) - AXIS_MEMBERS_LISTED
+    if axis.default:
+      entry["default"] = axis.default
+    if axis.typed:
+      entry["typed"] = True
+    axes_out.append(entry)
+
+  # Calculation arcs in this role, footed on the consolidated values shown.
+  # A total that foots says so in one number; only a difference is spelled
+  # out, with the reported and computed values behind it.
+  calc_out: list[dict[str, Any]] = []
+  fact_at: dict[tuple[str, str, str | None], XbrlFact] = {}
+  for q, facts in consolidated.items():
+    for f in facts:
+      fact_at[(q, f.period_id, f.unit_id)] = f
+  for n in st.calculation:
+    by_parent: dict[str, list[Arc]] = defaultdict(list)
+    for arc in n.arcs:
+      by_parent[arc.from_qname].append(arc)
+    for parent, arcs in by_parent.items():
+      arcs.sort(key=lambda a: a.order if a.order is not None else 0.0)
+      checked = 0
+      differences: dict[str, dict[str, Any]] = {}
+      for f in consolidated.get(parent, []):
+        key = _period_key(idx.periods.get(f.period_id))
+        if key not in keep or f.numeric_value is None:
+          continue
+        computed = 0.0
+        present_children = 0
+        for arc in arcs:
+          child = fact_at.get((arc.to_qname, f.period_id, f.unit_id))
+          if child is None or child.numeric_value is None:
+            continue
+          present_children += 1
+          computed += (arc.weight if arc.weight is not None else 1.0) * (
+            child.numeric_value
+          )
+        if not present_children:
+          continue
+        checked += 1
+        difference = f.numeric_value - computed
+        if abs(difference) > _tolerance(f.decimals):
+          differences[key] = {
+            "reported": f.numeric_value,
+            "computed": computed,
+            "difference": difference,
+          }
+          if present_children < len(arcs):
+            differences[key]["missing"] = len(arcs) - present_children
+      roll: dict[str, Any] = {
+        "total": parent,
+        "children": [
+          {"concept": a.to_qname, "weight": a.weight if a.weight is not None else 1.0}
+          for a in arcs
+        ],
+      }
+      if checked:
+        roll["foots"] = checked - len(differences)
+        roll["checked"] = checked
+      if differences:
+        roll["differences"] = differences
+      calc_out.append(roll)
+
+  # Tagged text blocks in this role, with where to read them.
+  sections = _text_block_sections(lf, whole)
+  text_out: list[dict[str, Any]] = []
+  for q, f in text_facts.items():
+    text = _strip_html(f.value_str or "")
+    block_text: dict[str, Any] = {
+      "concept": q,
+      "label": _pref_label(model.concepts.get(q), q),
+      "chars": len(text),
+      "preview": text[:BLOCK_TEXT_PREVIEW],
+    }
+    section = sections.get(q)
+    if section is not None and section.offset is not None:
+      block_text["offset"] = section.offset
+    text_out.append(block_text)
+
+  family = next((f for f in families if st in f.blocks), None)
+  head: dict[str, Any] = {
+    "id": st.id,
+    "role": st.role_uri,
+    "name": st.name,
+    "disclosure": st.disclosure,
+    "level": st.level,
+  }
+  if st.block_type:
+    head["block_type"] = st.block_type
+  if st.merged_roles:
+    head["merged_roles"] = list(st.merged_roles)
+  if not pure:
+    kind = idx.classification.get(st.role_uri)
+    if kind:
+      head["kind"] = kind
+  if family is not None and len(family.blocks) > 1:
+    head["siblings"] = [
+      {"id": s.id, "level": s.level, "name": s.subtitle or s.name}
+      for s in family.blocks
+      if s is not st
+    ]
+
+  columns = [_period_view(period_by_key[k]) for k in keys]
+  if pure:
+    for column in columns:
+      column.pop("duration", None)
+      column.pop("calendar", None)
+  out: dict[str, Any] = {"block": head, "columns": columns}
+  if axes_out:
+    out["axes"] = axes_out
+  out["rows"] = rows
+  if calc_out:
+    out["calculation"] = calc_out
+  if text_out:
+    out["text"] = text_out
+  out["row_count"] = len(rows)
+  out["truncated"] = truncated
+  if members_omitted:
+    out["members_omitted"] = members_omitted
+  if columns_omitted:
+    out["periods_omitted"] = columns_omitted
+    out["periods_tip"] = (
+      "pass `periods` (keys, end dates or years) to choose the columns; a row "
+      "whose only facts fall outside them keeps its most recent one"
+    )
+  out["note"] = (
+    "rows follow the presentation tree, `abstract` marking headers, axes, "
+    "domains and members; `values` are consolidated (no "
+    "dimensional qualifier), `members` the same row broken out by this "
+    "section's own axes — a member key joins one member per axis; "
+    "`members_omitted` and `periods_omitted` on a row count the breakdowns "
+    "and columns dropped from it, and a row is never left blank by either cut; "
+    "`calculation` lists each total's children with weights, how many of the "
+    "shown periods foot on consolidated values, and any difference; `text` "
+    "entries are tagged text blocks — read one with read_text from its offset"
   )
   return out
 

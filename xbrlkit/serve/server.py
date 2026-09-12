@@ -85,6 +85,21 @@ disclosure table — as rows in filing order with values per period column.
 - calculation answers "what sums to X": the calculation-linkbase children with \
 their weights, the computed sum against the reported total, per period.
 
+DISCLOSURES AND INFORMATION BLOCKS
+- disclosures lists the filing's blocks as families — each note with \
+its policies, tables and details tables, each statement with its \
+parenthetical, the cover page — with block and fact counts; with a topic, \
+one family's index. The cheap call: use it to find the block a question is \
+about.
+- information_block reads one block whole: rows in filing order with the \
+consolidated value per period, the same rows broken out by the block's own \
+axes, the calculation arcs with a footing check, and the text blocks with \
+offsets for read_text. The expensive call — a large details table runs \
+15,000–30,000 characters — so call disclosures first and narrow with \
+`member` or `periods` when part of the block is enough. Prefer it to \
+statement when the question needs the breakdown, the roll-up, or the text \
+beside the numbers.
+
 OTHER DOCUMENTS
 - A filing is a set of documents and the primary one is not always where the \
 content is: an 8-K is boilerplate with the press release attached as EX-99.1, \
@@ -500,6 +515,88 @@ def build_server(
     return run(
       lambda: tools.calculation(
         session.get(filing), concept, role=role, period_end=period_end
+      )
+    )
+
+  @server.tool(
+    name="disclosures",
+    description=(
+      "The filing's disclosures — its information blocks as families, read from the filer's own "
+      "role titles: each note with its policies, its tables and every details "
+      "table; each statement with its parenthetical; the cover page. With no "
+      "topic, the list — one row per family with block and fact counts. With a "
+      "topic ('leases', 'income taxes', 'cover'), that family's index: each "
+      "block's id, level, fact count, axes and text blocks. The cheap call: "
+      "use it to find the block a question is about, then "
+      "information_block for that block alone."
+    ),
+    structured_output=False,
+  )
+  def disclosures(
+    filing: Filing = None,
+    topic: Annotated[
+      str | None,
+      Field(description="A family's title or part of one; omit to list them all."),
+    ] = None,
+  ) -> str:
+    return run(lambda: tools.disclosures(session.get(filing), topic, pure=pure))
+
+  @server.tool(
+    name="information_block",
+    description=(
+      "One information block read whole — a primary statement, the cover page, "
+      "or any details table: rows in the filing's order with the consolidated "
+      "value per period, the same rows broken out by the block's own axes (a "
+      "segment table's segments, a maturity table's years), its calculation "
+      "arcs with a footing check per period, and its tagged text blocks with "
+      "the offset read_text pages from. THIS IS THE EXPENSIVE CALL: a details "
+      "table with many members runs 15,000–30,000 characters. Call "
+      "disclosures first for the family index, and narrow this one with "
+      "`member` or `periods` when part of the block answers the question. "
+      "`block` is an id from disclosures or describe_filing, a name or "
+      "part of one, or a role URI."
+    ),
+    structured_output=False,
+  )
+  def information_block(
+    block: Annotated[
+      str,
+      Field(description="Block id, name (or part of one), or role URI."),
+    ],
+    filing: Filing = None,
+    periods: Annotated[
+      list[str] | None,
+      Field(description="Period keys, end dates or years to keep as columns."),
+    ] = None,
+    member: Annotated[
+      str | None,
+      Field(description="Keep only member breakdowns whose key contains this."),
+    ] = None,
+    max_rows: Annotated[
+      int, Field(description="Rows to return (max 400).", ge=1, le=400)
+    ] = 400,
+    max_members: Annotated[
+      int | None,
+      Field(
+        description=(
+          "Member breakdowns to keep, most facts first (max 200). By default "
+          "as many as fit the response budget; a row is never left blank."
+        ),
+        ge=1,
+        le=200,
+      ),
+    ] = None,
+  ) -> str:
+    return run(
+      lambda: tools.information_block(
+        session.get(filing),
+        block,
+        periods=periods,
+        member=member,
+        max_rows=max_rows,
+        max_members=max_members,
+        pure=pure,
+        whole=whole,
       )
     )
 
