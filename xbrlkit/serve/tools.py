@@ -1477,6 +1477,18 @@ def information_block(
   keep_members = set(kept_members)
   members_omitted = len(member_counts) - len(kept_members)
 
+  # The axes, domains and members of this block's own cube: a filer lists
+  # them in the presentation tree, often without declaring the extension
+  # members abstract, and none of them carries facts of its own.
+  structural_names: set[str] = set()
+  for cube in st.hypercubes:
+    structural_names.add(cube.qname)
+    for axis in cube.axes:
+      structural_names.add(axis.qname)
+      if axis.domain:
+        structural_names.add(axis.domain)
+      structural_names.update(axis.members)
+
   # The presentation walk, as `statement` makes it.
   network = st.presentation[0]
   children: dict[str, list[Arc]] = defaultdict(list)
@@ -1516,14 +1528,14 @@ def information_block(
       "concept": qname,
       "label": _label_for_role(concept, label_role),
     }
-    # Headers, and the axes, domains and members a filer lists in the tree,
-    # carry no facts of their own; a filer's extension member is often not
-    # declared abstract, and would read as an empty data row without this.
-    structural = concept is not None and (
-      concept.is_abstract
-      or concept.is_dimension_item
-      or concept.is_domain_member
-      or concept.is_hypercube_item
+    # Headers, axes, hypercubes and the cube's members carry no facts of
+    # their own. (``is_domain_member`` is not the test: in XDT every primary
+    # item is a domain member, so that flag is true of a line item too.)
+    structural = qname in structural_names or (
+      concept is not None
+      and (
+        concept.is_abstract or concept.is_dimension_item or concept.is_hypercube_item
+      )
     )
     if structural:
       row["abstract"] = True
