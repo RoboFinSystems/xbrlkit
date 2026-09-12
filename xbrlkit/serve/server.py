@@ -576,11 +576,16 @@ def build_server(
       int, Field(description="Rows to return (max 400).", ge=1, le=400)
     ] = 400,
     max_members: Annotated[
-      int,
+      int | None,
       Field(
-        description="Member breakdowns to keep, most facts first (max 64).", ge=1, le=64
+        description=(
+          "Member breakdowns to keep, most facts first (max 200). By default "
+          "as many as fit the response budget; a row is never left blank."
+        ),
+        ge=1,
+        le=200,
       ),
-    ] = 16,
+    ] = None,
   ) -> str:
     return run(
       lambda: tools.information_block(

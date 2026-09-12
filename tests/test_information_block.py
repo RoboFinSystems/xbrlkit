@@ -112,8 +112,12 @@ def _model() -> XbrlModel:
       "us-gaap:LeasesLineItems": abstract,
       "us-gaap:OperatingLeaseCost": {},
       "us-gaap:VariableLeaseCost": {},
+      "us-gaap:ShortTermLeaseCost": {},
       "us-gaap:LeaseCost": {},
       "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths": dict(
+        period_type="instant"
+      ),
+      "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo": dict(
         period_type="instant"
       ),
       "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue": dict(period_type="instant"),
@@ -121,6 +125,7 @@ def _model() -> XbrlModel:
       "us-gaap:SegmentDomain": dict(is_domain_member=True, is_numeric=False),
       "acme:WidgetsMember": dict(is_domain_member=True, is_numeric=False),
       "acme:GadgetsMember": dict(is_domain_member=True, is_numeric=False),
+      "acme:GizmosMember": dict(is_domain_member=True, is_numeric=False),
       GEO_AXIS: dict(is_dimension_item=True, is_numeric=False),
       "country:US": dict(is_domain_member=True, is_numeric=False),
       "ifrs-full:Revenue": {},
@@ -148,6 +153,7 @@ def _model() -> XbrlModel:
   units = [Unit(id="usd", measure="iso4217:USD")]
   widgets = [DimQualifier(axis_qname=SEGMENT_AXIS, member_qname="acme:WidgetsMember")]
   gadgets = [DimQualifier(axis_qname=SEGMENT_AXIS, member_qname="acme:GadgetsMember")]
+  gizmos = [DimQualifier(axis_qname=SEGMENT_AXIS, member_qname="acme:GizmosMember")]
   us = [DimQualifier(axis_qname=GEO_AXIS, member_qname="country:US")]
 
   def fact(fid, qname, pid, value, dims=(), decimals="-3"):
@@ -193,6 +199,8 @@ def _model() -> XbrlModel:
     fact("ocw", "us-gaap:OperatingLeaseCost", "D-2024", 60, dims=widgets),
     fact("ocg", "us-gaap:OperatingLeaseCost", "D-2024", 40, dims=gadgets),
     fact("lcw", "us-gaap:LeaseCost", "D-2024", 75, dims=widgets),
+    # Reported for one segment only — no consolidated value at all.
+    fact("stg", "us-gaap:ShortTermLeaseCost", "D-2024", 15, dims=gizmos),
     # A geography breakdown of the same concept: the lease-cost cube does not
     # declare that axis, so this fact belongs to no section here.
     fact("ocus", "us-gaap:OperatingLeaseCost", "D-2024", 55, dims=us),
@@ -201,6 +209,9 @@ def _model() -> XbrlModel:
       "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths",
       "I-2024",
       30,
+    ),
+    fact(
+      "m2", "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo", "I-2024", 100
     ),
     fact("m", "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue", "I-2024", 130),
     # Dimensional on a concept of the cube-less maturities table: not admitted.
@@ -329,6 +340,11 @@ def _model() -> XbrlModel:
           order=3,
           preferred_label=TOTAL,
         ),
+        Arc(
+          from_qname="us-gaap:LeasesLineItems",
+          to_qname="us-gaap:ShortTermLeaseCost",
+          order=4,
+        ),
       ],
     ),
     Network(
@@ -379,6 +395,11 @@ def _model() -> XbrlModel:
           arcrole=DIM_DOMAIN_MEMBER,
         ),
         Arc(
+          from_qname="us-gaap:SegmentDomain",
+          to_qname="acme:GizmosMember",
+          arcrole=DIM_DOMAIN_MEMBER,
+        ),
+        Arc(
           from_qname=SEGMENT_AXIS,
           to_qname="us-gaap:SegmentDomain",
           arcrole=DIM_DIMENSION_DEFAULT,
@@ -392,7 +413,32 @@ def _model() -> XbrlModel:
         Arc(
           from_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue",
           to_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths",
-        )
+          order=1,
+        ),
+        Arc(
+          from_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue",
+          to_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo",
+          order=2,
+        ),
+      ],
+    ),
+    # The filer's tooling put the maturities roll-up in a second drawer:
+    # the same definition under a suffixed role, with no presentation.
+    Network(
+      role_uri=MATURITY_ROLE + "_1",
+      definition="0000031 - Disclosure - Leases - Maturities of lease liabilities (Details)",
+      kind="calculation",
+      arcs=[
+        Arc(
+          from_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue",
+          to_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths",
+          weight=1.0,
+        ),
+        Arc(
+          from_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue",
+          to_qname="us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo",
+          weight=1.0,
+        ),
       ],
     ),
     pres(
@@ -515,7 +561,11 @@ def test_hypercube_is_walked_from_the_roles_definition_arcs(model):
   (axis,) = cube.axes
   assert axis.qname == SEGMENT_AXIS
   assert axis.domain == "us-gaap:SegmentDomain"
-  assert axis.members == ["acme:WidgetsMember", "acme:GadgetsMember"]
+  assert axis.members == [
+    "acme:WidgetsMember",
+    "acme:GadgetsMember",
+    "acme:GizmosMember",
+  ]
   assert axis.default == "us-gaap:SegmentDomain"
   assert not axis.typed
 
@@ -536,10 +586,10 @@ def test_fact_membership_admits_by_the_blocks_own_cube(model):
   blocks = plan_blocks(model)
   membership = fact_membership(model, blocks)
   cost_ids = {f.id for f in membership[COST_ROLE]}
-  assert {"oc24", "vc24", "lc24", "ocw", "ocg", "lcw"} <= cost_ids
+  assert {"oc24", "vc24", "lc24", "ocw", "ocg", "lcw", "stg"} <= cost_ids
   assert "ocus" not in cost_ids  # geography is not an axis of this cube
   maturity_ids = {f.id for f in membership[MATURITY_ROLE]}
-  assert maturity_ids == {"m1", "m"}  # no cube: consolidated only
+  assert maturity_ids == {"m1", "m2", "m"}  # no cube: consolidated only
   assert "ocus" not in {f.id for facts in membership.values() for f in facts}
 
 
@@ -552,7 +602,7 @@ def test_disclosures_lists_families_with_counts(loaded):
   leases = rows["Leases"]
   assert leases["blocks"] == 4
   assert leases["levels"] == {"note": 1, "tables": 1, "details": 2}
-  assert leases["facts"] == 9  # oc24 oc23 vc24 lc24 ocw ocg lcw m1 m
+  assert leases["facts"] == 11  # oc24 oc23 vc24 lc24 ocw ocg lcw stg m1 m2 m
   assert leases["text_blocks"] == 2
   assert "category" not in leases
   assert rows["Consolidated Balance Sheets"]["category"] == "Statement"
@@ -569,9 +619,9 @@ def test_disclosures_topic_indexes_one_family(loaded):
   assert tables["text_blocks"][0]["chars"] > 0
   assert cost["name"] == "Lease Cost"
   assert cost["axes"] == [SEGMENT_AXIS] and cost["calc"] is True
-  assert cost["facts"] == 7 and cost["dimensional_facts"] == 3
+  assert cost["facts"] == 8 and cost["dimensional_facts"] == 4
   assert maturity["name"] == "Maturities of lease liabilities"
-  assert "axes" not in maturity and maturity["facts"] == 2
+  assert "axes" not in maturity and maturity["facts"] == 3
 
 
 def test_disclosures_topic_errors_are_correctable(loaded):
@@ -598,6 +648,7 @@ def test_information_block_pivots_a_details_table_by_its_own_axis(loaded):
   assert [(m["member"], m["facts"]) for m in axis["members"]] == [
     ("acme:WidgetsMember", 2),
     ("acme:GadgetsMember", 1),
+    ("acme:GizmosMember", 1),
   ]
 
   rows = {r["concept"]: r for r in out["rows"]}
@@ -679,11 +730,122 @@ def test_information_block_member_and_period_filters(loaded):
   assert operating["values"] == {"2024-01-01..2024-12-31": 100.0}
 
   capped = tools.information_block(loaded, "Lease Cost", max_members=1, whole=False)
-  assert capped["members_omitted"] == 1
+  assert capped["members_omitted"] == 2
   operating = next(
     r for r in capped["rows"] if r["concept"] == "us-gaap:OperatingLeaseCost"
   )
   assert list(operating["members"]) == ["acme:WidgetsMember"]
+  assert operating["members_omitted"] == 1
+  # A row reported only on a dropped member keeps its most-reported one.
+  short = next(
+    r for r in capped["rows"] if r["concept"] == "us-gaap:ShortTermLeaseCost"
+  )
+  assert short["members"] == {"acme:GizmosMember": {"2024-01-01..2024-12-31": 15.0}}
+  assert "members_omitted" not in short
+  # Left to the budget, a small table is never cut at all.
+  whole = tools.information_block(loaded, "Lease Cost", whole=False)
+  assert "members_omitted" not in whole
+  assert all("members_omitted" not in r for r in whole["rows"])
+
+
+def test_information_block_folds_a_suffixed_role_into_the_block(loaded):
+  out = tools.information_block(loaded, "Maturities", whole=False)
+  assert out["block"]["merged_roles"] == [MATURITY_ROLE + "_1"]
+  (calc,) = out["calculation"]
+  assert calc["total"] == "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue"
+  assert calc["checked"] == 1 and calc["foots"] == 1
+  # The suffixed role is not a section of its own.
+  assert not any(s["id"].endswith("_1") for s in out["block"]["siblings"])
+
+
+def test_a_suffixed_role_folds_only_when_it_repeats_the_definition(model):
+  from xbrlkit.information_block import role_folds
+
+  # The cube's definition arcs move into a suffixed drawer: still this block's cube.
+  moved = model.model_copy(
+    update={
+      "networks": [
+        n.model_copy(update={"role_uri": COST_ROLE + "_1"})
+        if n.kind == "definition" and n.role_uri == COST_ROLE
+        else n
+        for n in model.networks
+      ]
+    }
+  )
+  cost = next(b for b in plan_blocks(moved) if b.role_uri == COST_ROLE)
+  assert cost.merged_roles == [COST_ROLE + "_1"] and len(cost.hypercubes) == 1
+  assert role_folds(moved)[COST_ROLE + "_1"] == COST_ROLE
+
+  # A different definition under the suffix is a section of its own.
+  other = model.model_copy(
+    update={
+      "networks": [
+        n.model_copy(
+          update={
+            "role_uri": COST_ROLE + "_1",
+            "definition": "0000099 - Disclosure - Other",
+          }
+        )
+        if n.kind == "definition" and n.role_uri == COST_ROLE
+        else n
+        for n in model.networks
+      ]
+    }
+  )
+  cost = next(b for b in plan_blocks(other) if b.role_uri == COST_ROLE)
+  assert cost.merged_roles == [] and cost.hypercubes == []
+  assert role_folds(other)[COST_ROLE + "_1"] == COST_ROLE + "_1"
+
+
+def test_member_budget_bounds_a_large_cube(model):
+  many = model.model_copy(deep=True)
+  arcs = next(
+    n for n in many.networks if n.kind == "definition" and n.role_uri == COST_ROLE
+  ).arcs
+  for i in range(700):
+    q = f"acme:M{i}Member"
+    many.concepts[q] = Concept(
+      qname=q, namespace=ACME, name=f"M{i}Member", is_domain_member=True
+    )
+    arcs.append(
+      Arc(from_qname="us-gaap:SegmentDomain", to_qname=q, arcrole=DIM_DOMAIN_MEMBER)
+    )
+    many.facts.append(
+      XbrlFact(
+        id=f"x{i}",
+        concept_qname="us-gaap:OperatingLeaseCost",
+        period_id="D-2024",
+        unit_id="usd",
+        entity_cik="0001234567",
+        dims=[DimQualifier(axis_qname=SEGMENT_AXIS, member_qname=q)],
+        value_str="1",
+        numeric_value=1.0,
+        decimals="0",
+        value_kind="numeric",
+      )
+    )
+  text, sections = build_text(many, html=None)
+  lf = LoadedFiling(
+    id="many", source="memory", model=many, text=text, sections=sections
+  )
+
+  out = tools.information_block(lf, "Lease Cost", whole=False)
+  operating = next(
+    r for r in out["rows"] if r["concept"] == "us-gaap:OperatingLeaseCost"
+  )
+  shown = len(operating["members"])
+  # 703 member keys in the block, 702 of them on this row; the budget keeps
+  # the most-reported first and the row says how many it lost.
+  assert 0 < shown < 700
+  assert out["members_omitted"] == 702 - shown
+  assert operating["members_omitted"] == 702 - shown
+
+  # An explicit ceiling still applies, and stops at the hard maximum.
+  capped = tools.information_block(lf, "Lease Cost", max_members=1000, whole=False)
+  operating = next(
+    r for r in capped["rows"] if r["concept"] == "us-gaap:OperatingLeaseCost"
+  )
+  assert len(operating["members"]) == 199  # 200 kept, one of them on another row
 
 
 def test_information_block_without_a_cube_shows_consolidated_only(loaded):

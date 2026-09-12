@@ -23,6 +23,13 @@ here classifies, and a filing whose definitions follow no such convention
 The hypercube reconstruction follows XBRL Dimensions 1.0 per base set — the
 same walk :mod:`xbrlkit.serialize.tavi` makes for its cubes — scoped to one
 role, so a fact can be tested for membership in *this* section's cube.
+
+One more reading of the filer's words: a filer's tooling sometimes splits a
+section's arcs across ``Role`` and ``Role_1`` — a second calculation tree
+that would contradict the first if both sat in one base set — and gives the
+two the same definition. That second role is not a section; it is the same
+section's arcs in a second drawer, and it folds into the block whose
+definition it repeats.
 """
 
 from __future__ import annotations
@@ -67,6 +74,8 @@ _SUFFIX = re.compile(
 # A family key that is only a note number ("Note 5", "5.") names nothing;
 # the whole title is the family then.
 _NOTE_NUMBER = re.compile(r"^(?:note\s*)?\d+[a-z]?\.?$", re.IGNORECASE)
+# ``Role_1``: a filer's second drawer for one section's arcs.
+_ROLE_SUFFIX = re.compile(r"^(.*?)_(\d+)$")
 
 
 def parse_definition(definition: str | None) -> tuple[str | None, str | None, str]:
@@ -178,6 +187,9 @@ class InformationBlock:
   # its networks carried one. A filing never sets it: classifying a role is
   # enrichment, and xbrlkit does not guess.
   block_type: str | None = None
+  # Roles folded into this block because they repeat its definition under a
+  # numeric suffix (``…Details_1``); their arcs are read as this section's.
+  merged_roles: list[str] = field(default_factory=list)
   presentation: list[Network] = field(default_factory=list)
   calculation: list[Network] = field(default_factory=list)
   definition_networks: list[Network] = field(default_factory=list)
@@ -270,14 +282,50 @@ def _walk_domain(root: str, role: str, arcs_from: ArcsFrom) -> list[str]:
   return members
 
 
-def _definition_arcs(model: XbrlModel) -> dict[str, dict[str, list[Arc]]]:
+def role_folds(model: XbrlModel) -> dict[str, str]:
+  """Each role URI → the role it is read as.
+
+  ``Role_1`` folds into ``Role`` when ``Role`` is itself a role of the
+  filing and the two share a definition (or the suffixed one has none).
+  A suffixed URI whose base is absent, or whose definition differs, is a
+  section of its own and stays put.
+  """
+  roles: set[str] = set()
+  definitions: dict[str, str | None] = {}
+  for network in model.networks:
+    roles.add(network.role_uri)
+    if definitions.get(network.role_uri) is None:
+      definitions[network.role_uri] = network.definition
+  folds: dict[str, str] = {}
+  for role in roles:
+    folds[role] = role
+    m = _ROLE_SUFFIX.match(role)
+    if not m or m.group(1) not in roles:
+      continue
+    base = m.group(1)
+    definition = definitions.get(role)
+    if definition is None or definition == definitions.get(base):
+      folds[role] = base
+  return folds
+
+
+def _definition_arcs(
+  model: XbrlModel, folds: dict[str, str] | None = None
+) -> dict[str, dict[str, list[Arc]]]:
+  """Definition arcs by role and arcrole. A folded role's arcs are filed
+  under the role it folds into *and* under its own URI, so a cube walk that
+  starts from the block finds them and a ``targetRole`` hop that names the
+  suffixed role still resolves."""
+  folds = folds or {}
   by_role: dict[str, dict[str, list[Arc]]] = {}
   for network in model.networks:
     if network.kind != "definition":
       continue
-    bucket = by_role.setdefault(network.role_uri, {})
-    for arc in network.arcs:
-      bucket.setdefault(arc.arcrole or "", []).append(arc)
+    keys = {network.role_uri, folds.get(network.role_uri, network.role_uri)}
+    for key in keys:
+      bucket = by_role.setdefault(key, {})
+      for arc in network.arcs:
+        bucket.setdefault(arc.arcrole or "", []).append(arc)
   return by_role
 
 
@@ -339,23 +387,27 @@ def build_hypercubes(
 def plan_blocks(model: XbrlModel) -> list[InformationBlock]:
   """Every role in the filing as one :class:`InformationBlock`, in EDGAR order."""
   by_role: dict[str, InformationBlock] = {}
+  folds = role_folds(model)
   for network in model.networks:
-    st = by_role.get(network.role_uri)
+    role = folds.get(network.role_uri, network.role_uri)
+    st = by_role.get(role)
     if st is None:
       number, category, name = parse_definition(network.definition)
-      level, title, subtitle = parse_level(category, name or network.role_uri)
+      level, title, subtitle = parse_level(category, name or role)
       st = InformationBlock(
-        role_uri=network.role_uri,
+        role_uri=role,
         role_id=network.role_id,
         definition=network.definition,
         number=number,
         category=category,
-        name=name or network.role_uri,
+        name=name or role,
         disclosure=title,
         level=level,
         subtitle=subtitle,
       )
-      by_role[network.role_uri] = st
+      by_role[role] = st
+    if network.role_uri != role and network.role_uri not in st.merged_roles:
+      st.merged_roles.append(network.role_uri)
     elif st.definition is None and network.definition:
       # The first network seen had no definition; a later one names the role.
       number, category, name = parse_definition(network.definition)
@@ -383,7 +435,7 @@ def plan_blocks(model: XbrlModel) -> list[InformationBlock]:
     else:
       st.definition_networks.append(network)
 
-  definition_arcs = _definition_arcs(model)
+  definition_arcs = _definition_arcs(model, folds)
   for st in by_role.values():
     if st.definition_networks:
       st.hypercubes = build_hypercubes(definition_arcs, st.role_uri)

@@ -55,8 +55,13 @@ MAX_GRID_ROWS = 500
 MAX_STATEMENT_ROWS = 400
 MAX_STATEMENT_COLUMNS = 8
 MAX_BLOCK_ROWS = 400
-MAX_BLOCK_MEMBERS = 16
-MAX_BLOCK_MEMBERS_CAP = 64
+# Member breakdowns are kept up to a response budget, not a count: a large
+# cube is bounded, a small table is never cut. `max_members` is the caller's
+# explicit ceiling when given.
+BLOCK_MEMBER_CHARS = 16_000
+MEMBER_CELL_CHARS = 36
+MAX_BLOCK_MEMBERS_CAP = 200
+AXIS_MEMBERS_LISTED = 64
 BLOCK_TEXT_PREVIEW = 240
 TEXT_PREVIEW = 160
 DESCRIBE_PERIODS = 30
@@ -1410,21 +1415,27 @@ def information_block(
   periods: list[str] | None = None,
   member: str | None = None,
   max_rows: int = MAX_BLOCK_ROWS,
-  max_members: int = MAX_BLOCK_MEMBERS,
+  max_members: int | None = None,
   *,
   pure: bool = False,
   whole: bool = True,
 ) -> dict[str, Any]:
   """One section read whole: rows in presentation order with consolidated
   values, the same rows by the section's own axes, its calculation arcs
-  with a footing check, and its text blocks with offsets."""
+  with a footing check, and its text blocks with offsets.
+
+  Member breakdowns are kept most-reported first, up to the response budget
+  (or ``max_members`` when the caller sets one); a row is never left blank
+  by that cut, and every row says how many breakdowns it lost."""
   _require_xbrl(lf, "presentation networks")
   model, idx = lf.model, index_for(lf)
   blocks, membership, families = blocks_for(lf)
   st = _find_block(idx, blocks, block, pure=pure)
   max_rows = max(1, min(int(max_rows or MAX_BLOCK_ROWS), MAX_BLOCK_ROWS))
-  max_members = max(
-    1, min(int(max_members or MAX_BLOCK_MEMBERS), MAX_BLOCK_MEMBERS_CAP)
+  member_limit = (
+    max(1, min(int(max_members), MAX_BLOCK_MEMBERS_CAP))
+    if max_members is not None
+    else None
   )
   member_l = (member or "").strip().lower()
   axis_order = {a.qname: i for i, a in enumerate(st.axes)}
@@ -1448,12 +1459,20 @@ def information_block(
     member_counts[key] += 1
     for d in f.dims:
       axis_member_counts[(d.axis_qname, d.member_qname or d.typed_value or "")] += 1
-  kept_members = [
-    k
-    for k, _ in sorted(member_counts.items(), key=lambda kv: (-kv[1], kv[0]))[
-      :max_members
-    ]
-  ]
+  ranked = sorted(member_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+  kept_members: list[str] = []
+  if member_limit is not None:
+    kept_members = [k for k, _ in ranked[:member_limit]]
+  else:
+    spent = 0
+    for key, n in ranked:
+      cost = len(key) + MEMBER_CELL_CHARS * n
+      if kept_members and (
+        spent + cost > BLOCK_MEMBER_CHARS or len(kept_members) >= MAX_BLOCK_MEMBERS_CAP
+      ):
+        break
+      kept_members.append(key)
+      spent += cost
   keep_members = set(kept_members)
   members_omitted = len(member_counts) - len(kept_members)
 
@@ -1507,14 +1526,24 @@ def information_block(
         values[key] = cell(f)
         used_periods[key] += 1
       by_member: dict[str, dict[str, Any]] = {}
-      for mkey, f in dimensional.get(qname, []):
-        if mkey not in keep_members:
-          continue
-        key = _period_key(idx.periods.get(f.period_id))
-        if key is None:
-          continue
-        by_member.setdefault(mkey, {})[key] = cell(f)
-        used_periods[key] += 1
+      breakdowns = dimensional.get(qname, [])
+      if breakdowns:
+        keys_here = {mkey for mkey, _ in breakdowns}
+        shown = keys_here & keep_members
+        if not values and not shown:
+          # The cap never leaves a row blank: its most-reported breakdown
+          # stands in for it, and the count below says what it lost.
+          shown = {min(keys_here, key=lambda k: (-member_counts[k], k))}
+        for mkey, f in breakdowns:
+          if mkey not in shown:
+            continue
+          key = _period_key(idx.periods.get(f.period_id))
+          if key is None:
+            continue
+          by_member.setdefault(mkey, {})[key] = cell(f)
+          used_periods[key] += 1
+        if len(keys_here) > len(shown):
+          row["members_omitted"] = len(keys_here) - len(shown)
       if values:
         row["values"] = values
       if by_member:
@@ -1598,11 +1627,11 @@ def information_block(
           "label": _pref_label(model.concepts.get(m), m),
           "facts": n,
         }
-        for m, n in present[:max_members]
+        for m, n in present[:AXIS_MEMBERS_LISTED]
       ],
     }
-    if len(present) > max_members:
-      entry["members_omitted"] = len(present) - max_members
+    if len(present) > AXIS_MEMBERS_LISTED:
+      entry["members_omitted"] = len(present) - AXIS_MEMBERS_LISTED
     if axis.default:
       entry["default"] = axis.default
     if axis.typed:
@@ -1691,6 +1720,8 @@ def information_block(
   }
   if st.block_type:
     head["block_type"] = st.block_type
+  if st.merged_roles:
+    head["merged_roles"] = list(st.merged_roles)
   if not pure:
     kind = idx.classification.get(st.role_uri)
     if kind:
@@ -1722,7 +1753,8 @@ def information_block(
   out["note"] = (
     "rows follow the presentation tree; `values` are consolidated (no "
     "dimensional qualifier), `members` the same row broken out by this "
-    "section's own axes — a member key joins one member per axis; "
+    "section's own axes — a member key joins one member per axis, and "
+    "`members_omitted` on a row counts the breakdowns dropped from it; "
     "`calculation` lists each total's children with weights, how many of the "
     "shown periods foot on consolidated values, and any difference; `text` "
     "entries are tagged text blocks — read one with read_text from its offset"
