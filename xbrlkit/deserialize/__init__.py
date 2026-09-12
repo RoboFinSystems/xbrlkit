@@ -8,7 +8,7 @@ TAVI compiled model or a holon — a report that was never an SEC filing, a
 ledger's own output, a filing someone else converted — turns it into the same
 ``XbrlModel`` and gets the whole toolset over it, with no Arelle and no XBRL.
 
-The rule both importers keep: **read what the serialization carries and nothing
+The rule the importers keep: **read what the serialization carries and nothing
 else.** Where a projection dropped something, the importer leaves it empty and
 says so in its gap report rather than reconstructing a plausible value, because
 a filled-in field is indistinguishable from a read one and would make the round
@@ -19,12 +19,22 @@ source of a model — including the parse.
 
 from __future__ import annotations
 
+from .clawdog import (
+  ClawDogError,
+  from_clawdog,
+  from_clawdog_json,
+  from_clawdog_report,
+)
 from .holon import HolonError, from_holon, from_holon_json, from_holon_report
 from .tavi import TaviError, from_tavi, from_tavi_json, from_tavi_report
 
 __all__ = (
+  "ClawDogError",
   "HolonError",
   "TaviError",
+  "from_clawdog",
+  "from_clawdog_json",
+  "from_clawdog_report",
   "from_holon",
   "from_holon_json",
   "from_holon_report",

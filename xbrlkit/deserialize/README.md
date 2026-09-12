@@ -1,13 +1,14 @@
 # Deserialize — the importers
 
 The arrows run both ways. XBRL is the source in every other path through this
-package; these read a **TAVI compiled model** or a **holon** back into
+package; these read a **ClawDog report**, a **TAVI compiled model** or a **holon** back into
 [`XbrlModel`](../model.py), after which every tool in the package works over it
 unchanged.
 
 ```python
-from xbrlkit.deserialize import from_tavi_json, from_holon_json
+from xbrlkit.deserialize import from_clawdog_json, from_tavi_json, from_holon_json
 
+model = from_clawdog_json(Path("report.clawdog.jsonld").read_text())
 model = from_tavi_json(Path("boeing.tavi.json").read_text())
 model = from_holon_json(Path("boeing.holon.jsonld").read_text())
 ```
@@ -17,8 +18,9 @@ the point — a report that never was an SEC filing (a ledger's own output, a
 converted filing someone handed you) becomes queryable with the same tools, and
 [`xbrlkit serve`](../serve/README.md) loads either one by path or by URL.
 
-`from_tavi_report` / `from_holon_report` return the model **and** a gap report,
-so a round trip can be diffed without re-deriving the list by hand.
+`from_clawdog_report`, `from_tavi_report` and `from_holon_report` return the
+model **and** a gap report, so a round trip can be diffed without re-deriving
+the list by hand.
 
 ## The rule
 
@@ -34,11 +36,11 @@ parsed one **id for id** rather than merely resembling it.
 
 ## What each format loses
 
-| | TAVI | holon |
-| --- | --- | --- |
-| loses | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | an element no fact, network or dimension mentions; the reference linkbase; a fact's source hash |
-| keeps | every label role, the datatype detail, the filing's namespaces | everything else — see [`serialize/`](../serialize/README.md#the-holon) |
-| facts | one per reported fact | one per **distinct** fact when the parse gave duplicates the same content-derived id |
+| | ClawDog | TAVI | holon |
+| --- | --- | --- | --- |
+| loses | filing-parser fidelity fields that do not belong to authored reports (`source_hash`, `raw_value`) and records them in gaps | the definition networks (they become cube objects), `is_hypercube_item`, the abstractness of axes and members, `decimals="INF"`, and the case of a language tag (the emitter lower-cases it, as xBRL-JSON requires) | an element no fact, network or dimension mentions; the reference linkbase; a fact's source hash |
+| keeps | entity, periods, units, concepts, facts, dimensions, networks, fact provenance and calculation equations | every label role, the datatype detail, the filing's namespaces | everything else — see [`serialize/`](../serialize/README.md#the-holon) |
+| facts | one per producer fact id | one per reported fact | one per **distinct** fact when the parse gave duplicates the same content-derived id |
 
 TAVI's losses are the standard's; the holon's were ours, and closing them is
 what the importers were good for.

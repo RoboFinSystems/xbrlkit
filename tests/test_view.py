@@ -109,12 +109,23 @@ def test_a_file_already_in_the_format_is_passed_through(tmp_path: Path) -> None:
   holon.write_text(json.dumps({"@context": {}, "@graph": []}))
   tavi = tmp_path / "x.tavi.json"
   tavi.write_text(json.dumps({"documentInfo": {"type": "/compiled"}}))
+  clawdog = tmp_path / "x.clawdog.jsonld"
+  clawdog.write_text(
+    json.dumps(
+      {
+        "documentInfo": {"documentType": "https://lodgeit.org/ns/clawdog/report/v1"},
+        "@graph": [],
+      }
+    )
+  )
 
   assert _already_serialized(str(holon), "holon") == holon
   assert _already_serialized(str(tavi), "tavi") == tavi
+  assert _already_serialized(str(clawdog), "clawdog") == clawdog
   # Asking for the other serialization is a conversion, not a pass-through.
   assert _already_serialized(str(holon), "tavi") is None
   assert _already_serialized(str(tavi), "holon") is None
+  assert _already_serialized(str(clawdog), "holon") is None
   # And a source that is not a local JSON file is resolved the long way.
   assert _already_serialized("NVDA", "holon") is None
   assert _already_serialized(str(tmp_path / "missing.json"), "holon") is None

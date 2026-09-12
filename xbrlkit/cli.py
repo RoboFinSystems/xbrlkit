@@ -1,22 +1,23 @@
 """Command-line interface — a SEC filing to a portable report document.
 
     xbrlkit build --cik 320193 --accno 0000320193-23-000106  # -> output/<accno>.holon.jsonld
+    xbrlkit build --cik 320193 --accno … --format clawdog    # -> output/<accno>.clawdog.jsonld
     xbrlkit build --cik 320193 --accno … --format tavi       # -> output/<accno>.tavi.json
     xbrlkit build --cik 320193 --accno … --format lpg        # -> output/<accno>.lbug
     xbrlkit fetch --ticker NVDA --form 10-K --n 1            # -> output/
     xbrlkit view NVDA                                        # -> the browser
 
 Wires the three layers: ``edgar`` (fetch) -> ``parse`` (Arelle -> XbrlModel) ->
-``serialize`` (XbrlModel -> a holon, a TAVI compiled model, an OIM report, or
-a property-graph database).
+``serialize`` (XbrlModel -> a ClawDog document, a holon, a TAVI compiled
+model, an OIM report, or a property-graph database).
 
 ``--format lpg`` needs the ``lpg`` extra (``pip install "xbrlkit[lpg]"``) and
 writes the filing as a single-file LadybugDB database with the same tables as
 the RoboSystems ``sec`` graph, text blocks inline.
 
-``--format tavi`` writes a second sidecar, ``<accession>.tavi.gaps.json``: what
-the filing carries that Project TAVI has nowhere to put. That file is the point
-of the TAVI projection, not a by-product of it.
+``--format clawdog`` and ``--format tavi`` write gap-report sidecars for fields
+the target document does not carry. Those files are part of the projection, not
+by-products of it.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from .model import EntityIdentity, FilingMeta, XbrlModel
 from .parse import close, load_model, to_xbrl_model
 from .serialize import (
   build_lbug,
+  to_clawdog_report,
   to_graph_tables,
   to_holon,
   to_oim_document,
@@ -51,8 +53,9 @@ from .view import DEFAULT_VIEWER, serve_report
 # are git-ignored (see output/.gitignore). Relative to the working directory.
 DEFAULT_OUTPUT_DIR = Path("output")
 
-FORMATS = ("holon", "tavi", "oim", "lpg", "all", "both")
+FORMATS = ("clawdog", "holon", "tavi", "oim", "lpg", "all", "both")
 SUFFIXES = {
+  "clawdog": ".clawdog.jsonld",
   "holon": ".holon.jsonld",
   "tavi": ".tavi.json",
   "oim": ".oim.json",
@@ -62,7 +65,7 @@ SUFFIXES = {
 # originally meant, so an existing invocation keeps writing the same two files.
 FORMAT_SETS = {
   "both": ("holon", "tavi"),
-  "all": ("holon", "tavi", "oim"),
+  "all": ("clawdog", "holon", "tavi", "oim"),
 }
 
 
@@ -91,7 +94,14 @@ def _write_outputs(model: XbrlModel, out_path: Path, fmt: str, named: bool) -> N
   wanted = FORMAT_SETS.get(fmt, (fmt,))
   for name in wanted:
     target = exact or out_path.parent / f"{stem}{SUFFIXES[name]}"
-    if name == "holon":
+    if name == "clawdog":
+      document, gaps = to_clawdog_report(model)
+      target.write_text(json.dumps(document, indent=2, default=str))
+      gaps_path = out_path.parent / f"{stem}.clawdog.gaps.json"
+      gaps_path.write_text(json.dumps(gaps.to_dict(), indent=2, default=str))
+      print(f"wrote {target}")
+      print(f"wrote {gaps_path}  ({len(gaps.missing)} gaps)")
+    elif name == "holon":
       target.write_text(to_holon(model))
       print(f"wrote {target}")
     elif name == "oim":
@@ -491,7 +501,7 @@ def build_parser() -> argparse.ArgumentParser:
     "--format",
     choices=FORMATS,
     default="holon",
-    help="Projection: holon | tavi | oim | lpg | all (default holon). 'tavi' also writes a .tavi.gaps.json; 'lpg' writes a LadybugDB database and needs the lpg extra.",
+    help="Projection: clawdog | holon | tavi | oim | lpg | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra.",
   )
   b.set_defaults(func=_cmd_build)
 
@@ -511,7 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     "--format",
     choices=FORMATS,
     default="holon",
-    help="Projection: holon | tavi | oim | lpg | all (default holon). 'tavi' also writes a .tavi.gaps.json; 'lpg' writes a LadybugDB database and needs the lpg extra.",
+    help="Projection: clawdog | holon | tavi | oim | lpg | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra.",
   )
   f.set_defaults(func=_cmd_fetch)
 

@@ -14,19 +14,28 @@ itself emits no semantic block type.
 from __future__ import annotations
 
 from .classify import classify_network, root_qname
+from .clawdog import GapReport as ClawDogGapReport
+from .clawdog import to_clawdog, to_clawdog_report
 from .graph import build_holon_graph
 from .holon import to_holon
 from .lpg import GraphTables, build_lbug, to_graph_tables, write_parquet
 from .oim import to_oim, to_oim_document
-from .tavi import GapReport, to_tavi, to_tavi_report
+from .tavi import GapReport as TaviGapReport
+from .tavi import to_tavi, to_tavi_report
+
+GapReport = TaviGapReport
 
 __all__ = (
   "GapReport",
+  "ClawDogGapReport",
   "GraphTables",
+  "TaviGapReport",
   "build_holon_graph",
   "build_lbug",
   "classify_network",
   "root_qname",
+  "to_clawdog",
+  "to_clawdog_report",
   "to_graph_tables",
   "to_holon",
   "to_oim",
