@@ -288,8 +288,8 @@ def build_server(
     description=(
       "Load a filing into the server and return its description. `source` is "
       "a local path (an inline XBRL .htm, an XBRL instance .xml, a filing "
-      "directory, a .zip package, or a JSON report: a TAVI compiled model, a "
-      "holon, or a model.json written by export_filing), "
+      "directory, a .zip package, or a JSON report: a ClawDog report, a TAVI "
+      "compiled model, a holon, or a model.json written by export_filing), "
       "an http(s) URL — an XBRL document Arelle can load, or a JSON report "
       "published as an artifact — an EDGAR `cik:accession` (e.g. "
       "`1045810:0001045810-26-000021`), a ticker with an optional form "
@@ -743,17 +743,18 @@ def build_server(
     name="export_filing",
     description=(
       "Write the loaded filing as one of xbrlkit's projections into the "
-      "server's output directory and return the path: `holon` (RDF / JSON-LD, "
-      "opens in the RoboSystems holon viewer), `tavi` (the Project TAVI "
-      "compiled model, JSON), `oim` (xBRL-JSON), `lpg` (a single-filing "
-      "LadybugDB graph; needs the lpg extra), or `model` (the parse itself as "
-      "JSON — load_filing reloads it without Arelle)."
+      "server's output directory and return the path: `clawdog` (ClawDog "
+      "JSON-LD), `holon` (RDF / JSON-LD, opens in the RoboSystems holon "
+      "viewer), `tavi` (the Project TAVI compiled model, JSON), `oim` "
+      "(xBRL-JSON), `lpg` (a single-filing LadybugDB graph; needs the lpg "
+      "extra), or `model` (the parse itself as JSON — load_filing reloads it "
+      "without Arelle)."
     ),
     structured_output=False,
   )
   def export_filing(
     format: Annotated[
-      Literal["holon", "tavi", "oim", "lpg", "model"],
+      Literal["clawdog", "holon", "tavi", "oim", "lpg", "model"],
       Field(description="The projection to write."),
     ],
     filing: Filing = None,
