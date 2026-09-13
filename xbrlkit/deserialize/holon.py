@@ -97,6 +97,8 @@ DOCUMENTATION_LABEL_ROLE = "http://www.xbrl.org/2003/role/documentation"
 
 PARENT_CHILD_ARCROLE = "http://www.xbrl.org/2003/arcrole/parent-child"
 SUMMATION_ITEM_ARCROLE = "http://www.xbrl.org/2003/arcrole/summation-item"
+# Calculations 1.1: the same roll-ups under the 2023 arcrole.
+SUMMATION_ITEM_11_ARCROLE = "https://xbrl.org/2023/arcrole/summation-item"
 DIMENSION_ARCROLE_BASE = "http://xbrl.org/int/dim/arcrole/"
 # The arcrole an arc takes when the association did not carry its own. A
 # definition network has no single arcrole — its arcs are the dimensional
@@ -758,7 +760,7 @@ def _network_kind(node: Mapping[str, Any]) -> NetworkKind | None:
   if declared in ("presentation", "calculation", "definition"):
     return declared
   arcrole = _text(node.get("arcrole")) or ""
-  if arcrole == SUMMATION_ITEM_ARCROLE:
+  if arcrole in (SUMMATION_ITEM_ARCROLE, SUMMATION_ITEM_11_ARCROLE):
     return "calculation"
   if arcrole == PARENT_CHILD_ARCROLE:
     return "presentation"
@@ -874,6 +876,7 @@ def _networks(
             weight=_float(node.get("weight")),
             preferred_label=_text(node.get("preferredLabelRole")),
             is_root=source in roots,
+            target_role=_text(_prop(node, "targetRole")),
           )
           for source, target, node in edges
         ],

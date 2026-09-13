@@ -17,6 +17,7 @@ import re
 import shutil
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -48,6 +49,10 @@ _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
 _PLAIN_SUFFIXES = {".txt", ".md"}
 # A report serialized as JSON — read into the model here, never by Arelle.
 _JSON_SUFFIXES = {".json", ".jsonld"}
+# The published folder is keyed by filing year, ten-digit CIK and accession; the
+# accession's middle segment is the year it was assigned.
+_ACCESSION_YEAR_RE = re.compile(r"^\d{10}-(\d{2})-\d{6}$")
+_EXTERNAL_TEXT_WORKERS = 8
 # What a document-only filing can be read from. A PDF (an ARS, an SEC comment
 # letter) is a document EDGAR holds and this cannot read; it is named as such
 # rather than loaded empty.
@@ -152,6 +157,41 @@ class NoXbrlFound(SourceError):
   XBRL is a filing this server still holds — most of EDGAR is one — and only
   the caller knows whether a document is on hand to read instead.
   """
+
+
+@dataclass
+class PublishedFiling:
+  """A filing as the public data CDN lists it: the holon to load, and the
+  document as filed when it was published beside it."""
+
+  accession: str
+  holon_url: str
+  document_url: str | None = None
+
+
+def _published_from(
+  accession: str | None, representations: Any, folder: str | None
+) -> PublishedFiling | None:
+  """The published filing a catalog entry or manifest describes, or ``None``
+  when it lists no holon."""
+  holon = document = None
+  for rep in representations if isinstance(representations, list) else []:
+    if not isinstance(rep, dict):
+      continue
+    url = rep.get("url") or (
+      f"{folder.rstrip('/')}/{rep['name']}" if folder and rep.get("name") else None
+    )
+    if not url:
+      continue
+    if rep.get("kind") == "holon":
+      holon = url
+    elif rep.get("kind") == "document":
+      document = url
+  if not holon:
+    return None
+  return PublishedFiling(
+    accession=accession or "", holon_url=holon, document_url=document
+  )
 
 
 class FilingSession:
@@ -302,7 +342,9 @@ class FilingSession:
       return self._document_only(target, source, accession, package_dir)
     return self._finish(_local_id(path, model), source, model, target, package_dir)
 
-  def _load_json(self, path: Path, source: str) -> LoadedFiling:
+  def _load_json(
+    self, path: Path, source: str, document: Path | None = None
+  ) -> LoadedFiling:
     """A JSON file, read into the model without Arelle.
 
     Four of the JSON shapes xbrlkit knows are read directly: the parse saved
@@ -334,11 +376,17 @@ class FilingSession:
     except (ClawDogError, TaviError, HolonError, ValueError) as exc:
       raise SourceError(f"{path} could not be read as {kind}: {exc}") from exc
     target: Path | None = None
-    if model.filing.primary_document:
+    if document is not None:
+      target = document
+      model.filing.document_name = document.name
+    elif model.filing.primary_document:
       candidate = path.parent / model.filing.primary_document
       if candidate.is_file():
         target = candidate
     model = _enrich_from_dei(model)
+    inlined = self._inline_external_text(model)
+    if inlined:
+      logger.info("inlined %d text block fragments for %s", inlined, source)
     served = kind in ("tavi", "holon", "clawdog")
     return self._finish(
       _local_id(path, model),
@@ -371,11 +419,14 @@ class FilingSession:
       target = self._fetch(url)
     return self._finish(accession, url, model, target, None)
 
-  def _fetch(self, url: str) -> Path:
-    """The document at ``url``, saved beside this session's other work."""
+  def _fetch(self, url: str, into: Path | None = None) -> Path:
+    """The document at ``url``, saved beside this session's other work — under
+    ``into`` when two filings would otherwise share a file name."""
     resp = requests.get(url, headers=self.config.headers, timeout=60)
     resp.raise_for_status()
-    target = self._tmp / Path(url.split("?", 1)[0]).name
+    folder = into or self._tmp
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / Path(url.split("?", 1)[0]).name
     target.write_bytes(resp.content)
     return target
 
@@ -492,6 +543,10 @@ class FilingSession:
     """
     from xbrlkit.cli import entity_identity, filing_meta
     from xbrlkit.edgar import EdgarClient, download_filing, download_primary_document
+
+    published = self._published_by_accession(cik, accession)
+    if published is not None:
+      return self._load_published(published, source)
 
     client = EdgarClient(config=self.config)
     ref = client.get_filing_ref(cik, accession)
@@ -657,12 +712,123 @@ class FilingSession:
   def _load_ticker(self, ticker: str, form: str, source: str) -> LoadedFiling:
     from xbrlkit.edgar import EdgarClient
 
+    published = self._published_by_ticker(ticker, form)
+    if published is not None:
+      return self._load_published(published, source)
+
     client = EdgarClient(config=self.config)
     cik = client.ticker_to_cik(ticker)
     refs = client.list_filings(cik, forms=[form.upper()])
     if not refs:
       raise SourceError(f"No {form.upper()} filings on EDGAR for {ticker.upper()}.")
     return self._load_edgar(cik, refs[0].accession, source)
+
+  # -- the published representations ------------------------------------------
+
+  def _published_by_ticker(self, ticker: str, form: str) -> PublishedFiling | None:
+    """The filer's newest filing of ``form`` on the public catalog, when that
+    filing has a published holon.
+
+    The newest filing decides: one that predates the artifacts has no holon,
+    and the answer is then EDGAR, never an older filing that happens to have
+    one.
+    """
+    base = self.config.artifacts_base_url
+    if not base:
+      return None
+    catalog = self._get_json(f"{base}/companies/{ticker.lower()}.json")
+    if not isinstance(catalog, dict):
+      return None
+    wanted = form.upper()
+    for filing in catalog.get("filings") or []:
+      if not isinstance(filing, dict) or (filing.get("form") or "").upper() != wanted:
+        continue
+      return _published_from(
+        filing.get("accession"), filing.get("representations"), filing.get("folder")
+      )
+    return None
+
+  def _published_by_accession(self, cik: str, accession: str) -> PublishedFiling | None:
+    """The filing's published folder, probed by its manifest."""
+    base = self.config.artifacts_base_url
+    match = _ACCESSION_YEAR_RE.match(accession)
+    if not base or not match:
+      return None
+    folder = f"{base}/20{match.group(1)}/{cik.zfill(10)}/{accession}"
+    manifest = self._get_json(f"{folder}/manifest.json")
+    if not isinstance(manifest, dict):
+      return None
+    return _published_from(accession, manifest.get("representations"), folder)
+
+  def _get_json(self, url: str) -> Any:
+    """A small JSON object from the CDN, or ``None`` for anything but a clean
+    200 — a missing object answers 403 there, and either way the fallback is
+    EDGAR."""
+    try:
+      resp = requests.get(url, headers=self.config.headers, timeout=10)
+      if resp.status_code != 200:
+        return None
+      return resp.json()
+    except (requests.RequestException, ValueError):
+      return None
+
+  def _load_published(self, published: PublishedFiling, source: str) -> LoadedFiling:
+    """The filing from its published holon, with the document as filed beside
+    it when the CDN has that too — the same shape an EDGAR load gives, in a
+    fraction of the time and with no Arelle."""
+    into = self._tmp / (published.accession or Path(published.holon_url).stem)
+    holon = self._fetch(published.holon_url, into=into)
+    document: Path | None = None
+    if published.document_url:
+      try:
+        document = self._fetch(published.document_url, into=into)
+      except requests.RequestException as exc:
+        logger.warning("published document unavailable for %s: %s", source, exc)
+    logger.info("loading %s from its published holon", source)
+    return self._load_json(holon, source, document=document)
+
+  def _inline_external_text(self, model: XbrlModel) -> int:
+    """Replace a text block's fragment URL with the fragment.
+
+    The published holon carries a large text block as the URL of the fragment
+    the platform stored beside it. The text tools want the text, so the
+    fragments are fetched on load, in parallel; one that cannot be fetched
+    stays a URL rather than failing the load.
+    """
+    if not self.config.fetch_external_text:
+      return 0
+    pending: list[XbrlFact] = []
+    for fact in model.facts:
+      if fact.value_kind != "text" or not (fact.value_str or "").startswith(
+        ("http://", "https://")
+      ):
+        continue
+      concept = model.concepts.get(fact.concept_qname)
+      if concept is not None and concept.is_textblock:
+        pending.append(fact)
+    if not pending:
+      return 0
+
+    def fetch(url: str) -> str | None:
+      try:
+        resp = requests.get(
+          url, headers=self.config.headers, timeout=self.config.request_timeout
+        )
+        resp.raise_for_status()
+        return resp.text
+      except requests.RequestException as exc:
+        logger.warning("text block fragment unavailable: %s (%s)", url, exc)
+        return None
+
+    with ThreadPoolExecutor(max_workers=_EXTERNAL_TEXT_WORKERS) as pool:
+      bodies = list(pool.map(fetch, [fact.value_str or "" for fact in pending]))
+    inlined = 0
+    for fact, body in zip(pending, bodies, strict=True):
+      if body is not None:
+        fact.value_str = body
+        fact.raw_value = body
+        inlined += 1
+    return inlined
 
   def _parse(
     self,

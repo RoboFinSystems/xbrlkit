@@ -83,6 +83,25 @@ class Config:
       os.environ.get("XBRLKIT_ARELLE_OFFLINE", "").lower() in ("1", "true", "yes")
     )
   )
+  # Where a filing's published representations live — the RoboSystems public
+  # data CDN, which writes every processed SEC filing as a holon, a TAVI model
+  # and the document as filed, under ``{year}/{cik}/{accession}/``, with a
+  # per-filer catalog under ``companies/``. A ticker or ``cik:accession`` loads
+  # the published holon when there is one, in under a second, and falls back
+  # to EDGAR and Arelle when there is not. Empty disables the lookup.
+  artifacts_base_url: str = field(
+    default_factory=lambda: os.environ.get(
+      "XBRLKIT_ARTIFACTS_URL", "https://public.robosystems.ai"
+    ).rstrip("/")
+  )
+  # A published holon carries a large text block as the URL of its fragment
+  # rather than the text; fetching those on load gives the text tools the
+  # block itself. Off, a fragment reads as its URL.
+  fetch_external_text: bool = field(
+    default_factory=lambda: (
+      os.environ.get("XBRLKIT_FETCH_TEXT", "true").lower() not in ("0", "false", "no")
+    )
+  )
 
   @property
   def arelle_cache_dir(self) -> Path:

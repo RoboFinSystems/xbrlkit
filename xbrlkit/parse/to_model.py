@@ -527,10 +527,16 @@ def _value_str(fact: object) -> str | None:
 
 
 def _classify_arcrole(arcrole: str) -> NetworkKind | None:
-  """Map an arcrole to a linkbase kind, or ``None`` to skip it."""
+  """Map an arcrole to a linkbase kind, or ``None`` to skip it.
+
+  Calculations 1.1 (the 2023 ``summation-item`` arcrole) is the calculation
+  linkbase as much as the 2003 one is: a filer that adopted it declares the
+  same roll-ups under the newer arcrole, and reading those as definition
+  arcs left every such filing with no calculation network and no footing.
+  """
   if arcrole == XbrlConst.parentChild:
     return "presentation"
-  if arcrole == XbrlConst.summationItem:
+  if arcrole in (XbrlConst.summationItem, XbrlConst.summationItem11):
     return "calculation"
   if arcrole in (XbrlConst.conceptLabel, XbrlConst.conceptReference):
     return None

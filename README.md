@@ -195,7 +195,9 @@ Both are optional: EDGAR works unattributed under the default, saying so once.
 And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all.
 
 Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
-`lei:`, a local package, or a holon or TAVI by path or URL — and ask for
+`lei:`, a local package, or a holon or TAVI by path or URL; a ticker or `cik:accession` loads the filing's
+published holon first when the RoboSystems CDN has one, falling back to
+EDGAR — and ask for
 statements, facts by concept and period, calculations, exhibits and text.
 No graph and no database sits behind any of it: every answer about a filing is
 read from that filing. The one outward call is `search_filings`, which asks
