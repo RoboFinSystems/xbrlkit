@@ -27,7 +27,14 @@ import requests
 from xml.etree import ElementTree
 
 from xbrlkit.config import CONFIG, Config
-from xbrlkit.deserialize import HolonError, TaviError, from_holon_json, from_tavi_json
+from xbrlkit.deserialize import (
+  ClawDogError,
+  HolonError,
+  TaviError,
+  from_clawdog_json,
+  from_holon_json,
+  from_tavi_json,
+)
 from xbrlkit.edgar.filing_index import FilingDocument
 from xbrlkit.model import Concept, EntityIdentity, FilingMeta, XbrlFact, XbrlModel
 from xbrlkit.text.ixbrl import _strip_html, iXBRLParser
@@ -298,10 +305,11 @@ class FilingSession:
   def _load_json(self, path: Path, source: str) -> LoadedFiling:
     """A JSON file, read into the model without Arelle.
 
-    Three of the four shapes xbrlkit knows are read directly: the parse saved
-    by ``export_filing model``, a TAVI compiled model, and a holon. Each is a
-    representation of the report rather than a rendering of it, so the tools
-    work over it unchanged — and none of them is something Arelle can load.
+    Four of the JSON shapes xbrlkit knows are read directly: the parse saved
+    by ``export_filing model``, a TAVI compiled model, a holon, and a ClawDog
+    report. Each is a representation of the report rather than a rendering of
+    it, so the tools work over it unchanged — and none of them is something
+    Arelle can load.
     The xBRL-JSON report is the one still refused: that one *is* Arelle's, and
     wants its OIM loader rather than an importer of our own.
     """
@@ -312,6 +320,8 @@ class FilingSession:
         model = from_tavi_json(text)
       elif kind == "holon":
         model = from_holon_json(text)
+      elif kind == "clawdog":
+        model = from_clawdog_json(text)
       elif kind == "model":
         model = XbrlModel.model_validate_json(text)
       else:
@@ -319,9 +329,9 @@ class FilingSession:
           f"{path.name} is "
           f"{JSON_KIND_NAMES.get(kind, 'not a JSON file xbrlkit recognises')}"
           "; this server reads a saved parse, a TAVI compiled model, a holon, "
-          "and XBRL packages."
+          "a ClawDog report, and XBRL packages."
         )
-    except (TaviError, HolonError, ValueError) as exc:
+    except (ClawDogError, TaviError, HolonError, ValueError) as exc:
       raise SourceError(f"{path} could not be read as {kind}: {exc}") from exc
     target: Path | None = None
     if model.filing.primary_document:
@@ -329,7 +339,7 @@ class FilingSession:
       if candidate.is_file():
         target = candidate
     model = _enrich_from_dei(model)
-    served = kind in ("tavi", "holon")
+    served = kind in ("tavi", "holon", "clawdog")
     return self._finish(
       _local_id(path, model),
       source,
@@ -992,6 +1002,7 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
 JSON_KIND_NAMES = {
   "holon": "a holon (JSON-LD)",
   "tavi": "a TAVI compiled model",
+  "clawdog": "a ClawDog report",
   "oim": "an xBRL-JSON (OIM) report",
   "model": "a saved parse",
 }
@@ -999,6 +1010,8 @@ JSON_KIND_NAMES = {
 
 def json_kind(head: str) -> str:
   """Which JSON xbrlkit is looking at, from its first few kilobytes."""
+  if "ns/clawdog/report" in head or '"lg:Report"' in head:
+    return "clawdog"
   if '"@context"' in head or '"@graph"' in head:
     return "holon"
   if "/compiled" in head and '"documentInfo"' in head:

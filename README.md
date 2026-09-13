@@ -133,7 +133,7 @@ from xbrlkit.deserialize import from_holon_json
 model = to_xbrl_model(load_model("mmm-20241231.htm"), filing_meta)
 holon = to_holon(model)
 tavi, gaps = to_tavi_report(model)
-model = from_holon_json(holon)          # and back again
+model = from_holon_json(holon)  # and back again
 ```
 
 ## Serve to an MCP client
@@ -220,7 +220,7 @@ projection is a rung of the ladder, so its
 are also a measurement of what a model can do with each of these outputs. That
 corpus is this package's test bench too: the text sections were checked against
 the filing's own text-block facts on all 26 filings, the property graph row for
-row against the platform's processor, and the two importers by round trip.
+row against the platform's processor, and the JSON importers by round trip.
 
 ## View & explore
 

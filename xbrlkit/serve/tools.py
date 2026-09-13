@@ -87,6 +87,7 @@ _PRIMARY_ALIASES = {
 }
 
 EXPORT_FORMATS = {
+  "clawdog": "clawdog.jsonld",
   "holon": "holon.jsonld",
   "tavi": "tavi.json",
   "oim": "oim.json",
@@ -1912,7 +1913,15 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
   target = out_dir / f"{stem}.{EXPORT_FORMATS[fmt]}"
   written: list[Path] = [target]
   model = lf.model
-  if fmt == "holon":
+  if fmt == "clawdog":
+    from xbrlkit.serialize import to_clawdog_report
+
+    document, gaps = to_clawdog_report(model)
+    target.write_text(json.dumps(document, indent=2, default=str))
+    gaps_path = out_dir / f"{stem}.clawdog.gaps.json"
+    gaps_path.write_text(json.dumps(gaps.to_dict(), indent=2, default=str))
+    written.append(gaps_path)
+  elif fmt == "holon":
     from xbrlkit.serialize import to_holon
 
     target.write_text(to_holon(model))
