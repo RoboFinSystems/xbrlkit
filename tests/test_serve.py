@@ -627,7 +627,7 @@ def test_locate_skips_a_contents_row_that_carries_the_whole_heading() -> None:
 # -- export ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fmt", ["holon", "tavi", "oim"])
+@pytest.mark.parametrize("fmt", ["clawdog", "holon", "tavi", "oim"])
 def test_export_filing_writes_projection(
   loaded: LoadedFiling, tmp_path: Path, fmt: str
 ) -> None:
@@ -635,7 +635,7 @@ def test_export_filing_writes_projection(
   path = Path(out["path"])
   assert path.parent == tmp_path and path.is_file() and out["bytes"] > 0
   json.loads(path.read_text())
-  if fmt == "tavi":
+  if fmt in ("clawdog", "tavi"):
     assert len(out["files"]) == 2
   with pytest.raises(tools.ToolError):
     tools.export_filing(loaded, "pdf", tmp_path)
