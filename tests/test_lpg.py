@@ -573,6 +573,29 @@ class TestProjection:
       {"from": structure["identifier"], "to": tables.nodes["Taxonomy"][0]["identifier"]}
     ]
 
+  def test_calculations_1_1_arcs_are_calculation_associations(self, model):
+    """The 2023 summation-item arcrole is the calculation linkbase too, and
+    keeps its weight."""
+    model.networks[1].arcs[0].arcrole = "https://xbrl.org/2023/arcrole/summation-item"
+    tables = to_graph_tables(model)
+    calculation = next(
+      a for a in tables.nodes["Association"] if a["association_type"] == "Calculation"
+    )
+    assert calculation["arcrole"] == "https://xbrl.org/2023/arcrole/summation-item"
+    assert calculation["weight"] == 1.0
+
+  def test_a_type_without_a_qname_keeps_its_namespace(self, model):
+    """A concept read back from a serialization may carry a type's namespace
+    and local name but no QName for a prefix the filing never bound; the
+    projection writes the type from what it has rather than dropping it."""
+    concept = model.concepts["us-gaap:Assets"]
+    concept.item_type = "monetaryItemType"
+    concept.item_type_qname = None
+    concept.item_type_namespace = "http://www.xbrl.org/2003/instance"
+    tables = to_graph_tables(model)
+    assets = next(e for e in tables.nodes["Element"] if e["qname"] == "us-gaap:Assets")
+    assert assets["item_type"] == "http://www.xbrl.org/2003/instance#monetaryItemType"
+
   def test_projection_is_deterministic(self, model):
     first = to_graph_tables(model)
     second = to_graph_tables(model)

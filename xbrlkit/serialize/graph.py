@@ -605,6 +605,11 @@ def _add_structures(
           if arc.arcrole:
             g.add((a_uri, XLINK.arcrole, _arcrole_uri(arc.arcrole)))
           g.add((a_uri, XLINK.role, URIRef(st.role_uri)))
+          # xbrldt:targetRole — the role the next hop of a hypercube's wiring
+          # continues in. A cube rebuilt without it loses every axis or
+          # member the filer declared in another role.
+          if arc.target_role:
+            g.add((a_uri, RS.targetRole, Literal(arc.target_role)))
           if arc.order is not None:
             g.add(
               (

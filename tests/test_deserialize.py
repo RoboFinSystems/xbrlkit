@@ -263,6 +263,9 @@ def _model() -> XbrlModel:
           from_qname="us-gaap:SegmentDomain",
           to_qname="us-gaap:NorthAmerica",
           arcrole=f"{DIM}/domain-member",
+          # The members continue in another role: a cube rebuilt without
+          # following this loses them.
+          target_role="http://example.com/role/SegmentMembers",
         ),
       ],
     ),
@@ -507,6 +510,17 @@ def test_tavi_gaps_are_declared(model: XbrlModel) -> None:
   assert "source_hash" in reported
   assert gaps.unmapped_datatypes == {}
   assert gaps.unmapped_label_types == {}
+
+
+def test_holon_keeps_the_target_role(model: XbrlModel) -> None:
+  """``xbrldt:targetRole`` rides on the association: the role the next hop of
+  a hypercube's wiring continues in, without which a cube declared across
+  roles reads as one role's arcs."""
+  got = from_holon_json(to_holon(model))
+  definition = next(n for n in got.networks if n.kind == "definition")
+  by_target = {a.to_qname: a.target_role for a in definition.arcs}
+  assert by_target["us-gaap:NorthAmerica"] == "http://example.com/role/SegmentMembers"
+  assert by_target["us-gaap:SegmentTable"] is None
 
 
 def test_holon_gaps_are_declared(model: XbrlModel) -> None:

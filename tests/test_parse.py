@@ -12,6 +12,7 @@ from datetime import date, datetime
 
 from xbrlkit.parse import ids
 from xbrlkit.parse.to_model import (
+  _classify_arcrole,
   _make_period,
   _make_unit,
   _measure_token,
@@ -250,3 +251,20 @@ def test_sec_ixt_transforms_register():
   register_sec_transforms()
   assert FunctionIxt.ixtNamespaceFunctions[SEC_IXT_NAMESPACE] is not None
   assert len(FunctionIxt.ixtNamespaceFunctions[SEC_IXT_NAMESPACE]) == len(registry)
+
+
+def test_calculations_1_1_is_the_calculation_linkbase():
+  """Calculations 1.1 declares the same roll-ups under the 2023 arcrole; a
+  filer that adopted it must not come back with no calculation network."""
+  assert (
+    _classify_arcrole("http://www.xbrl.org/2003/arcrole/summation-item")
+    == "calculation"
+  )
+  assert (
+    _classify_arcrole("https://xbrl.org/2023/arcrole/summation-item") == "calculation"
+  )
+  assert (
+    _classify_arcrole("http://www.xbrl.org/2003/arcrole/parent-child") == "presentation"
+  )
+  assert _classify_arcrole("http://xbrl.org/int/dim/arcrole/all") == "definition"
+  assert _classify_arcrole("http://www.xbrl.org/2003/arcrole/concept-label") is None

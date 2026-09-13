@@ -61,6 +61,9 @@ ISO_8601_URI = "http://www.w3.org/2001/XMLSchema#dateTime"
 CIK_SCHEME = "http://www.sec.gov/CIK"
 PARENT_CHILD = "http://www.xbrl.org/2003/arcrole/parent-child"
 SUMMATION_ITEM = "http://www.xbrl.org/2003/arcrole/summation-item"
+# Calculations 1.1 declares the same roll-ups under a newer arcrole.
+SUMMATION_ITEM_11 = "https://xbrl.org/2023/arcrole/summation-item"
+SUMMATION_ITEMS = (SUMMATION_ITEM, SUMMATION_ITEM_11)
 
 Row = dict[str, Any]
 
@@ -268,7 +271,12 @@ class _Projection:
       substitution_group=_qname_uri(
         concept.substitution_group, concept.substitution_group_namespace
       ),
-      item_type=_qname_uri(concept.item_type_qname, concept.item_type_namespace),
+      # The type's namespace and local name from whichever field carries the
+      # name: a concept read back from a serialization may keep the namespace
+      # and the local name but no QName for a prefix the filing never bound.
+      item_type=_qname_uri(
+        concept.item_type_qname or concept.item_type, concept.item_type_namespace
+      ),
     )
     self._labels_and_references(concept, element_id, uri)
     return element_id
@@ -355,7 +363,7 @@ class _Projection:
     self._associations.add(association_id)
     if arcrole == PARENT_CHILD:
       association_type = "Presentation"
-    elif arcrole == SUMMATION_ITEM:
+    elif arcrole in SUMMATION_ITEMS:
       association_type = "Calculation"
     else:
       association_type = "Other"
@@ -366,7 +374,7 @@ class _Projection:
       order_value=order_value,
       association_type=association_type,
       weight=float(arc.weight)
-      if arcrole == SUMMATION_ITEM and arc.weight is not None
+      if arcrole in SUMMATION_ITEMS and arc.weight is not None
       else None,
       root=arc.is_root,
       preferred_label=arc.preferred_label,
