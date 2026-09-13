@@ -268,7 +268,12 @@ class _Projection:
       substitution_group=_qname_uri(
         concept.substitution_group, concept.substitution_group_namespace
       ),
-      item_type=_qname_uri(concept.item_type_qname, concept.item_type_namespace),
+      # The type's namespace and local name, from whichever field carries the
+      # name: a concept read back from the graph keeps the namespace and the
+      # local name but no QName for a prefix the filing never bound.
+      item_type=_qname_uri(
+        concept.item_type_qname or concept.item_type, concept.item_type_namespace
+      ),
     )
     self._labels_and_references(concept, element_id, uri)
     return element_id

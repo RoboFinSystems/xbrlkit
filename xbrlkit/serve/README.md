@@ -26,12 +26,13 @@ chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
 | a **LEI**, or a filings.xbrl.org filing id | `lei:213800H2PQMIF3OVZY47` |
 | a local filing | an inline `.htm`, an instance `.xml`, a directory, a `.zip` package |
 | a **JSON report**, by path or URL | `.tavi.json`, `.holon.jsonld`, or a `model.json` from `export_filing` |
+| a **property graph**, by path | a single-filing `.lbug` written by `export_filing lpg` or `xbrlkit build --format lpg` |
 | a URL Arelle can load | any of the above on the web |
 
 The two indexes behind the first three are [`edgar/`](../edgar/README.md) and
-[`filings_org/`](../filings_org/README.md); the JSON reports are read by
-[`deserialize/`](../deserialize/README.md), with no Arelle and no taxonomy
-fetch. Several filings load at once, each under an id; `unload_filing` drops
+[`filings_org/`](../filings_org/README.md); the JSON reports and the graph
+are read by [`deserialize/`](../deserialize/README.md), with no Arelle and no
+taxonomy fetch. Several filings load at once, each under an id; `unload_filing` drops
 one.
 
 ## The tools

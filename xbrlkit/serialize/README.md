@@ -94,6 +94,11 @@ write_parquet(tables, Path("out/mmm"))   # nodes/*.parquet, relationships/*.parq
 build_lbug(tables, Path("out/mmm.lbug")) # CREATE TABLE … + COPY FROM, one file
 ```
 
+The inverse is [`deserialize/graph.py`](../deserialize/README.md#reading-the-graph):
+`from_graph(tables)` reads the rows back, and `read_lbug` pulls one report's
+rows out of a database.
+
+
 What the platform adds *after* projection is not in the file: text blocks stay
 inline in `Fact.value`, and the enrichment columns and tables
 (`canonical_concept`, `canonical_type`, `FactSet`, `Classification`) are empty.

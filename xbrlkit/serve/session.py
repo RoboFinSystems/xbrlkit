@@ -41,6 +41,8 @@ _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
 _PLAIN_SUFFIXES = {".txt", ".md"}
 # A report serialized as JSON — read into the model here, never by Arelle.
 _JSON_SUFFIXES = {".json", ".jsonld"}
+# A single-filing LadybugDB file: the property-graph projection, read back.
+_LBUG_SUFFIX = ".lbug"
 # What a document-only filing can be read from. A PDF (an ARS, an SEC comment
 # letter) is a document EDGAR holds and this cannot read; it is named as such
 # rather than loaded empty.
@@ -261,6 +263,8 @@ class FilingSession:
     package_dir: Path | None = None
     if path.is_file() and path.suffix.lower() in _JSON_SUFFIXES:
       return self._load_json(path, source)
+    if path.is_file() and path.suffix.lower() == _LBUG_SUFFIX:
+      return self._load_lbug(path, source)
     if path.is_dir():
       package_dir = path
       target = _find_load_target(path)
@@ -339,6 +343,24 @@ class FilingSession:
       source_document=text if served else None,
       source_kind=kind if served else None,
     )
+
+  def _load_lbug(self, path: Path, source: str) -> LoadedFiling:
+    """A single-filing LadybugDB file, read into the model without Arelle.
+
+    The property graph is the fourth representation the importers read: the
+    file ``xbrlkit build --format lpg`` writes, or one the RoboSystems
+    platform's own graph was projected from. Its rows come back as the model
+    and the tools work over it unchanged; the text tools have the tagged
+    text blocks, as they do for a TAVI or a holon.
+    """
+    from xbrlkit.deserialize import GraphError, from_graph, read_lbug
+
+    try:
+      model = from_graph(read_lbug(path))
+    except (GraphError, ImportError) as exc:
+      raise SourceError(f"{path} could not be read as a property graph: {exc}") from exc
+    model = _enrich_from_dei(model)
+    return self._finish(_local_id(path, model), source, model, None, path.parent)
 
   def _load_url(self, url: str) -> LoadedFiling:
     clean = Path(url.split("?", 1)[0])

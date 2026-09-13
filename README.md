@@ -48,7 +48,7 @@ that is the change that turns a kit into a junk drawer.
 | --- | --- | --- |
 | [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
 | [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, TAVI (+ its gap report), xBRL-JSON, the property graph |
-| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a TAVI read back into the model, no Arelle |
+| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon, a TAVI or the property graph's rows read back into the model, no Arelle |
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
@@ -127,13 +127,14 @@ From a source checkout, `just` wraps the same CLI: `just build 320193
 
 ```python
 from xbrlkit.parse import load_model, to_xbrl_model
-from xbrlkit.serialize import to_holon, to_tavi_report
-from xbrlkit.deserialize import from_holon_json
+from xbrlkit.serialize import to_holon, to_tavi_report, to_graph_tables
+from xbrlkit.deserialize import from_holon_json, from_graph
 
 model = to_xbrl_model(load_model("mmm-20241231.htm"), filing_meta)
 holon = to_holon(model)
 tavi, gaps = to_tavi_report(model)
 model = from_holon_json(holon)          # and back again
+model = from_graph(to_graph_tables(model))   # through the property graph, too
 ```
 
 ## Serve to an MCP client
