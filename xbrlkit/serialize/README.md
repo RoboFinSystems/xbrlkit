@@ -6,18 +6,26 @@ parse captures the full XBRL and each serializer decides what to shed.
 
 | Target | Status | Notes |
 | --- | --- | --- |
+| **ClawDog** (`.clawdog.jsonld`) | shipped | authored-report JSON-LD with fact provenance and calculation equations |
 | **holon** (`.holon.jsonld`) | shipped | RDF/JSON-LD, renders in the [xbrlkit viewer](https://xbrlkit.com/). **Lossless against the model** — see below |
 | **TAVI** (`.tavi.json`) | shipped | [Project TAVI](https://www.xbrl.org/Specification/tavi/PWD-2026-09-01/tavi-PWD-2026-09-01.html) compiled model, PWD-2026-09-01 |
 | **OIM** (`.oim.json`) | shipped | xBRL-JSON, checked fact-for-fact against Arelle's own writer |
 | **property graph** (`.lbug`, parquet) | shipped | the [RoboSystems](https://robosystems.ai) `sec` graph's tables, ids and DDL, as one LadybugDB file per filing |
 
-Two of them read back: see [`deserialize/`](../deserialize/README.md).
+Three of them read back: see [`deserialize/`](../deserialize/README.md).
 
 ```python
-from xbrlkit.serialize import to_holon, to_tavi_report, to_oim, to_graph_tables
+from xbrlkit.serialize import (
+  to_clawdog_report,
+  to_holon,
+  to_tavi_report,
+  to_oim,
+  to_graph_tables,
+)
 
+clawdog, gaps = to_clawdog_report(model)
 holon = to_holon(model)
-tavi, gaps = to_tavi_report(model)   # the document, and what it could not express
+tavi, gaps = to_tavi_report(model)  # the document, and what it could not express
 ```
 
 ## The OIM projection is the one with a reference implementation
@@ -89,9 +97,9 @@ shared graph runs on the file and a fact in either is the same row.
 ```python
 from xbrlkit.serialize import to_graph_tables, write_parquet, build_lbug
 
-tables = to_graph_tables(model)          # node and relationship rows, schema order
-write_parquet(tables, Path("out/mmm"))   # nodes/*.parquet, relationships/*.parquet
-build_lbug(tables, Path("out/mmm.lbug")) # CREATE TABLE … + COPY FROM, one file
+tables = to_graph_tables(model)  # node and relationship rows, schema order
+write_parquet(tables, Path("out/mmm"))  # nodes/*.parquet, relationships/*.parquet
+build_lbug(tables, Path("out/mmm.lbug"))  # CREATE TABLE … + COPY FROM, one file
 ```
 
 What the platform adds *after* projection is not in the file: text blocks stay

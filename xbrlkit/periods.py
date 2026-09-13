@@ -1,7 +1,7 @@
 """Reporting periods, built the same way by every source of an ``XbrlModel``.
 
-Three sources mint periods: the Arelle parse (:mod:`xbrlkit.parse.to_model`)
-and the two importers (:mod:`xbrlkit.deserialize`). A period's ``id`` is
+Four sources mint periods: the Arelle parse (:mod:`xbrlkit.parse.to_model`)
+and the JSON importers (:mod:`xbrlkit.deserialize`). A period's ``id`` is
 content-derived so periods dedupe across filings, which means all three have
 to agree exactly — one of them rounding a date or bucketing a span differently
 would give the same filing, read two ways, two period lists.

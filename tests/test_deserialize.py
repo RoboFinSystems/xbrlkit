@@ -22,8 +22,11 @@ from pathlib import Path
 import pytest
 
 from xbrlkit.deserialize import (
+  ClawDogError,
   HolonError,
   TaviError,
+  from_clawdog_json,
+  from_clawdog_report,
   from_holon_json,
   from_holon_report,
   from_tavi_json,
@@ -34,6 +37,7 @@ from xbrlkit.model import (
   Concept,
   DimQualifier,
   EntityIdentity,
+  FactProvenance,
   FilingMeta,
   Label,
   Network,
@@ -45,7 +49,7 @@ from xbrlkit.parse.ids import unit_id
 from xbrlkit.periods import duration_period, instant_period, period_from_interval
 from xbrlkit.deserialize.holon import _scheme_for
 from xbrlkit.namespaces import ENTITY_SCHEME
-from xbrlkit.serialize import to_holon, to_tavi
+from xbrlkit.serialize import to_clawdog, to_clawdog_report, to_holon, to_tavi
 from xbrlkit.serialize._values import CIK_SCHEME
 from xbrlkit.serve import tools
 from xbrlkit.serve.session import FilingSession, SourceError
@@ -308,6 +312,213 @@ def _model() -> XbrlModel:
   )
 
 
+def _clawdog_model() -> XbrlModel:
+  instant = instant_period(date(2024, 12, 31))
+  duration = duration_period(date(2024, 1, 1), date(2024, 12, 31))
+  concepts = {
+    "lg:Assets": Concept(
+      qname="lg:Assets",
+      namespace="https://lodgeit.org/ns/report#",
+      name="Assets",
+      period_type="instant",
+      balance="debit",
+      is_numeric=True,
+      item_type="monetaryItemType",
+      base_xsd_type="decimal",
+      labels=[Label(value="Assets", role=STANDARD, language="en")],
+      pref_label="Assets",
+    ),
+    "lg:Liabilities": Concept(
+      qname="lg:Liabilities",
+      namespace="https://lodgeit.org/ns/report#",
+      name="Liabilities",
+      period_type="instant",
+      balance="credit",
+      is_numeric=True,
+      item_type="monetaryItemType",
+      base_xsd_type="decimal",
+      labels=[Label(value="Liabilities", role=STANDARD, language="en")],
+      pref_label="Liabilities",
+    ),
+    "lg:Equity": Concept(
+      qname="lg:Equity",
+      namespace="https://lodgeit.org/ns/report#",
+      name="Equity",
+      period_type="instant",
+      balance="credit",
+      is_numeric=True,
+      item_type="monetaryItemType",
+      base_xsd_type="decimal",
+      labels=[Label(value="Equity", role=STANDARD, language="en")],
+      pref_label="Equity",
+    ),
+    "lg:RegionAxis": Concept(
+      qname="lg:RegionAxis",
+      namespace="https://lodgeit.org/ns/report#",
+      name="RegionAxis",
+      is_abstract=True,
+      is_dimension_item=True,
+      labels=[Label(value="Region Axis", role=STANDARD, language="en")],
+      pref_label="Region Axis",
+    ),
+    "lg:AustraliaMember": Concept(
+      qname="lg:AustraliaMember",
+      namespace="https://lodgeit.org/ns/report#",
+      name="AustraliaMember",
+      is_domain_member=True,
+      labels=[Label(value="Australia", role=STANDARD, language="en")],
+      pref_label="Australia",
+    ),
+  }
+  unit = Unit(
+    id=unit_id(USD_URI),
+    measure="iso4217:USD",
+    uri=USD_URI,
+  )
+  entity = EntityIdentity(
+    cik="entity_lodgeit_demo",
+    scheme=ENTITY_SCHEME,
+    name="LodgeiT Demo Pty Ltd",
+  )
+
+  def fact(
+    fid: str,
+    qname: str,
+    value: str,
+    provenance: FactProvenance,
+    dims: list[DimQualifier] | None = None,
+  ) -> XbrlFact:
+    return XbrlFact(
+      id=fid,
+      concept_qname=qname,
+      period_id=instant.id,
+      unit_id=unit.id,
+      entity_cik=entity.cik,
+      entity_scheme=entity.scheme,
+      entity_identifier=entity.cik,
+      dims=dims or [],
+      value_str=value,
+      numeric_value=float(value),
+      decimals="0",
+      value_kind="numeric",
+      provenance=provenance,
+    )
+
+  facts = [
+    fact(
+      "assets",
+      "lg:Assets",
+      "1200",
+      FactProvenance(
+        source="urn:lodgeit:ledger-row:assets",
+        kind="ledger_row",
+        content_hash="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        attributed_to="urn:lodgeit:agent:clawdog",
+      ),
+    ),
+    fact(
+      "liabilities",
+      "lg:Liabilities",
+      "700",
+      FactProvenance(
+        source="urn:lodgeit:working-paper:liabilities",
+        kind="working_paper_cell",
+        content_hash="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        attributed_to="urn:lodgeit:reviewer:andrew",
+      ),
+    ),
+    fact(
+      "equity",
+      "lg:Equity",
+      "500",
+      FactProvenance(
+        source="urn:lodgeit:calculation-output:equity",
+        kind="calculation_output",
+        content_hash="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        attributed_to="urn:lodgeit:system:clawdog-report-writer",
+      ),
+      dims=[
+        DimQualifier(
+          axis_qname="lg:RegionAxis",
+          member_qname="lg:AustraliaMember",
+          axis_type="segment",
+        )
+      ],
+    ),
+  ]
+  networks = [
+    Network(
+      role_uri="https://lodgeit.org/role/StatementOfFinancialPosition",
+      definition="Statement of Financial Position",
+      kind="presentation",
+      structure_id="sofp",
+      fact_set_id="sofp-facts",
+      arcs=[
+        Arc(
+          from_qname="lg:Assets",
+          to_qname="lg:Liabilities",
+          arcrole=PARENT_CHILD,
+          order=1.0,
+          is_root=True,
+        ),
+        Arc(
+          from_qname="lg:Assets",
+          to_qname="lg:Equity",
+          arcrole=PARENT_CHILD,
+          order=2.0,
+        ),
+      ],
+    ),
+    Network(
+      role_uri="https://lodgeit.org/role/StatementOfFinancialPosition",
+      definition="Statement of Financial Position",
+      kind="calculation",
+      structure_id="sofp",
+      fact_set_id="sofp-facts",
+      arcs=[
+        Arc(
+          from_qname="lg:Assets",
+          to_qname="lg:Liabilities",
+          arcrole=SUMMATION,
+          order=1.0,
+          weight=1.0,
+          is_root=True,
+        ),
+        Arc(
+          from_qname="lg:Assets",
+          to_qname="lg:Equity",
+          arcrole=SUMMATION,
+          order=2.0,
+          weight=1.0,
+        ),
+      ],
+    ),
+  ]
+  return XbrlModel(
+    filing=FilingMeta(
+      accession="demo-sofp-2024",
+      cik=entity.cik,
+      reporting_style="clawdog-authored-jsonld",
+      report_meta={"source_shape": "clawdog-report-jsonld-v1"},
+      form="SOFP",
+      filing_date=date(2025, 1, 31),
+      fiscal_year_focus="2024",
+      fiscal_period_focus="FY",
+      taxonomy_namespaces=["https://lodgeit.org/ns/report#"],
+      report_date=date(2024, 12, 31),
+      is_inline_xbrl=None,
+      report_uri="https://lodgeit.org/reports/demo-sofp-2024",
+      extension_namespace="https://lodgeit.org/ns/report#",
+    ),
+    entity=entity,
+    concepts=concepts,
+    periods=[instant, duration],
+    units=[unit],
+    facts=facts,
+    networks=networks,
+  )
+
+
 @pytest.fixture
 def model() -> XbrlModel:
   return _model()
@@ -317,6 +528,8 @@ def _through(model: XbrlModel, fmt: str) -> XbrlModel:
   """The model as it comes back through one serialization."""
   if fmt == "tavi":
     return from_tavi_json(to_tavi(model))
+  if fmt == "clawdog":
+    return from_clawdog_json(to_clawdog(model))
   return from_holon_json(to_holon(model))
 
 
@@ -725,17 +938,142 @@ def test_both_importers_answer_the_same(model: XbrlModel, tmp_path: Path) -> Non
     session.close()
 
 
+def _clawdog_signature(model: XbrlModel) -> dict[str, object]:
+  return {
+    "entity": model.entity.model_dump(),
+    "periods": sorted(
+      (period.model_dump(mode="json") for period in model.periods),
+      key=lambda item: item["id"],
+    ),
+    "units": sorted(
+      (unit.model_dump(mode="json") for unit in model.units),
+      key=lambda item: item["id"],
+    ),
+    "concepts": {
+      qname: {
+        "namespace": concept.namespace,
+        "period_type": concept.period_type,
+        "balance": concept.balance,
+        "is_numeric": concept.is_numeric,
+        "is_dimension_item": concept.is_dimension_item,
+        "is_domain_member": concept.is_domain_member,
+        "labels": sorted(
+          (label.role, label.value, label.language) for label in concept.labels
+        ),
+      }
+      for qname, concept in sorted(model.concepts.items())
+    },
+    "facts": sorted(
+      (
+        {
+          "id": fact.id,
+          "concept": fact.concept_qname,
+          "period": fact.period_id,
+          "unit": fact.unit_id,
+          "value": fact.value_str,
+          "numeric": fact.numeric_value,
+          "decimals": fact.decimals,
+          "dims": sorted(
+            (dim.axis_qname, dim.member_qname, dim.typed_value) for dim in fact.dims
+          ),
+          "provenance": (
+            fact.provenance.model_dump() if fact.provenance is not None else None
+          ),
+        }
+        for fact in model.facts
+      ),
+      key=lambda item: str(item["id"]),
+    ),
+    "equation": _clawdog_equation(model),
+  }
+
+
+def _clawdog_equation(model: XbrlModel) -> dict[str, object]:
+  values = {fact.concept_qname: fact.numeric_value for fact in model.facts}
+  calculation = next(
+    network for network in model.networks if network.kind == "calculation"
+  )
+  left = "lg:Assets"
+  right = sum(values[arc.to_qname] or 0 for arc in calculation.arcs)
+  return {
+    "assertion": "Assets = Liabilities + Equity",
+    "left": values[left],
+    "right": right,
+    "holds": values[left] == right,
+    "arcs": sorted(
+      (arc.from_qname, arc.to_qname, arc.weight) for arc in calculation.arcs
+    ),
+  }
+
+
+def test_clawdog_round_trip_keeps_the_native_report() -> None:
+  model = _clawdog_model()
+  document, writer_gaps = to_clawdog_report(model)
+  assert document["documentInfo"]["documentType"].endswith("/clawdog/report/v1")
+  assert "fact source_hash" not in writer_gaps.missing
+
+  got, reader_gaps = from_clawdog_report(to_clawdog(model))
+
+  assert reader_gaps.to_dict() == {
+    "missing": [],
+    "unknown_node_types": {},
+    "unsupported_equations": 0,
+  }
+  assert _clawdog_signature(got) == _clawdog_signature(model)
+  assert _clawdog_equation(got)["holds"] is True
+
+
+@pytest.mark.parametrize("fmt", ["clawdog", "tavi", "holon"])
+def test_clawdog_equivalence_fixture_survives_all_readers(fmt: str) -> None:
+  """The LodgeiT native fixture: facts, dimensions, provenance and equation."""
+  model = _clawdog_model()
+  got = _through(model, fmt)
+  signature = _clawdog_signature(got)
+
+  assert signature["entity"] == model.entity.model_dump()
+  assert signature["equation"] == _clawdog_equation(model)
+  assert sum(fact.provenance is not None for fact in got.facts) == 3
+  by_id = {fact.id: fact for fact in got.facts}
+  assert by_id["equity"].dims[0].axis_qname == "lg:RegionAxis"
+  assert by_id["equity"].dims[0].member_qname == "lg:AustraliaMember"
+  assert by_id["assets"].provenance == model.facts[0].provenance
+
+
+def test_clawdog_gap_report_names_fields_it_does_not_write() -> None:
+  model = _clawdog_model()
+  model.facts[0].source_hash = "arelle-md5"
+  model.facts[0].raw_value = "1,200"
+  model.networks[0].role_id = "role-sofp"
+
+  _, gaps = to_clawdog_report(model)
+
+  assert "fact source_hash" in gaps.missing
+  assert "fact raw_value" in gaps.missing
+  assert "network role_id" in gaps.missing
+
+
+def test_a_clawdog_that_is_not_one_is_refused() -> None:
+  with pytest.raises(ClawDogError):
+    from_clawdog_json("[")
+  with pytest.raises(ClawDogError):
+    from_clawdog_json('{"@context": {}, "@graph": []}')
+
+
 # -- the server reads them -------------------------------------------------------
 
 
-def test_the_session_loads_a_tavi_and_a_holon(model: XbrlModel, tmp_path: Path) -> None:
+def test_the_session_loads_a_tavi_a_holon_and_a_clawdog(
+  model: XbrlModel, tmp_path: Path
+) -> None:
   tavi = tmp_path / "acme.tavi.json"
   tavi.write_text(to_tavi(model))
   holon = tmp_path / "acme.holon.jsonld"
   holon.write_text(to_holon(model))
+  clawdog = tmp_path / "acme.clawdog.jsonld"
+  clawdog.write_text(to_clawdog(model))
   session = FilingSession()
   try:
-    for path in (tavi, holon):
+    for path in (tavi, holon, clawdog):
       loaded = session.load(str(path))
       assert loaded.has_xbrl is True
       assert loaded.has_document is False
