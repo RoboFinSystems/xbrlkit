@@ -831,6 +831,39 @@ def test_document_toggle_selects_the_text(loaded: LoadedFiling) -> None:
   )
 
 
+def test_search_text_says_where_the_unreturned_matches_fall() -> None:
+  """A broad pattern routes the next call by weight, not by guess."""
+  lf = _loaded_with_document()
+  out = tools.search_text(lf, "contract liabilities", max_hits=1)
+  assert out["total"] == 2 and len(out["hits"]) == 1
+  assert out["sections"] == [
+    {"section": "MD&A", "hits": 1},
+    {"section": "Revenue Recognition Policy", "hits": 1},
+  ]
+  assert "2 matches, 1 returned" in out["note"]
+  # Every match came back, so there is nothing left to say about where they are.
+  assert "sections" not in tools.search_text(lf, "contract liabilities")
+  # The pure profile keeps the ladder's hit shape.
+  assert "sections" not in tools.search_text(
+    lf, "contract liabilities", max_hits=1, pure=True
+  )
+
+
+def test_search_text_decomposes_a_phrase_that_matches_nothing() -> None:
+  """A regex is all or nothing; the words it is made of are not."""
+  lf = _loaded_with_document()
+  out = tools.search_text(lf, "customer concentration")
+  assert out["total"] == 0 and out["hits"] == []
+  assert out["terms"] == [
+    {"term": "customer", "matches": 1},
+    {"term": "concentration", "matches": 0},
+  ]
+  assert "terms" in out["note"]
+  # One word that matched nothing is what `total` already said.
+  assert "terms" not in tools.search_text(lf, "concentration")
+  assert "terms" not in tools.search_text(lf, "customer concentration", pure=True)
+
+
 def test_pure_read_text_uses_the_ladders_cap(loaded: LoadedFiling) -> None:
   start = loaded.sections[0].offset or 0
   product = tools.read_text(loaded, offset=start, length=8000)
