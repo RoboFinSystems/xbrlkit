@@ -831,6 +831,202 @@ def test_document_toggle_selects_the_text(loaded: LoadedFiling) -> None:
   )
 
 
+def test_search_text_says_where_the_unreturned_matches_fall() -> None:
+  """A broad pattern routes the next call by weight, not by guess."""
+  lf = _loaded_with_document()
+  out = tools.search_text(lf, "contract liabilities", max_hits=1)
+  assert out["total"] == 2 and len(out["hits"]) == 1
+  assert out["sections"] == [
+    {"section": "MD&A", "hits": 1},
+    {"section": "Revenue Recognition Policy", "hits": 1},
+  ]
+  assert "2 matches, 1 returned" in out["note"]
+  # Every match came back, so there is nothing left to say about where they are.
+  assert "sections" not in tools.search_text(lf, "contract liabilities")
+  # The pure profile keeps the ladder's hit shape.
+  assert "sections" not in tools.search_text(
+    lf, "contract liabilities", max_hits=1, pure=True
+  )
+
+
+def test_search_text_decomposes_a_phrase_that_matches_nothing() -> None:
+  """A regex is all or nothing; the words it is made of are not."""
+  lf = _loaded_with_document()
+  out = tools.search_text(lf, "customer concentration")
+  assert out["total"] == 0 and out["hits"] == []
+  assert out["terms"] == [
+    {"term": "customer", "matches": 1},
+    {"term": "concentration", "matches": 0},
+  ]
+  assert "terms" in out["note"]
+  # One word that matched nothing is what `total` already said.
+  assert "terms" not in tools.search_text(lf, "concentration")
+  assert "terms" not in tools.search_text(lf, "customer concentration", pure=True)
+
+
+def _loaded_blocks_only() -> LoadedFiling:
+  """A report that is only its tagged blocks, one of them unlabelled.
+
+  The shape a produced report arrives in — a holon written by a ledger, a
+  classic instance, a ``model.json`` — where there is no primary document to
+  read and the text is assembled from the blocks under their concept names.
+  The second block is an extension concept its producer gave no preferred
+  label, which is the common case there and the one the fixture with a
+  document does not cover.
+  """
+  from xbrlkit.serve.session import _text_from_text_blocks
+
+  model = _model()
+  model.concepts["acme:OperatingExpensePolicyTextBlock"] = Concept(
+    qname="acme:OperatingExpensePolicyTextBlock",
+    namespace="http://acme.example/20241231",
+    name="OperatingExpensePolicyTextBlock",
+    period_type="duration",
+    is_numeric=False,
+    is_textblock=True,
+    item_type="textBlockItemType",
+    nice_type="Text Block",
+  )
+  model.facts.append(
+    XbrlFact(
+      id="t2",
+      concept_qname="acme:OperatingExpensePolicyTextBlock",
+      period_id="D-2024",
+      entity_cik="0001234567",
+      value_str=(
+        "<div><p>Operating expense is classified by function: cost of revenue, "
+        "research and development, and general and administrative. Equipment is "
+        "depreciated straight-line over thirty-six months.</p></div>"
+      ),
+      value_kind="text",
+    )
+  )
+  block_text, block_sections = _text_from_text_blocks(model)
+  return LoadedFiling(
+    id="acme-blocks",
+    source="memory",
+    model=model,
+    text=block_text,
+    sections=block_sections,
+    has_document=False,
+  )
+
+
+def test_assembled_reading_leaves_no_match_outside_a_section() -> None:
+  """The concept name this server rendered as a heading is part of its block.
+
+  Otherwise every heading sits in a gap between two sections, and since a
+  qname carries the most topical word of the block it titles, the routing a
+  broad pattern gets back is short by exactly the matches a reader is most
+  likely to have been searching for.
+  """
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "policy", max_hits=1)
+  # "Policy" occurs only in the two concept names standing as headings.
+  assert out["total"] == 2
+  assert sum(row["hits"] for row in out["sections"]) == out["total"]
+  assert out["sections"] == [
+    {"section": "Revenue Recognition Policy", "hits": 1},
+    {"section": "OperatingExpensePolicyTextBlock", "hits": 1},
+  ]
+  # And the hit itself is attributed, not returned as belonging to nothing.
+  assert out["hits"][0]["section"] == "Revenue Recognition Policy"
+
+
+def test_assembled_reading_names_an_unlabelled_block_by_its_concept() -> None:
+  """A producer that wrote no preferred label still routes by a name."""
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "expense|depreciated", max_hits=1)
+  # Three: the block's own body twice, and "Expense" in the heading over it.
+  assert out["sections"] == [{"section": "OperatingExpensePolicyTextBlock", "hits": 3}]
+  assert sum(row["hits"] for row in out["sections"]) == out["total"]
+
+
+def _loaded_many_blocks(count: int = 12) -> LoadedFiling:
+  """A report whose matches fall in more sections than the rows can hold."""
+  from xbrlkit.serve.session import _text_from_text_blocks
+
+  model = _model()
+  for i in range(count):
+    qname = f"acme:Note{i:02d}TextBlock"
+    model.concepts[qname] = Concept(
+      qname=qname,
+      namespace="http://acme.example/20241231",
+      name=f"Note{i:02d}TextBlock",
+      period_type="duration",
+      is_numeric=False,
+      is_textblock=True,
+      item_type="textBlockItemType",
+      nice_type="Text Block",
+      pref_label=f"Note {i:02d}",
+    )
+    model.facts.append(
+      XbrlFact(
+        id=f"n{i}",
+        concept_qname=qname,
+        period_id="D-2024",
+        entity_cik="0001234567",
+        value_str=(
+          "<p>This note discusses the allocation of consideration among the "
+          "separate obligations the company carries, and the allocation basis "
+          f"the company applied in period {i} under its stated policy.</p>"
+        ),
+        value_kind="text",
+      )
+    )
+  block_text, block_sections = _text_from_text_blocks(model)
+  return LoadedFiling(
+    id="acme-notes",
+    source="memory",
+    model=model,
+    text=block_text,
+    sections=block_sections,
+    has_document=False,
+  )
+
+
+def test_a_capped_distribution_says_how_many_sections_it_left_out() -> None:
+  """The rows are the busiest ten; a caller must not read their sum as total.
+
+  Every one of the twelve notes carries the word twice, so the ten rows
+  account for twenty of twenty-four matches. Saying the rows count where all
+  of the matches fall would put the other four nowhere.
+  """
+  lf = _loaded_many_blocks()
+  out = tools.search_text(lf, "allocation", max_hits=1)
+  assert out["total"] == 24
+  assert len(out["sections"]) == 10
+  assert out["sections_omitted"] == 2
+  assert "24 matches, 1 returned; `sections` counts the 10 busiest of 12" in out["note"]
+
+
+def test_an_uncapped_distribution_still_accounts_for_every_match() -> None:
+  """Nothing is omitted when the matches fall within the rows."""
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "revenue", max_hits=1)
+  assert "sections_omitted" not in out
+  assert "counts where all of them fall" in out["note"]
+  assert sum(row["hits"] for row in out["sections"]) == out["total"]
+
+
+def test_a_term_is_counted_where_a_word_starts() -> None:
+  """A term that only trails inside a concept name is not a word the text uses."""
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "policy block")
+  assert out["total"] == 0
+  # "block" appears twice as the tail of a ...TextBlock concept name and never
+  # as a word; "policy" likewise only inside the two names.
+  assert out["terms"] == [
+    {"term": "policy", "matches": 0},
+    {"term": "block", "matches": 0},
+  ]
+  # A stem a caller wrote on purpose still counts the words it begins.
+  assert tools.search_text(lf, "depreciat straightline")["terms"] == [
+    {"term": "depreciat", "matches": 1},
+    {"term": "straightline", "matches": 0},
+  ]
+
+
 def test_pure_read_text_uses_the_ladders_cap(loaded: LoadedFiling) -> None:
   start = loaded.sections[0].offset or 0
   product = tools.read_text(loaded, offset=start, length=8000)

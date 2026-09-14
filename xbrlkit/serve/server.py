@@ -672,14 +672,25 @@ def build_server(
     "policies the filer tagged, one after another under their concept names"
   )
 
+  search_description = (
+    f"Case-insensitive regular-expression search over {text_scope}. Returns "
+    "up to max_hits matches (max 25), each with its character offset and a "
+    "window of text centred on it (default 300 characters, max 1500), plus "
+    "the total match count. Follow up with read_text at an offset."
+  )
+  if not pure:
+    search_description += (
+      " When more matched than came back, `sections` counts where the matches "
+      "fall, the busiest sections first — search or read there rather than "
+      "narrowing blind — and `sections_omitted` how many further sections hold "
+      "the rest. When "
+      "nothing matched, `terms` counts the pattern's own words separately, so "
+      "a phrase the filer words differently says which word to try."
+    )
+
   @server.tool(
     name="search_text",
-    description=(
-      f"Case-insensitive regular-expression search over {text_scope}. Returns "
-      "up to max_hits matches (max 25), each with its character offset and a "
-      "window of text centred on it (default 300 characters, max 1500), plus "
-      "the total match count. Follow up with read_text at an offset."
-    ),
+    description=search_description,
     structured_output=False,
   )
   def search_text(

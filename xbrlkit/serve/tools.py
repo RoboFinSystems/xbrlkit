@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections import defaultdict
+from bisect import bisect_right
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -47,6 +48,15 @@ from xbrlkit.view import ViewerHost
 
 MAX_HITS = 25
 DEFAULT_HITS = 10
+# Rows of the hit distribution and of the term fallback a search returns.
+SECTION_ROWS = 10
+TERM_ROWS = 8
+# Beyond this many matches a pattern says nothing about where its subject
+# is, so the distribution is omitted rather than computed over a sample.
+SECTION_SCAN = 20_000
+# How far back a lookup walks to find the innermost section covering an
+# offset; text blocks nest a level or two, never dozens.
+NEST_SCAN = 32
 DEFAULT_WINDOW = 300
 MAX_WINDOW = 1500
 DEFAULT_READ = 4000
@@ -417,16 +427,27 @@ def _period_wanted(p: Period | None, key: str, wanted: set[str]) -> bool:
   return p.end.isoformat() in wanted or str(p.end.year) in wanted
 
 
+def _span(s: TextSection) -> tuple[int, int] | None:
+  """The characters a located section covers, or ``None`` when it was not
+  located: its body, any heading this server rendered for it, and the blank
+  line that closes it. The one rule — both the label on a hit and the count
+  of where matches fall read it here, so they cannot disagree about whether
+  a character belongs to a section."""
+  if s.offset is None:
+    return None
+  return s.offset - s.heading_chars, s.offset + s.chars + 2
+
+
 def _section_at(sections: list[TextSection], offset: int) -> str | None:
   """The label of the innermost located section covering ``offset``."""
   best: TextSection | None = None
   best_offset = -1
   for s in sections:
-    start = s.offset
-    if start is None or start > offset or offset >= start + s.chars + 2:
+    span = _span(s)
+    if span is None or span[0] > offset or offset >= span[1]:
       continue
-    if start >= best_offset:
-      best, best_offset = s, start
+    if span[0] >= best_offset:
+      best, best_offset = s, span[0]
   return best.label if best else None
 
 
@@ -1824,6 +1845,81 @@ def information_block(
   return out
 
 
+_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
+
+
+def _section_rows(
+  sections: list[TextSection], offsets: list[int]
+) -> tuple[list[dict[str, Any]], int]:
+  """Where a pattern's matches fall, the busiest sections first.
+
+  ``offsets`` are the match starts. A section is located by the same rule as
+  :func:`_section_at` — the innermost one covering the offset — over a bisect
+  index, so a broad pattern costs a lookup per match rather than a scan.
+
+  A section covers the heading rendered for it, so a reading this server
+  assembled from the tagged blocks attributes every match and the rows sum
+  to the total: a concept name standing as a block's heading counts to the
+  block it titles rather than falling in the gap between two sections, which
+  is where the topical word of every block sits. In a parsed document matches
+  outside every section — a table of contents, the signatures — are still
+  left out; there the rows say where the mass is, not how it partitions.
+
+  Returns the rows and how many sections the matches fall in. The rows are
+  the busiest ``SECTION_ROWS`` of those, so the two differ whenever the
+  distribution has a tail — which is the ordinary case in a text-block
+  reading, where a word appearing in concept names puts one match in each of
+  many blocks. A caller given only the rows would read their sum as the match
+  count and conclude the rest of the matches were not there.
+  """
+  located: list[tuple[int, int, str]] = []
+  for s in sections:
+    span = _span(s)
+    if span is not None:
+      located.append((span[0], span[1], s.label))
+  located.sort(key=lambda t: t[0])
+  if not located:
+    return [], 0
+  starts = [t[0] for t in located]
+  counts: Counter[str] = Counter()
+  for offset in offsets:
+    i = bisect_right(starts, offset) - 1
+    for j in range(i, max(-1, i - NEST_SCAN), -1):
+      if offset < located[j][1]:
+        counts[located[j][2]] += 1
+        break
+  return [
+    {"section": label, "hits": n} for label, n in counts.most_common(SECTION_ROWS)
+  ], len(counts)
+
+
+def _term_rows(text: str, pattern: str) -> list[dict[str, Any]]:
+  """How often a missed pattern's own words occur on their own.
+
+  A regular expression is all or nothing: ``customer concentration`` matches
+  nothing in a filing that discusses it as *no single customer accounted for*.
+  Counting the words separately says which of them the filing uses, and so
+  which one to search for instead. Only worth saying when there are two —
+  one word that matches nothing is what ``total`` already reported.
+
+  A word is counted where one begins, not wherever its letters appear, so a
+  term that only ever trails inside a concept name — ``block`` inside
+  ``RevenueRecognitionPolicyTextBlock`` — reports the nothing it is rather
+  than sending the caller after a machine token, while a stem written on
+  purpose (``terminat``) still counts the words it starts.
+  """
+  terms = list(dict.fromkeys(m.group(0).lower() for m in _TERM_RE.finditer(pattern)))
+  if len(terms) < 2:
+    return []
+  lowered = text.lower()
+  rows = [
+    {"term": t, "matches": len(re.findall(rf"\b{re.escape(t)}", lowered))}
+    for t in terms[:TERM_ROWS]
+  ]
+  rows.sort(key=lambda r: -r["matches"])
+  return rows
+
+
 def search_text(
   lf: LoadedFiling,
   pattern: str,
@@ -1834,8 +1930,16 @@ def search_text(
   pure: bool = False,
 ) -> dict[str, Any]:
   """Regex search over the readable text: the whole primary document when
-  ``whole`` (and one is held), else the tagged text blocks. ``pure`` drops
-  the section label on hits — the ladder's exact hit shape."""
+  ``whole`` (and one is held), else the tagged text blocks.
+
+  Hits are the first ``max_hits`` in document order. Two things are said
+  about the matches that did not fit in them: ``sections`` counts where all
+  of them fall, so a broad pattern routes the next call by weight rather
+  than by guess, and on no match at all ``terms`` counts the pattern's own
+  words, so a phrase the filer words differently is a step rather than a
+  dead end. ``pure`` drops both, and the section label on hits — the
+  ladder's exact hit shape.
+  """
   text, sections = lf.readable(whole)
   if not (pattern or "").strip():
     raise ToolError("pattern is required")
@@ -1847,9 +1951,12 @@ def search_text(
   max_hits = max(1, min(int(max_hits or DEFAULT_HITS), MAX_HITS))
   half = window // 2
   hits: list[dict[str, Any]] = []
+  offsets: list[int] = []
   total = 0
   for m in rx.finditer(text):
     total += 1
+    if not pure and total <= SECTION_SCAN:
+      offsets.append(m.start())
     if len(hits) >= max_hits:
       continue
     start = max(0, m.start() - half)
@@ -1863,13 +1970,38 @@ def search_text(
     if section:
       hit["section"] = section
     hits.append(hit)
-  return {
+
+  out: dict[str, Any] = {
     "pattern": pattern,
     "total": total,
     "hits": hits,
     "text_chars": len(text),
-    "note": "offsets index the plain text; read_text pages from one",
   }
+  note = "offsets index the plain text; read_text pages from one"
+  if not pure:
+    if len(hits) < total <= SECTION_SCAN:
+      rows, found = _section_rows(sections, offsets)
+      if rows:
+        out["sections"] = rows
+        if found > len(rows):
+          out["sections_omitted"] = found - len(rows)
+          where = (
+            f"`sections` counts the {len(rows)} busiest of {found} sections "
+            "they fall in"
+          )
+        else:
+          where = "`sections` counts where all of them fall"
+        note = f"{total} matches, {len(hits)} returned; {where}. " + note
+    elif total == 0:
+      rows = _term_rows(text, pattern)
+      if rows:
+        out["terms"] = rows
+        note = (
+          "nothing matched the pattern as written; `terms` counts its words "
+          "on their own — search again for the wording the filing uses"
+        )
+  out["note"] = note
+  return out
 
 
 def read_text(
