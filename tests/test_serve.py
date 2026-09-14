@@ -304,6 +304,21 @@ def session(loaded: LoadedFiling) -> FilingSession:
 # -- describe -------------------------------------------------------------------
 
 
+def test_load_receipt_confirms_without_the_map(loaded: LoadedFiling) -> None:
+  """load_filing says what arrived; describe_filing draws the map. Returning
+  the map from both made an agent following the instructions pay twice."""
+  receipt = tools.load_receipt(loaded)
+  full = tools.describe_filing(loaded)
+  assert receipt["loaded"] == loaded.id
+  assert receipt["entity"] == full["entity"]
+  assert receipt["filing"] == full["filing"]
+  assert receipt["counts"] == full["counts"]
+  assert "describe_filing" in receipt["next"]
+  for heavy in ("periods", "statements", "disclosures", "axes", "sections"):
+    assert heavy not in receipt
+  assert len(json.dumps(receipt)) < len(json.dumps(full))
+
+
 def test_describe_filing_orients(loaded: LoadedFiling) -> None:
   out = tools.describe_filing(loaded)
   assert out["entity"]["name"] == "Acme Corp"
@@ -398,6 +413,33 @@ def test_fact_grid_dimensions_and_filters(loaded: LoadedFiling) -> None:
   assert {r["concept"] for r in instants["rows"]} == {"us-gaap:Assets"}
   exact = tools.fact_grid(loaded, ["Assets"], period_end="2024-12-31")
   assert exact["row_count"] == 1 and exact["rows"][0]["value"] == 5_000_000
+
+
+def test_fact_grid_says_why_a_resolved_concept_has_no_row(
+  loaded: LoadedFiling,
+) -> None:
+  """A balance-sheet concept under a duration bucket returns nothing: an
+  instant has no duration. Silently, that reads as "the filer never tagged
+  Assets" — the opposite of the truth."""
+  out = tools.fact_grid(loaded, ["Assets", "Revenues"], period_type="annual")
+  assert "us-gaap:Assets" in out["resolved"]
+  assert not any(r["concept"] == "us-gaap:Assets" for r in out["rows"])
+  (excluded,) = [e for e in out["excluded"] if e["concept"] == "us-gaap:Assets"]
+  assert "instants" in excluded["reason"] and "annual" in excluded["reason"]
+  assert "period_end" in excluded["try"]
+  assert excluded["facts"] >= 1
+
+
+def test_fact_grid_distinguishes_excluded_from_untagged(loaded: LoadedFiling) -> None:
+  """`excluded` is what the filing reports and a filter removed; `unresolved`
+  is what it never tagged. Conflating them is the whole defect."""
+  out = tools.fact_grid(loaded, ["Assets", "Nonesuch"], period_type="annual")
+  assert out["unresolved"] == ["Nonesuch"]
+  assert [e["concept"] for e in out["excluded"]] == ["us-gaap:Assets"]
+
+
+def test_fact_grid_is_quiet_when_every_concept_answers(loaded: LoadedFiling) -> None:
+  assert "excluded" not in tools.fact_grid(loaded, ["Revenues"])
 
 
 def test_fact_grid_reports_unresolved(loaded: LoadedFiling) -> None:
@@ -1280,17 +1322,20 @@ class TestSearchFilings:
   """EDGAR-wide discovery: the step before load_filing."""
 
   @staticmethod
-  def _stub(monkeypatch, total, hits):
-    """Stand in for EftsClient without touching the network."""
+  def _stub(monkeypatch, total, hits, rows=None):
+    """Stand in for EftsClient without touching the network. `rows`, when
+    given, replaces the generated hits with specific ones."""
     import xbrlkit.edgar.efts as efts
 
     class _Hit:
-      def __init__(self, cik, accession):
+      def __init__(self, cik, accession, parties=(), party_ciks=()):
         self.cik = cik
         self.accession = accession
         self.form = "10-K"
         self.filing_date = "2026-03-24"
         self.primary_document = "ACME CORP  (ACME)"
+        self.parties = parties or ("ACME CORP  (ACME)",)
+        self.party_ciks = party_ciks or (cik,)
 
     class _Client:
       def __init__(self, config=None):
@@ -1298,6 +1343,8 @@ class TestSearchFilings:
 
       def query_with_total(self, **kwargs):
         _Client.seen = kwargs
+        if rows is not None:
+          return total, rows
         return total, [_Hit(f"000000000{i}", f"acc-{i}") for i in range(hits)]
 
     monkeypatch.setattr(efts, "EftsClient", _Client)
@@ -1309,6 +1356,38 @@ class TestSearchFilings:
     out = tools.search_filings(text_query="goodwill impairment")
     assert out["filings"][0]["source"] == "0000000000:acc-0"
     assert out["returned"] == 3
+
+  def test_a_multi_party_hit_says_why_it_matched(self, monkeypatch):
+    """A CIK query for a company also returns the Form 4s filed about it,
+    whose `filer` is an individual. The hit has to say so, or it reads as a
+    result for the wrong company."""
+    from xbrlkit.edgar import EftsHit
+
+    form4 = EftsHit(
+      cik="0001866577",
+      accession="0001522767-26-000170",
+      form="4",
+      file_number=None,
+      filing_date="2026-09-01",
+      primary_document="Shaw Timothy",
+      file_url=None,
+      party_ciks=("0001866577", "0001522767"),
+      parties=("Shaw Timothy", "MARIMED INC."),
+    )
+    self._stub(monkeypatch, total=1, hits=0, rows=[form4])
+
+    out = tools.search_filings(ciks=["1522767"], forms=["4"])
+    row = out["filings"][0]
+    assert row["parties"] == ["Shaw Timothy", "MARIMED INC."]
+    assert row["matched_cik"] == ["0001522767"]
+    assert "ownership form" in out["parties_note"]
+
+  def test_a_single_party_hit_stays_quiet(self, monkeypatch):
+    """A company's own filing has one party; no note, no extra keys."""
+    self._stub(monkeypatch, total=1, hits=1)
+    out = tools.search_filings(ciks=["0000000000"])
+    assert "parties" not in out["filings"][0]
+    assert "parties_note" not in out
 
   def test_an_unfiltered_search_is_refused(self):
     """Every filing on EDGAR is not an answer."""

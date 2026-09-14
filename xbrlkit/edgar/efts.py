@@ -55,24 +55,36 @@ class EftsHit:
   filing_date: str | None
   primary_document: str | None
   file_url: str | None
+  party_ciks: tuple[str, ...] = ()
+  parties: tuple[str, ...] = ()
 
   @classmethod
   def from_hit(cls, hit: dict) -> EftsHit:
-    """Parse one ``hits.hits[]`` entry. The ``_id`` is ``accession:filename``;
-    ``ciks`` is a list, whose first entry is the filer."""
+    """Parse one ``hits.hits[]`` entry. The ``_id`` is ``accession:filename``.
+
+    ``ciks`` and ``display_names`` are parallel lists of every party EDGAR
+    associates with the filing, not one filer: an ownership form (3, 4, 5)
+    carries the reporting owner *and* the issuer, which is why a CIK query
+    for a company returns Form 4s whose first name is an individual. Both
+    lists are kept as ``party_ciks`` / ``parties`` — a caller filtering by
+    CIK needs to see why a hit matched. ``cik`` stays the first entry, the
+    one that addresses the filing on EDGAR.
+    """
     source = hit.get("_source", {}) or {}
     hit_id = str(hit.get("_id", ""))
     accession = hit_id.split(":")[0] if ":" in hit_id else hit_id
-    ciks = source.get("ciks") or []
-    display = source.get("display_names") or []
+    ciks = [str(c).zfill(10) for c in (source.get("ciks") or [])]
+    display = [str(d).strip() for d in (source.get("display_names") or [])]
     return cls(
-      cik=str(ciks[0]).zfill(10) if ciks else "",
+      cik=ciks[0] if ciks else "",
       accession=accession,
       form=str(source.get("form", "") or ""),
       file_number=source.get("file_num"),
       filing_date=source.get("file_date"),
       primary_document=display[0] if display else None,
       file_url=source.get("file_url"),
+      party_ciks=tuple(ciks),
+      parties=tuple(display),
     )
 
 

@@ -217,6 +217,9 @@ def build_server(
   def describe(loaded: Any) -> dict[str, Any]:
     return tools.describe_filing(loaded, pure=pure, whole=whole)
 
+  def receipt(loaded: Any) -> dict[str, Any]:
+    return tools.load_receipt(loaded, pure=pure, whole=whole)
+
   @server.tool(
     name="list_filings",
     description="The filings this server has loaded, with their ids.",
@@ -259,7 +262,15 @@ def build_server(
       str | None, Field(description="Latest filing date, YYYY-MM-DD.")
     ] = None,
     ciks: Annotated[
-      list[str] | None, Field(description="Restrict to these filer CIKs.")
+      list[str] | None,
+      Field(
+        description=(
+          "Restrict to filings EDGAR associates with these CIKs — which for an "
+          "ownership form (3, 4, 5) means the issuer as well as the reporting "
+          "owner, so a company's CIK also returns the insider forms filed "
+          "about it. Add `forms` to take one side."
+        )
+      ),
     ] = None,
     limit: Annotated[
       int,
@@ -286,7 +297,10 @@ def build_server(
   @server.tool(
     name="load_filing",
     description=(
-      "Load a filing into the server and return its description. `source` is "
+      "Load a filing into the server and return a receipt — the entity, the "
+      "form and fiscal context, and the fact counts. The layout is "
+      "describe_filing's job: call it next for the period keys, the networks "
+      "and the text sections. `source` is "
       "a local path (an inline XBRL .htm, an XBRL instance .xml, a filing "
       "directory, a .zip package, or a JSON report: a ClawDog report, a TAVI "
       "compiled model, a holon, or a model.json written by export_filing), "
@@ -318,7 +332,7 @@ def build_server(
       loaded = await anyio.to_thread.run_sync(session.load, source, filing_id)
     except (SourceError, FileNotFoundError, ValueError) as exc:
       return _error(str(exc))
-    return run(describe, loaded)
+    return run(receipt, loaded)
 
   @server.tool(
     name="unload_filing",
