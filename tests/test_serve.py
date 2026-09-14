@@ -942,6 +942,73 @@ def test_assembled_reading_names_an_unlabelled_block_by_its_concept() -> None:
   assert sum(row["hits"] for row in out["sections"]) == out["total"]
 
 
+def _loaded_many_blocks(count: int = 12) -> LoadedFiling:
+  """A report whose matches fall in more sections than the rows can hold."""
+  from xbrlkit.serve.session import _text_from_text_blocks
+
+  model = _model()
+  for i in range(count):
+    qname = f"acme:Note{i:02d}TextBlock"
+    model.concepts[qname] = Concept(
+      qname=qname,
+      namespace="http://acme.example/20241231",
+      name=f"Note{i:02d}TextBlock",
+      period_type="duration",
+      is_numeric=False,
+      is_textblock=True,
+      item_type="textBlockItemType",
+      nice_type="Text Block",
+      pref_label=f"Note {i:02d}",
+    )
+    model.facts.append(
+      XbrlFact(
+        id=f"n{i}",
+        concept_qname=qname,
+        period_id="D-2024",
+        entity_cik="0001234567",
+        value_str=(
+          "<p>This note discusses the allocation of consideration among the "
+          "separate obligations the company carries, and the allocation basis "
+          f"the company applied in period {i} under its stated policy.</p>"
+        ),
+        value_kind="text",
+      )
+    )
+  block_text, block_sections = _text_from_text_blocks(model)
+  return LoadedFiling(
+    id="acme-notes",
+    source="memory",
+    model=model,
+    text=block_text,
+    sections=block_sections,
+    has_document=False,
+  )
+
+
+def test_a_capped_distribution_says_how_many_sections_it_left_out() -> None:
+  """The rows are the busiest ten; a caller must not read their sum as total.
+
+  Every one of the twelve notes carries the word twice, so the ten rows
+  account for twenty of twenty-four matches. Saying the rows count where all
+  of the matches fall would put the other four nowhere.
+  """
+  lf = _loaded_many_blocks()
+  out = tools.search_text(lf, "allocation", max_hits=1)
+  assert out["total"] == 24
+  assert len(out["sections"]) == 10
+  assert out["sections_omitted"] == 2
+  assert "24 matches, 1 returned; `sections` counts the 10 busiest of 12" in out["note"]
+
+
+def test_an_uncapped_distribution_still_accounts_for_every_match() -> None:
+  """Nothing is omitted when the matches fall within the rows."""
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "revenue", max_hits=1)
+  assert "sections_omitted" not in out
+  assert "counts where all of them fall" in out["note"]
+  assert sum(row["hits"] for row in out["sections"]) == out["total"]
+
+
 def test_a_term_is_counted_where_a_word_starts() -> None:
   """A term that only trails inside a concept name is not a word the text uses."""
   lf = _loaded_blocks_only()

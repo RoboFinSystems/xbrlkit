@@ -1850,7 +1850,7 @@ _TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
 
 def _section_rows(
   sections: list[TextSection], offsets: list[int]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
   """Where a pattern's matches fall, the busiest sections first.
 
   ``offsets`` are the match starts. A section is located by the same rule as
@@ -1864,6 +1864,13 @@ def _section_rows(
   is where the topical word of every block sits. In a parsed document matches
   outside every section — a table of contents, the signatures — are still
   left out; there the rows say where the mass is, not how it partitions.
+
+  Returns the rows and how many sections the matches fall in. The rows are
+  the busiest ``SECTION_ROWS`` of those, so the two differ whenever the
+  distribution has a tail — which is the ordinary case in a text-block
+  reading, where a word appearing in concept names puts one match in each of
+  many blocks. A caller given only the rows would read their sum as the match
+  count and conclude the rest of the matches were not there.
   """
   located: list[tuple[int, int, str]] = []
   for s in sections:
@@ -1872,7 +1879,7 @@ def _section_rows(
       located.append((span[0], span[1], s.label))
   located.sort(key=lambda t: t[0])
   if not located:
-    return []
+    return [], 0
   starts = [t[0] for t in located]
   counts: Counter[str] = Counter()
   for offset in offsets:
@@ -1883,7 +1890,7 @@ def _section_rows(
         break
   return [
     {"section": label, "hits": n} for label, n in counts.most_common(SECTION_ROWS)
-  ]
+  ], len(counts)
 
 
 def _term_rows(text: str, pattern: str) -> list[dict[str, Any]]:
@@ -1973,13 +1980,18 @@ def search_text(
   note = "offsets index the plain text; read_text pages from one"
   if not pure:
     if len(hits) < total <= SECTION_SCAN:
-      rows = _section_rows(sections, offsets)
+      rows, found = _section_rows(sections, offsets)
       if rows:
         out["sections"] = rows
-        note = (
-          f"{total} matches, {len(hits)} returned; "
-          "`sections` counts where all of them fall. " + note
-        )
+        if found > len(rows):
+          out["sections_omitted"] = found - len(rows)
+          where = (
+            f"`sections` counts the {len(rows)} busiest of {found} sections "
+            "they fall in"
+          )
+        else:
+          where = "`sections` counts where all of them fall"
+        note = f"{total} matches, {len(hits)} returned; {where}. " + note
     elif total == 0:
       rows = _term_rows(text, pattern)
       if rows:

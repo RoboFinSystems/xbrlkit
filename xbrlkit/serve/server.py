@@ -680,8 +680,10 @@ def build_server(
   )
   if not pure:
     search_description += (
-      " When more matched than came back, `sections` counts where all of the "
-      "matches fall — search or read there rather than narrowing blind. When "
+      " When more matched than came back, `sections` counts where the matches "
+      "fall, the busiest sections first — search or read there rather than "
+      "narrowing blind — and `sections_omitted` how many further sections hold "
+      "the rest. When "
       "nothing matched, `terms` counts the pattern's own words separately, so "
       "a phrase the filer words differently says which word to try."
     )
