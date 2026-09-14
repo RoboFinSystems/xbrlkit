@@ -16,6 +16,17 @@ the other, with nothing behind them but the filing. Needs the ``mcp`` extra::
 registers the tools on an ``MCPServer``; :func:`serve` runs it. The tool
 functions themselves live in :mod:`xbrlkit.serve.tools` and take a
 :class:`LoadedFiling`, so they can be called without MCP at all.
+
+**The names in ``__all__`` are this package's declared surface, and a host
+that serves these tools itself depends on them.** RoboSystems does exactly
+that: its ``information-block`` / ``disclosures`` endpoints build a
+:class:`LoadedFiling` over a report it already holds and call
+:func:`disclosures` and :func:`information_block` directly, so the two tools
+answer identically whether they are reached through this server or through
+the platform. Adding to this tuple is free; renaming or removing from it
+breaks that host with no signal until its next deploy, so treat it as an API
+and not as the inside of an MCP server. Everything else under
+:mod:`xbrlkit.serve` is internal.
 """
 
 from __future__ import annotations
@@ -24,14 +35,26 @@ from pathlib import Path
 from typing import Any
 
 from .session import FilingSession, LoadedFiling, SourceError, TextSection, build_text
+from .tools import (
+  MAX_BLOCK_MEMBERS_CAP,
+  MAX_BLOCK_ROWS,
+  ToolError,
+  disclosures,
+  information_block,
+)
 
 __all__ = (
+  "MAX_BLOCK_MEMBERS_CAP",
+  "MAX_BLOCK_ROWS",
   "FilingSession",
   "LoadedFiling",
   "SourceError",
   "TextSection",
+  "ToolError",
   "build_server",
   "build_text",
+  "disclosures",
+  "information_block",
   "serve",
 )
 
