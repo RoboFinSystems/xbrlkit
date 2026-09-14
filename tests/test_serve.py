@@ -864,6 +864,102 @@ def test_search_text_decomposes_a_phrase_that_matches_nothing() -> None:
   assert "terms" not in tools.search_text(lf, "customer concentration", pure=True)
 
 
+def _loaded_blocks_only() -> LoadedFiling:
+  """A report that is only its tagged blocks, one of them unlabelled.
+
+  The shape a produced report arrives in — a holon written by a ledger, a
+  classic instance, a ``model.json`` — where there is no primary document to
+  read and the text is assembled from the blocks under their concept names.
+  The second block is an extension concept its producer gave no preferred
+  label, which is the common case there and the one the fixture with a
+  document does not cover.
+  """
+  from xbrlkit.serve.session import _text_from_text_blocks
+
+  model = _model()
+  model.concepts["acme:OperatingExpensePolicyTextBlock"] = Concept(
+    qname="acme:OperatingExpensePolicyTextBlock",
+    namespace="http://acme.example/20241231",
+    name="OperatingExpensePolicyTextBlock",
+    period_type="duration",
+    is_numeric=False,
+    is_textblock=True,
+    item_type="textBlockItemType",
+    nice_type="Text Block",
+  )
+  model.facts.append(
+    XbrlFact(
+      id="t2",
+      concept_qname="acme:OperatingExpensePolicyTextBlock",
+      period_id="D-2024",
+      entity_cik="0001234567",
+      value_str=(
+        "<div><p>Operating expense is classified by function: cost of revenue, "
+        "research and development, and general and administrative. Equipment is "
+        "depreciated straight-line over thirty-six months.</p></div>"
+      ),
+      value_kind="text",
+    )
+  )
+  block_text, block_sections = _text_from_text_blocks(model)
+  return LoadedFiling(
+    id="acme-blocks",
+    source="memory",
+    model=model,
+    text=block_text,
+    sections=block_sections,
+    has_document=False,
+  )
+
+
+def test_assembled_reading_leaves_no_match_outside_a_section() -> None:
+  """The concept name this server rendered as a heading is part of its block.
+
+  Otherwise every heading sits in a gap between two sections, and since a
+  qname carries the most topical word of the block it titles, the routing a
+  broad pattern gets back is short by exactly the matches a reader is most
+  likely to have been searching for.
+  """
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "policy", max_hits=1)
+  # "Policy" occurs only in the two concept names standing as headings.
+  assert out["total"] == 2
+  assert sum(row["hits"] for row in out["sections"]) == out["total"]
+  assert out["sections"] == [
+    {"section": "Revenue Recognition Policy", "hits": 1},
+    {"section": "OperatingExpensePolicyTextBlock", "hits": 1},
+  ]
+  # And the hit itself is attributed, not returned as belonging to nothing.
+  assert out["hits"][0]["section"] == "Revenue Recognition Policy"
+
+
+def test_assembled_reading_names_an_unlabelled_block_by_its_concept() -> None:
+  """A producer that wrote no preferred label still routes by a name."""
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "expense|depreciated", max_hits=1)
+  # Three: the block's own body twice, and "Expense" in the heading over it.
+  assert out["sections"] == [{"section": "OperatingExpensePolicyTextBlock", "hits": 3}]
+  assert sum(row["hits"] for row in out["sections"]) == out["total"]
+
+
+def test_a_term_is_counted_where_a_word_starts() -> None:
+  """A term that only trails inside a concept name is not a word the text uses."""
+  lf = _loaded_blocks_only()
+  out = tools.search_text(lf, "policy block")
+  assert out["total"] == 0
+  # "block" appears twice as the tail of a ...TextBlock concept name and never
+  # as a word; "policy" likewise only inside the two names.
+  assert out["terms"] == [
+    {"term": "policy", "matches": 0},
+    {"term": "block", "matches": 0},
+  ]
+  # A stem a caller wrote on purpose still counts the words it begins.
+  assert tools.search_text(lf, "depreciat straightline")["terms"] == [
+    {"term": "depreciat", "matches": 1},
+    {"term": "straightline", "matches": 0},
+  ]
+
+
 def test_pure_read_text_uses_the_ladders_cap(loaded: LoadedFiling) -> None:
   start = loaded.sections[0].offset or 0
   product = tools.read_text(loaded, offset=start, length=8000)

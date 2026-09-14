@@ -85,6 +85,12 @@ class TextSection:
   chars: int
   offset: int | None = None
   elements: list[str] = field(default_factory=list)
+  # Characters of heading standing immediately before ``offset``, when this
+  # server assembled the text rather than parsing it from a document.
+  # ``offset`` stays the body's own start — what a reader pages from — so
+  # anything counting where matches fall reaches back over this instead, and
+  # no character of an assembled reading belongs to no section.
+  heading_chars: int = 0
 
 
 @dataclass
@@ -1123,6 +1129,7 @@ def _text_from_text_blocks(model: XbrlModel) -> tuple[str, list[TextSection]]:
         kind="text_block",
         chars=len(body),
         offset=offset + len(header),
+        heading_chars=len(header),
       )
     )
     parts.append(chunk)

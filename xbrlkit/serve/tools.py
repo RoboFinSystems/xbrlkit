@@ -427,16 +427,27 @@ def _period_wanted(p: Period | None, key: str, wanted: set[str]) -> bool:
   return p.end.isoformat() in wanted or str(p.end.year) in wanted
 
 
+def _span(s: TextSection) -> tuple[int, int] | None:
+  """The characters a located section covers, or ``None`` when it was not
+  located: its body, any heading this server rendered for it, and the blank
+  line that closes it. The one rule — both the label on a hit and the count
+  of where matches fall read it here, so they cannot disagree about whether
+  a character belongs to a section."""
+  if s.offset is None:
+    return None
+  return s.offset - s.heading_chars, s.offset + s.chars + 2
+
+
 def _section_at(sections: list[TextSection], offset: int) -> str | None:
   """The label of the innermost located section covering ``offset``."""
   best: TextSection | None = None
   best_offset = -1
   for s in sections:
-    start = s.offset
-    if start is None or start > offset or offset >= start + s.chars + 2:
+    span = _span(s)
+    if span is None or span[0] > offset or offset >= span[1]:
       continue
-    if start >= best_offset:
-      best, best_offset = s, start
+    if span[0] >= best_offset:
+      best, best_offset = s, span[0]
   return best.label if best else None
 
 
@@ -1845,17 +1856,21 @@ def _section_rows(
   ``offsets`` are the match starts. A section is located by the same rule as
   :func:`_section_at` — the innermost one covering the offset — over a bisect
   index, so a broad pattern costs a lookup per match rather than a scan.
-  Matches outside every located section are left out; the rows say where the
-  mass is, not how it partitions.
+
+  A section covers the heading rendered for it, so a reading this server
+  assembled from the tagged blocks attributes every match and the rows sum
+  to the total: a concept name standing as a block's heading counts to the
+  block it titles rather than falling in the gap between two sections, which
+  is where the topical word of every block sits. In a parsed document matches
+  outside every section — a table of contents, the signatures — are still
+  left out; there the rows say where the mass is, not how it partitions.
   """
-  located = sorted(
-    (
-      (s.offset, s.offset + s.chars + 2, s.label)
-      for s in sections
-      if s.offset is not None
-    ),
-    key=lambda t: t[0],
-  )
+  located: list[tuple[int, int, str]] = []
+  for s in sections:
+    span = _span(s)
+    if span is not None:
+      located.append((span[0], span[1], s.label))
+  located.sort(key=lambda t: t[0])
   if not located:
     return []
   starts = [t[0] for t in located]
@@ -1879,12 +1894,21 @@ def _term_rows(text: str, pattern: str) -> list[dict[str, Any]]:
   Counting the words separately says which of them the filing uses, and so
   which one to search for instead. Only worth saying when there are two —
   one word that matches nothing is what ``total`` already reported.
+
+  A word is counted where one begins, not wherever its letters appear, so a
+  term that only ever trails inside a concept name — ``block`` inside
+  ``RevenueRecognitionPolicyTextBlock`` — reports the nothing it is rather
+  than sending the caller after a machine token, while a stem written on
+  purpose (``terminat``) still counts the words it starts.
   """
   terms = list(dict.fromkeys(m.group(0).lower() for m in _TERM_RE.finditer(pattern)))
   if len(terms) < 2:
     return []
   lowered = text.lower()
-  rows = [{"term": t, "matches": lowered.count(t)} for t in terms[:TERM_ROWS]]
+  rows = [
+    {"term": t, "matches": len(re.findall(rf"\b{re.escape(t)}", lowered))}
+    for t in terms[:TERM_ROWS]
+  ]
   rows.sort(key=lambda r: -r["matches"])
   return rows
 
