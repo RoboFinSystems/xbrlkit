@@ -486,6 +486,20 @@ class TestAddedItems:
     """
     assert "item_3" in _sections(html, "10-K")
 
+  def test_a_heading_wrapped_over_lines_still_shows_its_address(self):
+    """Caterpillar sets "Item\n11.\xa0Executive\nCompensation" over three lines,
+    so a rule reading the first line reads "Item" and one reading the first
+    sentence reads "11." — and the incorporation by reference that follows
+    goes unread. The opening is counted in words, not lines."""
+    html = """
+    <html><body>
+    <p>Item<br>11.&nbsp;Executive<br>Compensation.</p>
+    <p>Information required by this Item is<br>incorporated by reference from
+    the 2008 Proxy Statement.</p>
+    </body></html>
+    """
+    assert "item_11" not in _sections(html, "10-K")
+
   def test_a_cross_reference_table_is_not_a_section(self):
     """BP and Unilever write their annual report to their own plan and satisfy
     the form with a table at the back mapping each Item to a page range. An
@@ -549,6 +563,51 @@ SAMPLE_20F_HTML = f"""
 {_FILLER}</p>
 </body></html>
 """
+
+
+@pytest.mark.unit
+class TestSectionEnd:
+  def test_a_later_mention_of_the_item_does_not_extend_the_section(self):
+    """A section runs to the next item, not to wherever its own number is
+    written next. An exhibit index at the back of Apple's 2003 10-K named
+    Item 1 again, and Item 1 ran from the front of the filing to the end of
+    it — as did Items 2, 3, 5, 7 and 7A, each indexed as a copy of the rest
+    of the document under a different heading."""
+    html = f"""
+    <html><body>
+    <h3>ITEM 1. BUSINESS</h3>
+    <p>We design and sell consumer electronics. {_FILLER}</p>
+    <h3>ITEM 1A. RISK FACTORS</h3>
+    <p>Our results depend on new product introductions. {_FILLER}</p>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS</h3>
+    <p>Net sales increased on higher unit volumes. {_FILLER}</p>
+    <h3>EXHIBIT INDEX</h3>
+    <p>Item 1 Business, Item 1A Risk Factors, Item 7 MD&amp;A</p>
+    </body></html>
+    """
+    sections = _sections(html, "10-K")
+    assert "consumer electronics" in sections["item_1"].content
+    assert "new product introductions" not in sections["item_1"].content
+    assert "Net sales increased" not in sections["item_1"].content
+
+  def test_a_repeated_item_heading_still_spans_its_own_blocks(self):
+    """Some filers repeat "Item 7" for each sub-section, with Part headings
+    between. Those are one section and must stay one — the run ends at a
+    different item, not at the first repeat."""
+    html = f"""
+    <html><body>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS</h3>
+    <p>Overview of the year. {_FILLER}</p>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS (CONTINUED)</h3>
+    <p>Segment results are discussed below. {_FILLER}</p>
+    <h3>ITEM 8. FINANCIAL STATEMENTS</h3>
+    <p>The financial statements begin on the next page. {_FILLER}</p>
+    </body></html>
+    """
+    sections = _sections(html, "10-K")
+    assert "Overview of the year" in sections["item_7"].content
+    assert "Segment results" in sections["item_7"].content
+    assert "financial statements begin" not in sections["item_7"].content
 
 
 @pytest.mark.unit

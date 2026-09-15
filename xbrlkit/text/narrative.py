@@ -142,21 +142,34 @@ _POINTER_RE = re.compile(
   re.IGNORECASE,
 )
 
-# A pointer opens with its address; a section that carries content and cites a
-# note on the way out does not. Read against the opening sentence alone, the
-# verbs and the targets can be held far more loosely than the whole-text rule
-# above dares — "appears on pages 46-160" names no note and asks nothing of
-# the reader, and General Mills' Item 3 answers the question in full before
-# pointing at Item 1 for environmental matters, so position is what separates
-# them, not wording.
+# The second way an address is written, and the looser one — "appears on
+# pages 46-160" names no note and asks nothing of the reader. Both are read
+# at the section's opening (see :func:`_is_pointer`), which is what lets this
+# one be held loosely: General Mills' Item 3 answers the question in full
+# before pointing at Item 1 for environmental matters, and position is what
+# separates that from an address, not wording.
 _OPENING_POINTER_RE = re.compile(
-  r"(?:see|refer\s+to|set\s+forth\s+in|found\s+in|contained\s+in"
+  r"(?:see|refer\s+to|set\s+forth\s+in|found\s+in|contained\s+(?:in|under)"
   r"|appears?\s+(?:on|in)|included\s+in)\s+"
   r"(?:[\w\u2019']+[\s,\u201c\u201d\"']+){0,15}?"
   r"(?:Note|Item|Part|Exhibit|Schedule|pages?|section)\b",
   re.IGNORECASE,
 )
 _MAX_POINTER_WORDS = 150
+
+# How far into a section its address must appear to be the section's answer
+# rather than a citation on the way out. General Mills states its position on
+# its legal actions for sixty words before citing Item 1, and IBM's Item 9A
+# for a hundred before citing the report of management; a pointer's address
+# is the first thing it says after the caption.
+_POINTER_OPENING_WORDS = 40
+_POINTER_OPENING_SENTENCES = 2
+
+# The item number at the head of a section, which is not a sentence however
+# it is punctuated.
+_ITEM_PREFIX_RE = re.compile(
+  r"^Item\s+\d+[A-Z]?\s*[.:\u2014\u2013-]?\s*", re.IGNORECASE
+)
 
 # A heading sits at the start of a line. In a table of contents rendered as a
 # markdown pipe table it sits at the start of a cell instead, so a boundary
@@ -331,9 +344,20 @@ def _find_section_end(
   PART boundaries between same-item blocks are treated as internal structure.
   """
   last_same = start
-  for boundary in boundaries:
-    if boundary[0] > start and _same_item(boundary, item, part):
-      last_same = boundary[0]
+  for boundary in sorted(boundaries):
+    pos, key, _ = boundary
+    if pos <= last_same:
+      continue
+    if _same_item(boundary, item, part):
+      last_same = pos
+    elif key != "PART":
+      # A different item ends the run. Reading on for a later same-item
+      # boundary takes the section to wherever the number is next written —
+      # an exhibit index, a signature page, a cross-reference table — and
+      # Apple's 2003 Item 1 ran from the front of the filing to the end of
+      # it, as did Items 2, 3, 5, 7 and 7A, each a copy of the rest of the
+      # document under a different heading.
+      break
 
   for boundary in boundaries:
     pos, key, _ = boundary
@@ -458,19 +482,42 @@ def _extend_start_backwards(
 
 
 def _body_opening(text: str) -> str:
-  """The section's first sentence of body, with its heading line dropped."""
-  body = text.split("\n", 1)[1] if "\n" in text else ""
-  sentence = re.split(r"(?<=[.;:])\s", body.strip(), maxsplit=1)
-  return sentence[0] if sentence else ""
+  """The section's opening: its first two sentences or forty words, whichever
+  reaches further, with the item number stripped and the whitespace flattened.
+
+  Flattened because a filer may wrap a heading over three lines ("Item\n11.
+  \xa0Executive\nCompensation"), which leaves a first line of "Item"; the
+  number stripped because "Item 11." ends in a period and would otherwise be
+  a sentence of its own, spending the budget before the body starts. What is
+  left is the caption and the first of the body — far enough to reach an
+  address that is the section's answer, not far enough to reach a citation a
+  section makes on its way out.
+  """
+  flat = _ITEM_PREFIX_RE.sub("", " ".join(text.split()), count=1)
+  sentences = re.split(r"(?<=[.;:])\s", flat)
+  opening = " ".join(sentences[:_POINTER_OPENING_SENTENCES])
+  if len(opening.split()) >= _POINTER_OPENING_WORDS:
+    return opening
+  return " ".join(flat.split()[:_POINTER_OPENING_WORDS])
 
 
 def _is_pointer(text: str) -> bool:
-  """Whether a section only says where its content actually is."""
+  """Whether a section only says where its content actually is.
+
+  Read at the opening, both ways of writing an address. A section that opens
+  with one is a pointer however it goes on; a section that opens with its
+  subject is not, however it ends. IBM's Item 9A states the conclusion its
+  officers reached on the company's disclosure controls and then cites the
+  report of management — a hundred and forty-five words, so a rule reading
+  the whole of it called that citation the section and dropped the
+  conclusion.
+  """
   if len(text.split()) > _MAX_POINTER_WORDS:
     return False
+  opening = _body_opening(text)
   return (
-    _POINTER_RE.search(text) is not None
-    or _OPENING_POINTER_RE.search(_body_opening(text)) is not None
+    _POINTER_RE.search(opening) is not None
+    or _OPENING_POINTER_RE.search(opening) is not None
   )
 
 

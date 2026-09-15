@@ -1304,6 +1304,30 @@ _WORD_RE = re.compile(r"[A-Za-z]{4,}")
 # shape it is drawn in — a pipe table, or Oracle's bare run of lines.
 _DEEP_LOCATE_WORDS = 30
 
+# "Item 7." or "Item 7A." at the head of a line — the shape a contents entry
+# and a section heading share, which is why what follows it is what tells
+# them apart.
+_ITEM_HEADING_RE = re.compile(r"Item\s+\d+[A-Z]?[\.\s—–:]", re.IGNORECASE)
+
+
+def _heads_a_contents_entry(text: str, pos: int) -> bool:
+  """Whether the heading at ``pos`` is an entry in a table of contents.
+
+  A contents entry is followed by the next entry; a section heading is
+  followed by the section. That holds however the contents is drawn — a pipe
+  table with page cells, or the bare run of lines Oracle and Procter & Gamble
+  file — where the row test only sees the first.
+  """
+  if _is_toc_row(_line_of(text, pos)):
+    return True
+  line_end = text.find("\n", pos)
+  if line_end == -1:
+    return False
+  following = [
+    line for line in text[line_end : line_end + 400].split("\n") if line.strip()
+  ]
+  return any(_ITEM_HEADING_RE.match(line.lstrip("| ")) for line in following[:2])
+
 
 def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | None:
   """Where ``content`` starts in ``text``.
@@ -1335,6 +1359,7 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
     head = [re.escape(w) for w in found[:probe]]
     if len(head) < 3:
       continue
+    deep = probe == _DEEP_LOCATE_WORDS
     # The gap after a word may not contain that word again, so the match
     # starts at the last candidate before the second word — not at an earlier
     # heading that happens to share it.
@@ -1342,7 +1367,7 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
       rf"(?:(?!{prev}).){{0,{slack}}}?{nxt}" for prev, nxt in zip(head, head[1:])
     )
     for m in re.finditer(pattern, text, re.DOTALL):
-      if not _is_toc_row(_line_of(text, m.start())):
+      if deep or not _heads_a_contents_entry(text, m.start()):
         return m.start()
   return None
 
