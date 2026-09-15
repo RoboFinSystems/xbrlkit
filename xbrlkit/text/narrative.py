@@ -57,8 +57,35 @@ SECTIONS_10K: dict[str, tuple[str, str, str | None]] = {
   "1A": ("item_1a", "Risk Factors", None),
   "1C": ("item_1c", "Cybersecurity", None),
   "2": ("item_2", "Properties", None),
+  "3": ("item_3", "Legal Proceedings", None),
+  "5": ("item_5", "Market for Common Equity", None),
   "7": ("item_7", "MD&A", None),
   "7A": ("item_7a", "Market Risk", None),
+  "9A": ("item_9a", "Controls and Procedures", None),
+  # Part III, and usually a pointer at the proxy rather than the text — see
+  # ``_is_pointer``, which keeps the pointer out and the inline version in.
+  "11": ("item_11", "Executive Compensation", None),
+  "13": ("item_13", "Related Party Transactions", None),
+}
+# Deliberately absent: 1B and 4 (unresolved staff comments, mine safety) are
+# usually a line of boilerplate, 6 was withdrawn in 2021, and 15 is an exhibit
+# index. Nothing a researcher asks a question of.
+
+# A foreign private issuer's annual report numbers its own items: Item 3 is Key
+# Information, whose 3.D is the risk factors; Item 5 is the operating and
+# financial review; Item 11 is market risk. The ids here are the form's own —
+# as 10-Q's are, where Item 2 is the MD&A that a 10-K files under Item 7 — and
+# the label carries the meaning, so a search by label crosses the forms where
+# the numbers cannot.
+SECTIONS_20F: dict[str, tuple[str, str, str | None]] = {
+  # 3.D is the bulk of Item 3 in an annual report: 3.A was withdrawn in 2021
+  # and 3.B/3.C apply to an offering. Labelled for what it carries.
+  "3": ("item_3", "Risk Factors", None),
+  "4": ("item_4", "Business", None),
+  "5": ("item_5", "MD&A", None),
+  "11": ("item_11", "Market Risk", None),
+  "15": ("item_15", "Controls and Procedures", None),
+  "16K": ("item_16k", "Cybersecurity", None),
 }
 
 SECTIONS_10Q: dict[str, tuple[str, str, str | None]] = {
@@ -77,7 +104,31 @@ _NAME_BASED_SECTIONS_10K: dict[tuple[str, str], str] = {
   ("item_7a", "Market Risk"): (
     r"(?:^|\n)\s*Quantitative\s+and\s+Qualitative\s+Disclosures?\s+About\s+Market\s+Risk"
   ),
+  ("item_3", "Legal Proceedings"): r"(?:^|\n)\s*Legal\s+Proceedings\s*\n",
+  ("item_9a", "Controls and Procedures"): (
+    r"(?:^|\n)\s*Controls\s+and\s+Procedures\s*\n"
+  ),
 }
+
+# An item often names where its content is instead of carrying it, in two
+# shapes: the Part III boilerplate ("incorporated by reference to the
+# Registrant's definitive Proxy Statement") and the cross-reference an Item 3
+# or 7A usually is ("please see Note 12 … for a discussion of our legal
+# proceedings"). Both answer a question with an address, which is worse than
+# not answering it, and in both the content is indexed elsewhere already —
+# the note as a tagged text block, the MD&A as its own section. So an item is
+# captured only where it is set out inline.
+#
+# The word bound is what separates a pointer from a real section that cites a
+# note in passing: a pointer runs to tens of words, an inline Item 11 to
+# thousands.
+_POINTER_RE = re.compile(
+  r"incorporated\s+(?:herein\s+)?by\s+reference"
+  r"|(?:see|refer\s+to|set\s+forth\s+in)\s+(?:\w+\s+){0,6}?"
+  r"(?:Note|Item|Part|Exhibit|Schedule)\s",
+  re.IGNORECASE,
+)
+_MAX_POINTER_WORDS = 150
 
 # A heading sits at the start of a line. In a table of contents rendered as a
 # markdown pipe table it sits at the start of a cell instead, so a boundary
@@ -378,6 +429,13 @@ def _extend_start_backwards(
   return start
 
 
+def _is_pointer(text: str) -> bool:
+  """Whether a section only says where its content actually is."""
+  return (
+    len(text.split()) <= _MAX_POINTER_WORDS and _POINTER_RE.search(text) is not None
+  )
+
+
 def _find_item_sections(
   text: str,
   target_items: dict[str, tuple[str, str, str | None]],
@@ -480,7 +538,8 @@ class NarrativeExtractor:
 
     Args:
         html: Raw HTML content of the filing
-        form_type: SEC form type ("10-K" or "10-Q"; amendments accepted)
+        form_type: SEC form type ("10-K", "10-Q" or "20-F"; amendments
+            accepted). A form with no section map returns no sections.
 
     Returns:
         Sections in document order, each split into parts when long
@@ -490,11 +549,18 @@ class NarrativeExtractor:
     # through the 1990s, and the same document with the same Items.
     if form_upper.endswith("405"):
       form_upper = form_upper[: -len("405")]
-    if form_upper in ("10-K", "10-KSB", "20-F", "40-F"):
+    if form_upper in ("10-K", "10-KSB"):
       target_items = SECTIONS_10K
     elif form_upper in ("10-Q", "10-QSB"):
       target_items = SECTIONS_10Q
+    elif form_upper == "20-F":
+      target_items = SECTIONS_20F
     else:
+      # 40-F included, which used to be read through the 10-K map. It is an
+      # MJDS wrapper whose substance is the Canadian AIF and MD&A filed as
+      # exhibits, so it has no Item 1/7 of its own and reading it that way
+      # labels whatever falls between the wrapper's headings as Business or
+      # MD&A. Nothing is better than something wrong.
       return []
 
     text = _html_to_text(html)
@@ -535,6 +601,8 @@ class NarrativeExtractor:
       section_text = _clean_text(text[start:end])
 
       if len(section_text.split()) < _MIN_SECTION_WORDS:
+        continue
+      if _is_pointer(section_text):
         continue
 
       parts = split_text(section_text, self.part_size)
