@@ -58,7 +58,13 @@ def html_tables_to_markdown(html: str) -> str:
       next_close = table_close_re.search(html, search_pos)
 
       if next_close is None:
-        # Malformed HTML — no closing tag
+        # Malformed HTML — no closing tag. Take the rest as it stands and
+        # stop. A bare ``break`` here left ``pos`` where it was, so the
+        # outer loop found this same opening tag again and appended to
+        # ``result`` forever, until the process was killed: one unclosed
+        # <TABLE> in a 1999 filing, 154 KB of it, was enough.
+        result.append(html[table_start:])
+        pos = len(html)
         break
 
       if next_open and next_open.start() < next_close.start():

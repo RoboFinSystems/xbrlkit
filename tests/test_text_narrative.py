@@ -446,6 +446,78 @@ class TestAddedItems:
     """
     assert "item_7a" not in _sections(html, "10-K")
 
+  def test_an_item_that_names_the_pages_its_content_is_on_is_not_a_section(self):
+    """JPMorgan files its MD&A, market risk and cybersecurity items as one
+    sentence each naming a page range of the annual report. A page range is an
+    address like a note number is, and the pointer rule had no word for it."""
+    html = """
+    <html><body>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS</h3>
+    <p>Management's discussion and analysis of financial condition and results
+    of operations, entitled "Management's discussion and analysis," appears on
+    pages 46-160. Such information should be read in conjunction with the
+    Consolidated Financial Statements.</p>
+    <h3>ITEM 7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES ABOUT MARKET RISK</h3>
+    <p>Refer to the Market Risk Management section of Management's discussion
+    and analysis on pages 133-142 for a discussion of quantitative and
+    qualitative disclosures about market risk.</p>
+    </body></html>
+    """
+    sections = _sections(html, "10-K")
+    assert "item_7" not in sections and "item_7a" not in sections
+
+  def test_a_section_that_answers_first_and_cites_on_its_way_out_is_kept(self):
+    """General Mills' Item 3 states the position on its legal actions in full,
+    then points at Item 1 for environmental matters. The citation is where it
+    ends, not what it is — which is why the pointer rule reads the opening
+    sentence rather than hunting the whole section for a cross-reference."""
+    html = """
+    <html><body>
+    <h3>ITEM 3 - LEGAL PROCEEDINGS</h3>
+    <p>We are the subject of various pending or threatened legal actions in the
+    ordinary course of our business. All such matters are subject to many
+    uncertainties and outcomes that are not predictable with assurance. In our
+    opinion, there were no claims or litigation pending as of May 31, 2026,
+    that were reasonably likely to have a material adverse effect on our
+    consolidated financial position. See the information contained under the
+    section entitled "Environmental Matters" in Item 1 of this report for a
+    discussion of environmental matters.</p>
+    </body></html>
+    """
+    assert "item_3" in _sections(html, "10-K")
+
+  def test_a_heading_wrapped_over_lines_still_shows_its_address(self):
+    """Caterpillar sets "Item\n11.\xa0Executive\nCompensation" over three lines,
+    so a rule reading the first line reads "Item" and one reading the first
+    sentence reads "11." — and the incorporation by reference that follows
+    goes unread. The opening is counted in words, not lines."""
+    html = """
+    <html><body>
+    <p>Item<br>11.&nbsp;Executive<br>Compensation.</p>
+    <p>Information required by this Item is<br>incorporated by reference from
+    the 2008 Proxy Statement.</p>
+    </body></html>
+    """
+    assert "item_11" not in _sections(html, "10-K")
+
+  def test_a_cross_reference_table_is_not_a_section(self):
+    """BP and Unilever write their annual report to their own plan and satisfy
+    the form with a table at the back mapping each Item to a page range. An
+    Item heading found only there heads an address, and a 400-character table
+    of page numbers indexed as "MD&A" answers a question with a lookup."""
+    html = """
+    <html><body>
+    <table>
+    <tr><td>Item 5.</td><td>Operating and Financial Review and Prospects</td><td></td></tr>
+    <tr><td>A.</td><td>Operating results</td><td>6-9, 12-13, 18-27, 62-66</td></tr>
+    <tr><td>B.</td><td>Liquidity and capital resources</td><td>159, 196, 211-219</td></tr>
+    <tr><td>C.</td><td>Research and development, patents and licences</td><td>12, 189</td></tr>
+    <tr><td>Item 6.</td><td>Directors, Senior Management and Employees</td><td></td></tr>
+    </table>
+    </body></html>
+    """
+    assert "item_5" not in _sections(html, "20-F")
+
   def test_a_long_section_that_cites_an_exhibit_is_not_a_pointer(self):
     html = f"""
     <html><body>
@@ -491,6 +563,51 @@ SAMPLE_20F_HTML = f"""
 {_FILLER}</p>
 </body></html>
 """
+
+
+@pytest.mark.unit
+class TestSectionEnd:
+  def test_a_later_mention_of_the_item_does_not_extend_the_section(self):
+    """A section runs to the next item, not to wherever its own number is
+    written next. An exhibit index at the back of Apple's 2003 10-K named
+    Item 1 again, and Item 1 ran from the front of the filing to the end of
+    it — as did Items 2, 3, 5, 7 and 7A, each indexed as a copy of the rest
+    of the document under a different heading."""
+    html = f"""
+    <html><body>
+    <h3>ITEM 1. BUSINESS</h3>
+    <p>We design and sell consumer electronics. {_FILLER}</p>
+    <h3>ITEM 1A. RISK FACTORS</h3>
+    <p>Our results depend on new product introductions. {_FILLER}</p>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS</h3>
+    <p>Net sales increased on higher unit volumes. {_FILLER}</p>
+    <h3>EXHIBIT INDEX</h3>
+    <p>Item 1 Business, Item 1A Risk Factors, Item 7 MD&amp;A</p>
+    </body></html>
+    """
+    sections = _sections(html, "10-K")
+    assert "consumer electronics" in sections["item_1"].content
+    assert "new product introductions" not in sections["item_1"].content
+    assert "Net sales increased" not in sections["item_1"].content
+
+  def test_a_repeated_item_heading_still_spans_its_own_blocks(self):
+    """Some filers repeat "Item 7" for each sub-section, with Part headings
+    between. Those are one section and must stay one — the run ends at a
+    different item, not at the first repeat."""
+    html = f"""
+    <html><body>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS</h3>
+    <p>Overview of the year. {_FILLER}</p>
+    <h3>ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS (CONTINUED)</h3>
+    <p>Segment results are discussed below. {_FILLER}</p>
+    <h3>ITEM 8. FINANCIAL STATEMENTS</h3>
+    <p>The financial statements begin on the next page. {_FILLER}</p>
+    </body></html>
+    """
+    sections = _sections(html, "10-K")
+    assert "Overview of the year" in sections["item_7"].content
+    assert "Segment results" in sections["item_7"].content
+    assert "financial statements begin" not in sections["item_7"].content
 
 
 @pytest.mark.unit
