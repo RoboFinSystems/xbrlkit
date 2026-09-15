@@ -29,6 +29,14 @@ from xbrlkit.serve import tools
 from xbrlkit.serve.session import FilingSession, PublishedFiling
 
 US_GAAP = "http://fasb.org/us-gaap/2024"
+# What the public catalog records about the filer. None of it is in the filing:
+# a cover page tags no SIC, and a holon built from the filing carries none.
+FILER = {
+  "name": "Acme Corporation",
+  "exchange": "Nasdaq",
+  "sic": "3559",
+  "sic_description": "Special Industry Machinery",
+}
 STANDARD = "http://www.xbrl.org/2003/role/label"
 ACCESSION = "0000000000-24-000001"
 CIK = "0001234567"
@@ -102,7 +110,14 @@ def cdn(tmp_path: Path) -> Iterator[str]:
       },
     ]
     (root / "manifest.json").write_text(
-      json.dumps({"representations": representations})
+      json.dumps(
+        {
+          "representations": representations,
+          # The real manifest names the filer, which is how a `cik:accession`
+          # load reaches the catalog that holds that filer's identity.
+          "entity": {"cik": CIK, "name": "Acme Corp", "ticker": "ACME"},
+        }
+      )
     )
     companies = tmp_path / "companies"
     companies.mkdir()
@@ -111,6 +126,7 @@ def cdn(tmp_path: Path) -> Iterator[str]:
         {
           "ticker": "ACME",
           "cik": CIK,
+          **FILER,
           "filings": [
             {
               "accession": ACCESSION,
@@ -131,10 +147,13 @@ def cdn(tmp_path: Path) -> Iterator[str]:
       )
     )
     # A filer whose newest 10-K predates the artifacts: no folder, nothing to load.
+    # A catalog with no SIC in it: the lookup has to fall through to EDGAR,
+    # and what the catalog does carry still wins over the header.
     (companies / "olde.json").write_text(
       json.dumps(
         {
           "ticker": "OLDE",
+          "exchange": "AMEX",
           "filings": [
             {
               "accession": "0000000000-23-000009",
@@ -335,3 +354,134 @@ def test_a_manifest_without_a_holon_is_not_a_published_filing() -> None:
   assert published == PublishedFiling(
     accession="acc", holon_url="http://x/f/holon.jsonld"
   )
+
+
+# ── The filer's identity ───────────────────────────────────────────────────
+#
+# A holon carries what the filing carries, and a filing establishes very
+# little about its filer: no SIC, and on a holon not even the ticker unless
+# the cover page tagged one. The catalog published beside it does, so a load
+# from the CDN answers for the filer without going to EDGAR for it — and
+# falls through to the submissions header when the catalog cannot.
+
+
+class _Header:
+  """EDGAR's submissions header, as ``company_info`` returns it."""
+
+  def __init__(self, config=None, calls: list[str] | None = None) -> None:
+    self._calls = calls
+
+  def company_info(self, cik: str):
+    from types import SimpleNamespace
+
+    if self._calls is not None:
+      self._calls.append(cik)
+    return SimpleNamespace(
+      cik=cik,
+      name="Olde Industries",
+      ein="12-3456789",
+      ticker="OLDE",
+      exchange="NYSE",
+      sic="2911",
+      sic_description="Petroleum Refining",
+      category="Non-accelerated filer",
+      state_of_incorporation="DE",
+      fiscal_year_end="1231",
+      entity_type="operating",
+      website=None,
+      phone="212-555-0100",
+    )
+
+
+@pytest.mark.unit
+def test_a_published_load_takes_the_filer_from_the_catalog(cdn: str, no_edgar) -> None:
+  session = _session(cdn)
+  try:
+    entity = session.load("ACME").model.entity
+    assert entity.sic == "3559"
+    assert entity.sic_description == "Special Industry Machinery"
+    assert entity.exchange == "Nasdaq"
+    # Filled only where the filing said nothing: the holon's own name stands.
+    assert entity.name == "Acme Corp"
+    assert entity.legal_name == "Acme Corp"
+  finally:
+    session.close()
+
+
+@pytest.mark.unit
+def test_the_accession_route_reaches_the_catalog_through_the_manifest(
+  cdn: str, no_edgar
+) -> None:
+  """A `cik:accession` load has no ticker to start from; the manifest names
+  the filer, and the filer's catalog holds the identity."""
+  session = _session(cdn)
+  try:
+    assert session.load(f"1234567:{ACCESSION}").model.entity.sic == "3559"
+  finally:
+    session.close()
+
+
+@pytest.mark.unit
+def test_the_header_backfills_a_catalog_with_no_sic(
+  cdn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  import xbrlkit.edgar
+
+  monkeypatch.setattr(xbrlkit.edgar, "EdgarClient", _Header)
+  session = _session(cdn)
+  try:
+    found = session._filer_metadata("0000000042", ticker="OLDE")
+    assert found["sic"] == "2911"
+    # The catalog wins where both carry the field.
+    assert found["exchange"] == "AMEX"
+  finally:
+    session.close()
+
+
+@pytest.mark.unit
+def test_a_filer_lookup_that_fails_leaves_the_filing_loaded(
+  cdn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """EDGAR refusing is not a load failure: the fields stay empty."""
+  import requests
+
+  import xbrlkit.edgar
+
+  class _Down:
+    def __init__(self, config=None) -> None:
+      pass
+
+    def company_info(self, cik: str):
+      raise requests.RequestException("429 Too Many Requests")
+
+  monkeypatch.setattr(xbrlkit.edgar, "EdgarClient", _Down)
+  session = _session(cdn)
+  try:
+    assert session._filer_metadata("0000000042", ticker="OLDE") == {
+      "ticker": "OLDE",
+      "exchange": "AMEX",
+    }
+  finally:
+    session.close()
+
+
+@pytest.mark.unit
+def test_the_filer_is_looked_up_once_per_cik(
+  cdn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A sweep of one filer's filings costs one lookup, not one per filing."""
+  import functools
+
+  import xbrlkit.edgar
+
+  calls: list[str] = []
+  monkeypatch.setattr(
+    xbrlkit.edgar, "EdgarClient", functools.partial(_Header, calls=calls)
+  )
+  session = _session(cdn)
+  try:
+    session._filer_metadata("0000000042", ticker="OLDE")
+    session._filer_metadata("42", ticker="OLDE")
+    assert calls == ["0000000042"]
+  finally:
+    session.close()

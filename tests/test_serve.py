@@ -1584,3 +1584,94 @@ def test_view_filing_serves_a_loaded_document_as_it_was_loaded(tmp_path: Path) -
   finally:
     viewers.close()
     session.close()
+
+
+# ── The cover page as the filer's own account of itself ────────────────────
+#
+# Most of what identifies a filer is tagged on the cover page, and what is
+# tagged there is true as of the day it was filed. It is read first for that
+# reason: the submissions header is current, so on a filing from six years
+# ago it answers with this year's exchange, name and filer category.
+
+
+def _cover(**tagged: str) -> XbrlModel:
+  from xbrlkit.model import XbrlFact
+
+  return XbrlModel(
+    filing=FilingMeta(accession="0000000000-24-000001", cik="0001234567"),
+    entity=EntityIdentity(cik="0001234567"),
+    facts=[
+      XbrlFact(
+        id=f"f{n}",
+        concept_qname=qname,
+        period_id="p1",
+        entity_cik="0001234567",
+        value_str=value,
+        value_kind="text",
+      )
+      for n, (qname, value) in enumerate(tagged.items())
+    ],
+  )
+
+
+@pytest.mark.unit
+def test_the_cover_page_fills_the_filer_category_and_fiscal_year_end() -> None:
+  from xbrlkit.serve.session import _enrich_from_dei
+
+  model = _enrich_from_dei(
+    _cover(
+      **{
+        "dei:EntityFilerCategory": "Large Accelerated Filer",
+        "dei:CurrentFiscalYearEndDate": "--01-31",
+        "dei:SecurityExchangeName": "NASDAQ",
+      }
+    )
+  )
+  assert model.entity.category == "Large Accelerated Filer"
+  assert model.entity.exchange == "NASDAQ"
+  # The cover page writes a gMonthDay and the submissions header four digits;
+  # one shape, so either source can fill the field.
+  assert model.entity.fiscal_year_end == "0131"
+
+
+@pytest.mark.unit
+def test_the_cover_pages_ein_is_written_the_way_the_header_writes_it() -> None:
+  """``94-3177549`` on the cover page, ``943177549`` in the header — one
+  filer's EIN must not depend on which route read the filing."""
+  from xbrlkit.serve.session import _enrich_from_dei
+
+  model = _enrich_from_dei(
+    _cover(**{"dei:EntityTaxIdentificationNumber": "94-3177549"})
+  )
+  assert model.entity.ein == "943177549"
+
+
+@pytest.mark.unit
+def test_the_cover_pages_two_part_phone_becomes_one() -> None:
+  from xbrlkit.serve.session import _enrich_from_dei
+
+  model = _enrich_from_dei(
+    _cover(**{"dei:CityAreaCode": "408", "dei:LocalPhoneNumber": "486-2000"})
+  )
+  assert model.entity.phone == "408-486-2000"
+
+
+@pytest.mark.unit
+def test_half_a_phone_number_is_not_a_phone_number() -> None:
+  from xbrlkit.serve.session import _enrich_from_dei
+
+  assert _enrich_from_dei(_cover(**{"dei:CityAreaCode": "408"})).entity.phone is None
+
+
+@pytest.mark.unit
+def test_what_the_filing_said_is_not_overwritten_from_outside_it() -> None:
+  """The header is applied after the cover page and fills only the gaps."""
+  from xbrlkit.serve.session import LoadedFiling, _enrich_filer, _enrich_from_dei
+
+  model = _enrich_from_dei(_cover(**{"dei:SecurityExchangeName": "NASDAQ"}))
+  loaded = LoadedFiling(id="x", source="x", model=model, text="", sections=[])
+  _enrich_filer(loaded, {"exchange": "NYSE", "sic": "3674"})
+  # As filed, not as EDGAR has it today.
+  assert loaded.model.entity.exchange == "NASDAQ"
+  # And the one field no cover page tags is filled.
+  assert loaded.model.entity.sic == "3674"
