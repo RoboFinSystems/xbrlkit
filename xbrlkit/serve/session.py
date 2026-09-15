@@ -40,7 +40,12 @@ from xbrlkit.deserialize import (
 from xbrlkit.edgar.filing_index import FilingDocument
 from xbrlkit.model import Concept, EntityIdentity, FilingMeta, XbrlFact, XbrlModel
 from xbrlkit.text.ixbrl import _strip_html, iXBRLParser
-from xbrlkit.text.narrative import NarrativeExtractor, _html_to_text
+from xbrlkit.text.narrative import (
+  NarrativeExtractor,
+  _html_to_text,
+  _is_toc_row,
+  _line_of,
+)
 from xbrlkit.text.xml import XmlDocument, parse_xml_document, raw_document_name
 from xbrlkit.text.xml import render as render_xml
 
@@ -1294,6 +1299,11 @@ def _normalize_text(text: str) -> str:
 
 _WORD_RE = re.compile(r"[A-Za-z]{4,}")
 
+# Words deep enough into a section that no index row reaches them: a table of
+# contents renders the heading and then moves to the next entry, whatever
+# shape it is drawn in — a pipe table, or Oracle's bare run of lines.
+_DEEP_LOCATE_WORDS = 30
+
 
 def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | None:
   """Where ``content`` starts in ``text``.
@@ -1304,18 +1314,37 @@ def _locate(text: str, content: str, words: int = 12, slack: int = 40) -> int | 
   apostrophe was stripped — while a table-of-contents row, which carries
   the heading but not what follows it, does not match — which is why twelve
   words, not the heading's eight, are required.
+
+  Twelve is not enough on its own. A heading that is twelve words by itself
+  is carried whole by its index row, and Item 5's is: "Market for
+  Registrant's Common Equity, Related Stockholder Matters and Issuer
+  Purchases of Equity Securities". So the section is matched thirty words
+  deep first, past anything an index row carries, and an index row is
+  rejected outright in the shorter fallback — and a section found nowhere
+  else reports no offset rather than the address of the table of contents.
   """
-  head = [re.escape(w) for w in _WORD_RE.findall(content)[:words]]
-  if len(head) < 3:
+  found = _WORD_RE.findall(content)
+  if len(found) < 3:
     return None
-  # The gap after a word may not contain that word again, so the match
-  # starts at the last candidate before the second word — not at an earlier
-  # heading that happens to share it.
-  pattern = head[0] + "".join(
-    rf"(?:(?!{prev}).){{0,{slack}}}?{nxt}" for prev, nxt in zip(head, head[1:])
-  )
-  m = re.search(pattern, text, re.DOTALL)
-  return m.start() if m else None
+  # Deep first: an index row carries the heading and then the next entry, so
+  # words this far into the section are the surest sign of the body itself.
+  # The short head is the fallback, for the renderings that disagree too
+  # much to carry a long match — with index rows rejected outright, since
+  # those are exactly what the short head cannot tell apart.
+  for probe in (_DEEP_LOCATE_WORDS, words):
+    head = [re.escape(w) for w in found[:probe]]
+    if len(head) < 3:
+      continue
+    # The gap after a word may not contain that word again, so the match
+    # starts at the last candidate before the second word — not at an earlier
+    # heading that happens to share it.
+    pattern = head[0] + "".join(
+      rf"(?:(?!{prev}).){{0,{slack}}}?{nxt}" for prev, nxt in zip(head, head[1:])
+    )
+    for m in re.finditer(pattern, text, re.DOTALL):
+      if not _is_toc_row(_line_of(text, m.start())):
+        return m.start()
+  return None
 
 
 # What each JSON xbrlkit recognises is called, for the one it cannot yet read.

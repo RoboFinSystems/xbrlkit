@@ -685,6 +685,52 @@ def test_locate_skips_a_contents_row_that_carries_the_whole_heading() -> None:
   assert _locate(text, section) == text.index(f"\n{heading}\nOverview") + 1
 
 
+def test_locate_skips_a_contents_row_whose_heading_fills_the_match() -> None:
+  """Twelve words is the guard against a contents row, and Item 5's caption is
+  twelve words by itself: "Market for Registrant's Common Equity, Related
+  Stockholder Matters and Issuer Purchases of Equity Securities". The whole
+  head fitting inside the row, the row matched first, and describe_filing
+  published the table of contents as the offset of Item 5 on more than half
+  the 10-Ks in the corpus."""
+  heading = (
+    "Item 5. Market for Registrant's Common Equity, Related Stockholder "
+    "Matters and Issuer Purchases of Equity Securities"
+  )
+  body = (
+    "The Company's common stock is traded on The Nasdaq Stock Market under "
+    "the symbol AAPL. The Company repurchased shares under its share "
+    "repurchase program during the fourth quarter."
+  )
+  text = (
+    f"| {heading} | 19 |\n| Item 6. [Reserved] | 20 |\n"
+    f"| Item 7. Management's Discussion and Analysis | 21 |\n"
+    f"\nItem 1. Business\nAcme makes widgets.\n\n{heading}\n{body}"
+  )
+  assert _locate(text, f"{heading}\n\n{body}") == text.index(f"\n{heading}\n{body}") + 1
+
+
+def test_locate_skips_a_contents_list_that_is_not_drawn_as_a_table() -> None:
+  """Oracle's contents is a bare run of lines — no pipes, no page cells — so
+  there is no row to recognise. What tells them apart is that a contents entry
+  is followed by the next entry, never by the section's thirtieth word."""
+  heading = (
+    "Item 5. Market for Registrant's Common Equity, Related Stockholder "
+    "Matters and Issuer Purchases of Equity Securities"
+  )
+  body = (
+    "Our common stock is listed on the New York Stock Exchange. We repurchased "
+    "shares of common stock under our publicly announced repurchase program "
+    "during fiscal 2026, and we expect to continue repurchasing shares."
+  )
+  text = (
+    "Item 4.\n\nMine Safety Disclosures\n\nPART II.\n\n"
+    f"{heading}\n\nItem 6.\n\n[Reserved]\n\nItem 7.\n\n"
+    "Management's Discussion and Analysis of Financial Condition\n\n"
+    f"{heading}\n{body}"
+  )
+  assert _locate(text, f"{heading}\n\n{body}") == text.rindex(heading)
+
+
 # -- export ---------------------------------------------------------------------
 
 
