@@ -11,8 +11,21 @@ Sections extracted from a 10-K:
 - Item 1A: Risk Factors
 - Item 1C: Cybersecurity
 - Item 2: Properties
+- Item 3: Legal Proceedings
+- Item 5: Market for Common Equity
 - Item 7: MD&A
 - Item 7A: Market Risk
+- Item 9A: Controls and Procedures
+- Item 11, Item 13: Part III, kept only where set out inline
+
+Sections extracted from a 20-F, numbered as that form numbers them (Item 5
+is the operating and financial review a 10-K files under Item 7):
+- Item 3: Risk Factors
+- Item 4: Business
+- Item 5: MD&A
+- Item 11: Market Risk
+- Item 15: Controls and Procedures
+- Item 16K: Cybersecurity
 
 Sections extracted from a 10-Q (a 10-Q has two Item 2s and two Item 3s —
 Part I's MD&A and Market Risk, Part II's Unregistered Sales and Defaults —
@@ -126,6 +139,21 @@ _POINTER_RE = re.compile(
   r"incorporated\s+(?:herein\s+)?by\s+reference"
   r"|(?:see|refer\s+to|set\s+forth\s+in)\s+(?:\w+\s+){0,6}?"
   r"(?:Note|Item|Part|Exhibit|Schedule)\s",
+  re.IGNORECASE,
+)
+
+# A pointer opens with its address; a section that carries content and cites a
+# note on the way out does not. Read against the opening sentence alone, the
+# verbs and the targets can be held far more loosely than the whole-text rule
+# above dares — "appears on pages 46-160" names no note and asks nothing of
+# the reader, and General Mills' Item 3 answers the question in full before
+# pointing at Item 1 for environmental matters, so position is what separates
+# them, not wording.
+_OPENING_POINTER_RE = re.compile(
+  r"(?:see|refer\s+to|set\s+forth\s+in|found\s+in|contained\s+in"
+  r"|appears?\s+(?:on|in)|included\s+in)\s+"
+  r"(?:[\w\u2019']+[\s,\u201c\u201d\"']+){0,15}?"
+  r"(?:Note|Item|Part|Exhibit|Schedule|pages?|section)\b",
   re.IGNORECASE,
 )
 _MAX_POINTER_WORDS = 150
@@ -429,11 +457,37 @@ def _extend_start_backwards(
   return start
 
 
+def _body_opening(text: str) -> str:
+  """The section's first sentence of body, with its heading line dropped."""
+  body = text.split("\n", 1)[1] if "\n" in text else ""
+  sentence = re.split(r"(?<=[.;:])\s", body.strip(), maxsplit=1)
+  return sentence[0] if sentence else ""
+
+
 def _is_pointer(text: str) -> bool:
   """Whether a section only says where its content actually is."""
+  if len(text.split()) > _MAX_POINTER_WORDS:
+    return False
   return (
-    len(text.split()) <= _MAX_POINTER_WORDS and _POINTER_RE.search(text) is not None
+    _POINTER_RE.search(text) is not None
+    or _OPENING_POINTER_RE.search(_body_opening(text)) is not None
   )
+
+
+def _is_cross_reference_table(text: str) -> bool:
+  """Whether a section is a row of the cross-reference table a filer files in
+  place of Item headings.
+
+  A foreign private issuer that writes its annual report to its own plan
+  satisfies the form with a table at the back — "| A. | Operating results |
+  6-9, 12-13 |" — and an Item heading found only there heads an address, not
+  a section. The whole body being table rows is what says so; the word bound
+  is :func:`_is_pointer`'s, for the same reason, and it is what keeps a real
+  section that happens to be one table from being dropped."""
+  if len(text.split()) > _MAX_POINTER_WORDS:
+    return False
+  lines = [line for line in text.split("\n")[1:] if line.strip()]
+  return bool(lines) and all(line.lstrip().startswith("|") for line in lines)
 
 
 def _find_item_sections(
@@ -602,7 +656,7 @@ class NarrativeExtractor:
 
       if len(section_text.split()) < _MIN_SECTION_WORDS:
         continue
-      if _is_pointer(section_text):
+      if _is_pointer(section_text) or _is_cross_reference_table(section_text):
         continue
 
       parts = split_text(section_text, self.part_size)
