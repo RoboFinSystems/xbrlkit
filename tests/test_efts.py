@@ -75,6 +75,26 @@ class TestEftsHit:
     hit = EftsHit.from_hit({"_id": "0001-24-000001", "_source": {}})
     assert hit.cik == "" and hit.accession == "0001-24-000001" and hit.form == ""
     assert hit.file_number is None and hit.primary_document is None
+    assert hit.parties == () and hit.party_ciks == ()
+
+  def test_an_ownership_form_keeps_both_parties(self) -> None:
+    """A Form 4 is associated with the reporting owner *and* the issuer.
+    Keeping only the first entry loses the reason a CIK query matched: a
+    search for the company returns a hit whose filer is an individual."""
+    hit = EftsHit.from_hit(
+      {
+        "_id": "0001522767-26-000170:wk-form4.xml",
+        "_source": {
+          "ciks": [1866577, 1522767],
+          "display_names": ["Shaw Timothy  (CIK 0001866577)", "MARIMED INC."],
+          "form": "4",
+          "file_date": "2026-09-01",
+        },
+      }
+    )
+    assert hit.party_ciks == ("0001866577", "0001522767")
+    assert hit.parties == ("Shaw Timothy  (CIK 0001866577)", "MARIMED INC.")
+    assert hit.cik == "0001866577"  # the one that addresses the filing
 
 
 class TestBuildParams:

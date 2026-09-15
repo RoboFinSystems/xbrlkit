@@ -474,6 +474,30 @@ def list_filings(session: FilingSession) -> dict[str, Any]:
   return {"filings": rows, "count": len(rows)}
 
 
+LOAD_RECEIPT_KEYS = ("profile", "filing", "entity", "counts")
+
+
+def load_receipt(
+  lf: LoadedFiling, *, pure: bool = False, whole: bool = True
+) -> dict[str, Any]:
+  """What ``load_filing`` returns: that the filing is here and what it is.
+
+  Not the map. ``describe_filing`` costs thousands of tokens on a large
+  filing — its network and period lists are most of it — and returning the
+  same payload from ``load_filing`` meant a caller following the server's
+  own instructions ("describe_filing FIRST") paid for it twice in a row.
+  The receipt is projected from the description so the two never disagree.
+  """
+  full = describe_filing(lf, pure=pure, whole=whole)
+  receipt: dict[str, Any] = {"loaded": lf.id}
+  receipt.update({k: full[k] for k in LOAD_RECEIPT_KEYS if k in full})
+  receipt["next"] = (
+    "describe_filing for the map — the period keys, the networks by role, the "
+    "axes and the text sections. Never guess a concept name or a period key."
+  )
+  return receipt
+
+
 def describe_filing(
   lf: LoadedFiling, *, pure: bool = False, whole: bool = True
 ) -> dict[str, Any]:
@@ -963,9 +987,130 @@ def fact_grid(
       "pass include_dimensions, axis or member for breakdowns"
     ),
   }
+  excluded = _excluded_concepts(
+    qnames,
+    idx,
+    model,
+    shown={f.concept_qname for f in facts},
+    keep=keep,
+    period_type=period_type,
+    dimensional=dimensional,
+    filtered_members=bool(axis_l or member_l),
+  )
+  if excluded:
+    out["excluded"] = excluded
+    out["excluded_note"] = (
+      "the filing reports these, but every fact was filtered out — a concept "
+      "in `resolved` with no row is otherwise indistinguishable from one the "
+      "filer never tagged"
+    )
   if unresolved:
     out["unresolved"] = unresolved
     out["hint"] = "resolve_element finds the concept names this filing reports"
+  return out
+
+
+def _never_tagged(concept: Concept | None) -> dict[str, str]:
+  """Why a concept the filing declares carries no fact anywhere in it.
+
+  ``_resolve_concepts`` matches against ``model.concepts``, which the parse
+  fills from facts, dimension axes and members, *and* network-arc endpoints —
+  so a name resolves whenever the filing's own taxonomy uses it, tagged or
+  not. Measured over three filers, everything that lands here is an abstract
+  or a member: `resolve_element` ranks both among its matches, and its own
+  advice is to pass what it returns to `fact_grid`. Neither is a reportable
+  value, and saying which it is beats an empty answer.
+  """
+  if concept is None:
+    return {"reason": "the filing declares it but reports no fact for it"}
+  if concept.is_abstract:
+    return {
+      "reason": "abstract — a presentation header, not a reported value",
+      "try": "statement or information_block renders the rows beneath it",
+    }
+  if concept.is_domain_member:
+    return {
+      "reason": "a domain member — it qualifies other facts, it does not carry one",
+      "try": "pass it as `member` alongside the concept you want broken out",
+    }
+  if concept.is_dimension_item:
+    return {
+      "reason": "an axis — it qualifies other facts, it does not carry one",
+      "try": "pass it as `axis` alongside the concept you want broken out",
+    }
+  return {
+    "reason": "in this filing's taxonomy, but never tagged with a fact",
+    "try": "resolve_element lists the concepts this filer actually reports",
+  }
+
+
+def _excluded_concepts(
+  qnames: list[str],
+  idx: Index,
+  model: XbrlModel,
+  *,
+  shown: set[str],
+  keep: Any,
+  period_type: str | None,
+  dimensional: bool,
+  filtered_members: bool,
+) -> list[dict[str, Any]]:
+  """Resolved concepts that contributed no row, and what emptied each.
+
+  ``unresolved`` means a name this filing's taxonomy does not contain at
+  all. Everything else that produces no row used to come back silently,
+  reading as "not reported" when it meant something narrower, in two
+  shapes: a concept whose facts a filter removed — a balance-sheet concept
+  under a duration bucket is the common one, since an instant has no
+  duration — and a concept the filing declares but never tags, which is
+  where an abstract or a member lands (see :func:`_never_tagged`).
+  """
+  ptype = (period_type or "").strip().lower() or None
+  out: list[dict[str, Any]] = []
+  for q in qnames:
+    if q in shown:
+      continue
+    all_facts = idx.by_concept.get(q, [])
+    if not all_facts:
+      out.append({"concept": q, "facts": 0, **_never_tagged(model.concepts.get(q))})
+      continue
+    kept = [f for f in all_facts if keep(f)]
+    row: dict[str, Any] = {"concept": q, "facts": len(all_facts)}
+    if not kept:
+      shapes = {
+        p.period_type
+        for f in all_facts
+        if (p := idx.periods.get(f.period_id)) is not None
+      }
+      if ptype in ("duration",) + BUCKET_PERIOD_TYPES and shapes == {"instant"}:
+        row["reason"] = (
+          f"all {len(all_facts)} facts are instants; period_type={ptype!r} "
+          "keeps durations only"
+        )
+        row["try"] = "period_end for the fiscal period with its closing balances"
+      elif ptype == "instant" and shapes == {"duration"}:
+        row["reason"] = (
+          f"all {len(all_facts)} facts are durations; period_type='instant' "
+          "keeps instants only"
+        )
+        row["try"] = "period_type='duration', or drop it"
+      else:
+        row["reason"] = "no fact falls in the periods asked for"
+        row["try"] = "widen or drop period_end / period_type"
+    elif not dimensional:
+      row["reason"] = (
+        f"all {len(kept)} facts in these periods carry a dimension; "
+        "consolidated totals only"
+      )
+      row["try"] = "include_dimensions=true"
+    elif filtered_members:
+      row["reason"] = (
+        f"no fact matches the axis / member asked for ({len(kept)} in period)"
+      )
+      row["try"] = "drop axis / member, or check describe_filing for the axes present"
+    else:
+      continue
+    out.append(row)
   return out
 
 
@@ -2179,12 +2324,19 @@ def search_filings(
   except Exception as exc:  # a network or EDGAR-side failure, not a bad query
     raise ToolError(f"EDGAR full-text search failed: {exc}") from exc
 
+  asked = {str(c).zfill(10) for c in (ciks or [])}
   filings = [
     {
       "source": f"{hit.cik}:{hit.accession}",
       "form": hit.form,
       "filed": hit.filing_date,
       "filer": hit.primary_document,
+      **({"parties": list(hit.parties)} if len(hit.parties) > 1 else {}),
+      **(
+        {"matched_cik": sorted(asked & set(hit.party_ciks))}
+        if asked and len(hit.party_ciks) > 1
+        else {}
+      ),
     }
     for hit in hits
   ]
@@ -2201,6 +2353,14 @@ def search_filings(
     "filings": filings,
     "next": "load_filing with a hit's `source` to read one; search_text to search inside it",
   }
+  if asked and any(f.get("parties") for f in filings):
+    result["parties_note"] = (
+      "a hit with `parties` names more than one filer — an ownership form (3, "
+      "4, 5) is associated with both the reporting owner and the issuer, so a "
+      "CIK query for a company returns the insider forms filed about it and "
+      "`filer` is the individual. `matched_cik` says which of the CIKs asked "
+      "for put the hit here; narrow with `forms` to take one side."
+    )
   if total > len(filings):
     result["note"] = (
       f"{total} filings match; {len(filings)} shown. Narrow the dates, forms or "
