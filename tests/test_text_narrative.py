@@ -372,3 +372,150 @@ class TestParts:
     for p in parts[1:]:
       assert p.content.startswith("Paragraph")
     assert "RISK BODY" not in parts[-1].content
+
+
+# The items gap 1 adds, and the two rules that decide what they are worth.
+
+SAMPLE_PART_III_HTML = f"""
+<html><body>
+<h2>PART I</h2>
+<h3>ITEM 3. LEGAL PROCEEDINGS</h3>
+<p>The Company is a defendant in respirator mask litigation in Hennepin County.
+{_FILLER}</p>
+<h2>PART II</h2>
+<h3>ITEM 5. MARKET FOR REGISTRANT'S COMMON EQUITY</h3>
+<p>The board authorised a repurchase of up to $7.5 billion of common stock.
+{_FILLER}</p>
+<h3>ITEM 9A. CONTROLS AND PROCEDURES</h3>
+<p>Management identified a material weakness in controls over revenue recognition.
+{_FILLER}</p>
+<h2>PART III</h2>
+<h3>ITEM 11. EXECUTIVE COMPENSATION</h3>
+<p>The information required by this Item is incorporated by reference to the
+Registrant's definitive Proxy Statement for the 2026 Annual Meeting.</p>
+<h3>ITEM 13. CERTAIN RELATIONSHIPS AND RELATED TRANSACTIONS</h3>
+<p>The Audit Committee reviewed each related-party transaction set out below.
+{_FILLER}</p>
+</body></html>
+"""
+
+
+@pytest.mark.unit
+class TestAddedItems:
+  def test_legal_proceedings_market_and_controls_are_captured(self):
+    sections = _sections(SAMPLE_PART_III_HTML, "10-K")
+    assert {"item_3", "item_5", "item_9a"} <= set(sections)
+    assert "respirator" in sections["item_3"].content.lower()
+    assert "repurchase" in sections["item_5"].content.lower()
+    assert "material weakness" in sections["item_9a"].content.lower()
+
+  def test_a_part_iii_item_that_points_at_the_proxy_is_not_a_section(self):
+    """Answering a compensation question with a cross-reference is worse than
+    not answering it."""
+    assert "item_11" not in _sections(SAMPLE_PART_III_HTML, "10-K")
+
+  def test_a_part_iii_item_set_out_inline_is_kept(self):
+    sections = _sections(SAMPLE_PART_III_HTML, "10-K")
+    assert "item_13" in sections
+    assert "Audit Committee" in sections["item_13"].content
+
+  def test_a_cross_reference_is_a_pointer_too(self):
+    """Not every pointer says "incorporated by reference" — NVDA's Item 3 and
+    Pfizer's Item 7A both just name the note the content is in."""
+    html = """
+    <html><body>
+    <h3>ITEM 3. LEGAL PROCEEDINGS</h3>
+    <p>Please see Note 12 of the Notes to the Consolidated Financial Statements
+    in Part IV, Item 15 of this Annual Report on Form 10-K for a discussion of
+    our legal proceedings.</p>
+    </body></html>
+    """
+    assert "item_3" not in _sections(html, "10-K")
+
+  def test_the_pointer_rule_is_not_only_for_the_new_items(self):
+    """Pfizer's Item 7A is 42 words of "incorporated by reference to … MD&A".
+    A pointer is not a section whichever item it is, and the MD&A it points at
+    is indexed in its own right."""
+    html = """
+    <html><body>
+    <h3>ITEM 7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES ABOUT MARKET RISK</h3>
+    <p>The information required by this Item is incorporated by reference to
+    the discussion in the Analysis of Financial Condition, Liquidity, Capital
+    Resources and Market Risk section within MD&amp;A.</p>
+    </body></html>
+    """
+    assert "item_7a" not in _sections(html, "10-K")
+
+  def test_a_long_section_that_cites_an_exhibit_is_not_a_pointer(self):
+    html = f"""
+    <html><body>
+    <h3>ITEM 13. CERTAIN RELATIONSHIPS AND RELATED TRANSACTIONS</h3>
+    <p>The related-party agreements are incorporated by reference as Exhibit
+    10.1. {_FILLER} {_FILLER}</p>
+    </body></html>
+    """
+    assert "item_13" in _sections(html, "10-K")
+
+  def test_the_added_items_do_not_move_the_sections_that_were_there_before(self):
+    """Boundaries come from every Item heading in the document, not from the
+    target map, so widening the map cannot shift a section that already
+    extracted."""
+    from xbrlkit.text.narrative import SECTIONS_10K, _build_boundary_list
+    from xbrlkit.text.narrative import _find_item_sections, _html_to_text
+
+    text = _html_to_text(SAMPLE_10K_HTML)
+    boundaries = _build_boundary_list(text)
+    before = {"1": SECTIONS_10K["1"], "1A": SECTIONS_10K["1A"], "7": SECTIONS_10K["7"]}
+    narrow = _find_item_sections(text, before, boundaries)
+    wide = _find_item_sections(text, SECTIONS_10K, boundaries)
+    for item, info in narrow.items():
+      assert wide[item]["start"] == info["start"]
+
+
+SAMPLE_20F_HTML = f"""
+<html><body>
+<h3>ITEM 3. KEY INFORMATION</h3>
+<p>D. Risk Factors. Our operations in emerging markets expose us to currency risk.
+{_FILLER}</p>
+<h3>ITEM 4. INFORMATION ON THE COMPANY</h3>
+<p>The Group refines and markets petroleum products across forty countries.
+{_FILLER}</p>
+<h3>ITEM 5. OPERATING AND FINANCIAL REVIEW AND PROSPECTS</h3>
+<p>Revenue rose on higher realised prices and improved refining margins.
+{_FILLER}</p>
+<h3>ITEM 11. QUANTITATIVE AND QUALITATIVE DISCLOSURES ABOUT MARKET RISK</h3>
+<p>We are exposed to commodity price risk, which we hedge with futures.
+{_FILLER}</p>
+<h3>ITEM 16K. CYBERSECURITY</h3>
+<p>The Board reviews the Group's cybersecurity risk management programme.
+{_FILLER}</p>
+</body></html>
+"""
+
+
+@pytest.mark.unit
+class Test20F:
+  def test_a_20f_is_read_through_its_own_item_numbers(self):
+    sections = _sections(SAMPLE_20F_HTML, "20-F")
+    assert {"item_3", "item_4", "item_5", "item_11", "item_16k"} <= set(sections)
+
+  def test_the_labels_cross_the_forms_where_the_numbers_do_not(self):
+    """A 20-F files under Item 5 what a 10-K files under Item 7. The id is the
+    form's own; the label is what a search can hold onto."""
+    sections = _sections(SAMPLE_20F_HTML, "20-F")
+    assert sections["item_5"].section_label == "MD&A"
+    assert sections["item_3"].section_label == "Risk Factors"
+    assert sections["item_11"].section_label == "Market Risk"
+
+  def test_a_20f_is_not_read_through_the_10k_map(self):
+    """Item 4 of a 20-F is the business; Item 4 of a 10-K is mine safety. Read
+    through the 10-K map this filing reported no sections at all — the old
+    branch did exactly that."""
+    sections = _sections(SAMPLE_20F_HTML, "20-F")
+    assert sections["item_4"].section_label == "Business"
+    assert "item_7" not in sections
+
+  def test_a_40f_reports_nothing_rather_than_something_wrong(self):
+    """An MJDS wrapper carries its substance in the Canadian AIF and MD&A it
+    files as exhibits, so it has no Item 1 or Item 7 to find."""
+    assert NarrativeExtractor().extract(SAMPLE_10K_HTML, "40-F") == []

@@ -18,6 +18,7 @@ from .ixbrl import MIN_SECTION_WORDS, iXBRLParser, iXBRLSection
 from .narrative import (
   SECTIONS_10K,
   SECTIONS_10Q,
+  SECTIONS_20F,
   ExtractedSection,
   NarrativeExtractor,
 )
@@ -29,6 +30,7 @@ __all__ = (
   "MIN_SECTION_WORDS",
   "SECTIONS_10K",
   "SECTIONS_10Q",
+  "SECTIONS_20F",
   "ExtractedSection",
   "NarrativeExtractor",
   "html_tables_to_markdown",
