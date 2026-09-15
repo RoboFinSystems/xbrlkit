@@ -990,6 +990,7 @@ def fact_grid(
   excluded = _excluded_concepts(
     qnames,
     idx,
+    model,
     shown={f.concept_qname for f in facts},
     keep=keep,
     period_type=period_type,
@@ -1009,9 +1010,44 @@ def fact_grid(
   return out
 
 
+def _never_tagged(concept: Concept | None) -> dict[str, str]:
+  """Why a concept the filing declares carries no fact anywhere in it.
+
+  ``_resolve_concepts`` matches against ``model.concepts``, which the parse
+  fills from facts, dimension axes and members, *and* network-arc endpoints —
+  so a name resolves whenever the filing's own taxonomy uses it, tagged or
+  not. Measured over three filers, everything that lands here is an abstract
+  or a member: `resolve_element` ranks both among its matches, and its own
+  advice is to pass what it returns to `fact_grid`. Neither is a reportable
+  value, and saying which it is beats an empty answer.
+  """
+  if concept is None:
+    return {"reason": "the filing declares it but reports no fact for it"}
+  if concept.is_abstract:
+    return {
+      "reason": "abstract — a presentation header, not a reported value",
+      "try": "statement or information_block renders the rows beneath it",
+    }
+  if concept.is_domain_member:
+    return {
+      "reason": "a domain member — it qualifies other facts, it does not carry one",
+      "try": "pass it as `member` alongside the concept you want broken out",
+    }
+  if concept.is_dimension_item:
+    return {
+      "reason": "an axis — it qualifies other facts, it does not carry one",
+      "try": "pass it as `axis` alongside the concept you want broken out",
+    }
+  return {
+    "reason": "in this filing's taxonomy, but never tagged with a fact",
+    "try": "resolve_element lists the concepts this filer actually reports",
+  }
+
+
 def _excluded_concepts(
   qnames: list[str],
   idx: Index,
+  model: XbrlModel,
   *,
   shown: set[str],
   keep: Any,
@@ -1019,14 +1055,15 @@ def _excluded_concepts(
   dimensional: bool,
   filtered_members: bool,
 ) -> list[dict[str, Any]]:
-  """Resolved concepts that contributed no row, and which filter did it.
+  """Resolved concepts that contributed no row, and what emptied each.
 
-  A concept the filer never tagged comes back in ``unresolved``; one it
-  tagged whose facts a filter removed came back silently, which reads as
-  "not reported" when it means "not in the periods you asked for" or "only
-  reported by segment". The commonest case is a balance-sheet concept under
-  a duration bucket: an instant has no duration, so ``period_type=annual``
-  keeps none of them.
+  ``unresolved`` means a name this filing's taxonomy does not contain at
+  all. Everything else that produces no row used to come back silently,
+  reading as "not reported" when it meant something narrower, in two
+  shapes: a concept whose facts a filter removed — a balance-sheet concept
+  under a duration bucket is the common one, since an instant has no
+  duration — and a concept the filing declares but never tags, which is
+  where an abstract or a member lands (see :func:`_never_tagged`).
   """
   ptype = (period_type or "").strip().lower() or None
   out: list[dict[str, Any]] = []
@@ -1035,6 +1072,7 @@ def _excluded_concepts(
       continue
     all_facts = idx.by_concept.get(q, [])
     if not all_facts:
+      out.append({"concept": q, "facts": 0, **_never_tagged(model.concepts.get(q))})
       continue
     kept = [f for f in all_facts if keep(f)]
     row: dict[str, Any] = {"concept": q, "facts": len(all_facts)}

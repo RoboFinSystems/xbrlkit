@@ -442,6 +442,25 @@ def test_fact_grid_is_quiet_when_every_concept_answers(loaded: LoadedFiling) -> 
   assert "excluded" not in tools.fact_grid(loaded, ["Revenues"])
 
 
+def test_fact_grid_explains_a_concept_that_carries_no_fact(
+  loaded: LoadedFiling,
+) -> None:
+  """`resolve_element` resolves against the filing's taxonomy, so it ranks
+  abstracts and members among its matches — and tells the caller to pass what
+  it returns to `fact_grid`. Following that advice must not hit silence."""
+  out = tools.fact_grid(
+    loaded, ["us-gaap:IncomeStatementAbstract", "acme:WidgetsMember", "Revenues"]
+  )
+  by_concept = {e["concept"]: e for e in out["excluded"]}
+  assert by_concept["us-gaap:IncomeStatementAbstract"]["facts"] == 0
+  assert "abstract" in by_concept["us-gaap:IncomeStatementAbstract"]["reason"]
+  assert "member" in by_concept["acme:WidgetsMember"]["reason"]
+  assert "`member`" in by_concept["acme:WidgetsMember"]["try"]
+  # neither is absent from the filing, so neither is unresolved
+  assert "unresolved" not in out
+  assert any(r["concept"] == "us-gaap:Revenues" for r in out["rows"])
+
+
 def test_fact_grid_reports_unresolved(loaded: LoadedFiling) -> None:
   out = tools.fact_grid(loaded, ["us-gaap:Revenues", "Nonesuch"])
   assert out["unresolved"] == ["Nonesuch"]
