@@ -17,6 +17,8 @@ get the model back.
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 
                    holon, TAVI ──▶ xbrlkit view ──▶ the report, rendered in a browser
+
+                   any of the above ──▶ xbrlkit serve ──▶ MCP client (18 shaped tools)
 ```
 
 Three ways in — the SEC, everyone else through
@@ -28,9 +30,17 @@ never filed with anybody parses like one that was.
 
 Four projections out, and two of those read back, so a report that was never an
 SEC filing gets the same treatment. A fifth surface, the filing's text, reads
-the primary HTML directly and needs neither Arelle nor the network. The model
-itself can be served: `xbrlkit serve` holds a filing in memory and exposes it
-to an MCP client through shaped tools. And `xbrlkit view` puts it on screen.
+the primary HTML directly and needs neither Arelle nor the network. And
+`xbrlkit view` puts a filing on screen.
+
+**It is also a local MCP server.** The package stands alone — a library and a
+CLI — but `xbrlkit serve` holds filings in memory and exposes them to Claude,
+ChatGPT or any MCP client through eighteen shaped tools, which makes reading a
+filing a conversation instead of a script: ask for a statement, the concepts
+behind a phrase, what foots to a subtotal, a segment breakdown, an exhibit, or
+a regex across the prose. Nothing is indexed and no database sits behind it —
+every answer is read from the filing in memory, on your machine.
+**[What you can ask it →](#what-you-can-ask-it)**
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it
 does not give you is anything ergonomic to *hold*: `ModelXbrl` is a large
@@ -52,7 +62,7 @@ that is the change that turns a kit into a junk drawer.
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
-| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | sixteen shaped tools over a filing in memory |
+| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | eighteen shaped tools over a filing in memory |
 
 `model.py` is the waist itself, `schema/` declares the property graph's tables,
 `query.py` runs SPARQL over a built holon, and `view.py` is the loopback server
@@ -194,14 +204,47 @@ the environment, the `env` block, or `--user-agent`.
 Both are optional: EDGAR works unattributed under the default, saying so once.
 And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all.
 
-Then load filings from the chat — a ticker, an EDGAR `cik:accession`, a
-`lei:`, a local package, or a holon or TAVI by path or URL; a ticker or `cik:accession` loads the filing's
-published holon first when the RoboSystems CDN has one, falling back to
-EDGAR — and ask for
-statements, facts by concept and period, calculations, exhibits and text.
+### What you can ask it
+
+Load a filing from the chat — a ticker, an EDGAR `cik:accession`, a `lei:` for
+ESEF and the national regimes, a local package, or a holon or TAVI by path or
+URL. A ticker or `cik:accession` loads the filing's published holon first when
+the RoboSystems CDN has one, falling back to EDGAR. Then:
+
+- **Pull a statement as a table.** The income statement, balance sheet, cash
+  flow or equity statement — or any disclosure network — as rows in the filer's
+  own order and labels, values per period column.
+- **Find the concept behind a phrase.** "Revenue", "operating lease liability"
+  → the qnames *this* filer actually reports, its own extension concepts
+  included, ranked with fact counts and where each appears. You never have to
+  guess a US-GAAP name.
+- **Get values by concept and period.** Consolidated totals by default — no
+  dimensional qualifier, the most precise of duplicate tags — or broken out by
+  any axis the filing carries: segment, product, debt instrument, acquisition.
+- **Check whether a subtotal foots.** The calculation children with their
+  weights, the reported total against the sum computed from them, per period,
+  with the difference.
+- **Read one disclosure whole.** A note's rows with values, the same rows by
+  its own axes, its calculation arcs footed, and its tagged text beside the
+  numbers. The `disclosures` index finds the right block first, cheaply.
+- **Search the prose.** Regex over the whole primary document — Items, the
+  notes, the cover, the signatures, tagged or not. A pattern that matches more
+  than fits in the answer says which sections the rest fall in, busiest first.
+- **Read the other documents.** Exhibits, an 8-K's EX-99.1 earnings release —
+  where the non-GAAP measures and guidance live, since no XBRL holds them — or
+  a 13F's holdings table.
+- **Read the forms with no XBRL at all.** A Form 4's transactions and holdings,
+  a 13F's positions, as rows with the document's header fields beside them.
+- **Find filings worth reading.** EDGAR full-text search across the corpus by
+  phrase, form, date and filer, where every hit carries the id that loads it.
+- **Export or render it.** Write the filing as holon, TAVI, xBRL-JSON, ClawDog,
+  a LadybugDB graph, or the parse itself; or open it as a rendered report in the
+  browser and hand back the link.
+
 No graph and no database sits behind any of it: every answer about a filing is
 read from that filing. The one outward call is `search_filings`, which asks
-EDGAR's own full-text index which filings to go and read. Full detail, including the tool table and the `--pure` profile, in
+EDGAR's own full-text index which filings to go and read. Full detail,
+including the tool table and the `--pure` profile, in
 [`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
 
 ## Where it runs
