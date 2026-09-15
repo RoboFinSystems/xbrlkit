@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Literal
 from zipfile import ZipFile
 
@@ -165,18 +166,83 @@ class NoXbrlFound(SourceError):
   """
 
 
+# The identity fields a filing does not establish on its own. The cover page
+# tags most of them (see ``_DEI_ENTITY_FIELDS``); ``sic`` it never tags, which
+# is why a lookup outside the filing is worth one small fetch.
+_FILER_FIELDS = (
+  "name",
+  "ein",
+  "ticker",
+  "exchange",
+  "sic",
+  "sic_description",
+  "category",
+  "state_of_incorporation",
+  "fiscal_year_end",
+  "entity_type",
+  "website",
+  "phone",
+)
+
+
+def _padded_cik(cik: str) -> str:
+  """A CIK as EDGAR writes it, left-padded to ten digits."""
+  return f"{int(cik):0>10}" if cik.strip().isdigit() else cik
+
+
+def _text_or_none(value: Any) -> str | None:
+  """A header or catalog value as a non-empty string, else ``None``."""
+  if value is None:
+    return None
+  text = str(value).strip()
+  return text or None
+
+
+def _filer_fields(source: Mapping[str, Any]) -> dict[str, Any]:
+  """The filer fields a CDN catalog carries, under the names the model uses.
+
+  Keyed by field name rather than by an explicit mapping, so a catalog that
+  grows a field the model already has is picked up without a code change.
+  """
+  return {
+    name: value
+    for name in _FILER_FIELDS
+    if (value := _text_or_none(source.get(name))) is not None
+  }
+
+
+def _enrich_filer(loaded: LoadedFiling, fields: Mapping[str, Any]) -> None:
+  """Fill the entity's empty identity fields from outside the filing.
+
+  Fill-empty, never overwrite: what the filing said about itself on its cover
+  page stands, and this supplies only what the filing does not carry.
+  """
+  entity = loaded.model.entity
+  for name, value in fields.items():
+    if value in (None, "") or getattr(entity, name, None) not in (None, ""):
+      continue
+    setattr(entity, name, value)
+  if entity.name and not entity.legal_name:
+    entity.legal_name = entity.name
+
+
 @dataclass
 class PublishedFiling:
-  """A filing as the public data CDN lists it: the holon to load, and the
-  document as filed when it was published beside it."""
+  """A filing as the public data CDN lists it: the holon to load, the document
+  as filed when it was published beside it, and the filer's ticker — the key
+  the catalog holds that filer's identity under."""
 
   accession: str
   holon_url: str
   document_url: str | None = None
+  ticker: str | None = None
 
 
 def _published_from(
-  accession: str | None, representations: Any, folder: str | None
+  accession: str | None,
+  representations: Any,
+  folder: str | None,
+  ticker: str | None = None,
 ) -> PublishedFiling | None:
   """The published filing a catalog entry or manifest describes, or ``None``
   when it lists no holon."""
@@ -196,7 +262,10 @@ def _published_from(
   if not holon:
     return None
   return PublishedFiling(
-    accession=accession or "", holon_url=holon, document_url=document
+    accession=accession or "",
+    holon_url=holon,
+    document_url=document,
+    ticker=ticker,
   )
 
 
@@ -206,6 +275,7 @@ class FilingSession:
   def __init__(self, config: Config = CONFIG) -> None:
     self.config = config
     self._filings: dict[str, LoadedFiling] = {}
+    self._filers: dict[str, dict[str, Any]] = {}
     self._tmp = Path(tempfile.mkdtemp(prefix="xbrlkit-serve-"))
     self._lock = threading.Lock()
 
@@ -547,7 +617,7 @@ class FilingSession:
     separately. Without that second fetch every filing before iXBRL loads with
     no narrative at all: no Items, no MD&A, only the tagged blocks.
     """
-    from xbrlkit.cli import entity_identity, filing_meta
+    from xbrlkit.cli import filing_meta
     from xbrlkit.edgar import EdgarClient, download_filing, download_primary_document
 
     published = self._published_by_accession(cik, accession)
@@ -558,7 +628,6 @@ class FilingSession:
     ref = client.get_filing_ref(cik, accession)
     if not ref.is_xbrl:
       return self._load_document_only(client, cik, accession, ref, source)
-    info = client.company_info(cik)
     package_dir = self._tmp / accession
     try:
       target = download_filing(client, cik, accession, package_dir)
@@ -582,8 +651,12 @@ class FilingSession:
         logger.warning(
           "no primary document for %s (%s): %s", accession, ref.primary_document, exc
         )
-    model = self._parse(target, accession, filing=filing, entity=entity_identity(info))
-    return self._finish(accession, source, model, target, package_dir, document)
+    # The cover page fills the entity first — ``_parse`` ends in the dei pass —
+    # and the submissions header backfills only what the filing does not carry.
+    model = self._parse(target, accession, filing=filing, entity=None)
+    loaded = self._finish(accession, source, model, target, package_dir, document)
+    _enrich_filer(loaded, self._filer_metadata(cik, client=client))
+    return loaded
 
   def _load_document_only(
     self, client: Any, cik: str, accession: str, ref: Any, source: str
@@ -595,7 +668,7 @@ class FilingSession:
     document *is* the filing. The model is empty but real — it still carries
     who filed, which form, and when — and the text tools read the document.
     """
-    from xbrlkit.cli import entity_identity, filing_meta
+    from xbrlkit.cli import filing_meta
     from xbrlkit.edgar import download_primary_document
 
     name = raw_document_name(ref.primary_document)
@@ -616,9 +689,12 @@ class FilingSession:
     document = download_primary_document(client, cik, accession, package_dir, name)
     filing = filing_meta(self.config.sec_base_url, cik, accession, ref, name)
     filing.document_name = name
-    entity = entity_identity(client.company_info(cik))
-    model = XbrlModel(filing=filing, entity=entity)
-    return self._finish(accession, source, model, None, package_dir, document)
+    model = XbrlModel(filing=filing, entity=EntityIdentity(cik=_padded_cik(cik)))
+    loaded = self._finish(accession, source, model, None, package_dir, document)
+    # No XBRL, so no cover page to read: the submissions header is the only
+    # account of the filer this filing has.
+    _enrich_filer(loaded, self._filer_metadata(cik, client=client))
+    return loaded
 
   def _load_from_submission(
     self, client: Any, cik: str, accession: str, ref: Any, source: str
@@ -629,7 +705,7 @@ class FilingSession:
     wrote. Sequence 1 becomes the filing's document; the rest are its other
     documents, already on disk, so listing them costs no further fetch.
     """
-    from xbrlkit.cli import entity_identity, filing_meta
+    from xbrlkit.cli import filing_meta
     from xbrlkit.edgar.submission import (
       complete_submission_url,
       parse_submission,
@@ -659,8 +735,9 @@ class FilingSession:
       filing.report_date = _parse_edgar_date(header.get("CONFORMED PERIOD OF REPORT"))
     if filing.filing_date is None:
       filing.filing_date = _parse_edgar_date(header.get("FILED AS OF DATE"))
-    model = XbrlModel(filing=filing, entity=entity_identity(client.company_info(cik)))
+    model = XbrlModel(filing=filing, entity=EntityIdentity(cik=_padded_cik(cik)))
     loaded = self._finish(accession, source, model, None, package_dir, primary_path)
+    _enrich_filer(loaded, self._filer_metadata(cik, client=client))
     # Every other document is already written; listing them needs no index page,
     # and they share one address because that is all EDGAR has for them.
     loaded.other_documents = [
@@ -750,7 +827,10 @@ class FilingSession:
       if not isinstance(filing, dict) or (filing.get("form") or "").upper() != wanted:
         continue
       return _published_from(
-        filing.get("accession"), filing.get("representations"), filing.get("folder")
+        filing.get("accession"),
+        filing.get("representations"),
+        filing.get("folder"),
+        ticker=ticker,
       )
     return None
 
@@ -764,7 +844,13 @@ class FilingSession:
     manifest = self._get_json(f"{folder}/manifest.json")
     if not isinstance(manifest, dict):
       return None
-    return _published_from(accession, manifest.get("representations"), folder)
+    entity = manifest.get("entity")
+    return _published_from(
+      accession,
+      manifest.get("representations"),
+      folder,
+      ticker=_text_or_none(entity.get("ticker")) if isinstance(entity, dict) else None,
+    )
 
   def _get_json(self, url: str) -> Any:
     """A small JSON object from the CDN, or ``None`` for anything but a clean
@@ -777,6 +863,63 @@ class FilingSession:
       return resp.json()
     except (requests.RequestException, ValueError):
       return None
+
+  def _filer_metadata(
+    self, cik: str, ticker: str | None = None, client: Any = None
+  ) -> dict[str, Any]:
+    """The filer's identity as recorded outside the filing.
+
+    ``sic`` above all: no cover page tags it, EDGAR assigns it, and without
+    this lookup a filing read from its published holon reports none.
+
+    Cached per CIK — one lookup per filer per session, not one per filing, so
+    a sweep of a filer's twenty filings costs a single fetch. The public
+    catalog answers first when the filing came from the CDN, which keeps a
+    published load off sec.gov entirely; the submissions header answers for
+    everything else, and backfills what a catalog does not carry.
+
+    Best effort throughout: a filing loads without any of this, so a refusal,
+    a timeout or a rate limit leaves the fields unfilled rather than failing
+    the load. A failure is cached too — a filer EDGAR would not answer for is
+    not asked about again for every filing in the session.
+    """
+    key = _padded_cik(cik)
+    if key in self._filers:
+      return self._filers[key]
+    found = self._filer_from_catalog(ticker)
+    if not found.get("sic"):
+      # The catalog wins where both carry a field: it is what the CDN
+      # published beside the holon, and the header is only current.
+      found = {**self._filer_from_edgar(key, client), **found}
+    self._filers[key] = found
+    return found
+
+  def _filer_from_catalog(self, ticker: str | None) -> dict[str, Any]:
+    """The filer as the public catalog records it, or ``{}``."""
+    base = self.config.artifacts_base_url
+    if not ticker or not base:
+      return {}
+    catalog = self._get_json(f"{base}/companies/{ticker.lower()}.json")
+    return _filer_fields(catalog) if isinstance(catalog, dict) else {}
+
+  def _filer_from_edgar(self, cik: str, client: Any = None) -> dict[str, Any]:
+    """The filer as EDGAR's submissions header records it, or ``{}``."""
+    from xbrlkit.edgar import EdgarClient
+
+    try:
+      info = (client or EdgarClient(config=self.config)).company_info(cik)
+    except (OSError, ValueError, LookupError) as exc:
+      # A refusal, a timeout, a rate limit, a filer EDGAR has no header for:
+      # the filing itself is already loaded, so the fields stay unfilled.
+      # Deliberately not a blanket ``except``, which would hide a defect here
+      # behind a filing that loads and quietly reports no SIC.
+      logger.warning("filer metadata unavailable for CIK %s: %s", cik, exc)
+      return {}
+    return {
+      name: value
+      for name in _FILER_FIELDS
+      if (value := _text_or_none(getattr(info, name, None))) is not None
+    }
 
   def _load_published(self, published: PublishedFiling, source: str) -> LoadedFiling:
     """The filing from its published holon, with the document as filed beside
@@ -791,7 +934,11 @@ class FilingSession:
       except requests.RequestException as exc:
         logger.warning("published document unavailable for %s: %s", source, exc)
     logger.info("loading %s from its published holon", source)
-    return self._load_json(holon, source, document=document)
+    loaded = self._load_json(holon, source, document=document)
+    _enrich_filer(
+      loaded, self._filer_metadata(loaded.model.entity.cik, ticker=published.ticker)
+    )
+    return loaded
 
   def _inline_external_text(self, model: XbrlModel) -> int:
     """Replace a text block's fragment URL with the fragment.
@@ -1415,14 +1562,54 @@ _DEI_ENTITY_FIELDS = {
   "dei:SecurityExchangeName": "exchange",
   "dei:EntityTaxIdentificationNumber": "ein",
   "dei:EntityIncorporationStateCountryCode": "state_of_incorporation",
+  "dei:EntityFilerCategory": "category",
+  "dei:CurrentFiscalYearEndDate": "fiscal_year_end",
+}
+# The cover page tags the phone in two parts; the submissions header writes one
+# string. Joined here so a filing enriched from itself and one enriched from
+# EDGAR carry the same field.
+_DEI_PHONE_FIELDS = ("dei:CityAreaCode", "dei:LocalPhoneNumber")
+
+
+def _fiscal_year_end(value: str) -> str:
+  """A fiscal year end as the submissions header writes it (``0131``).
+
+  The cover page writes a gMonthDay (``--01-31``), EDGAR four digits. One
+  shape, so the two sources can be compared and either can fill the field.
+  """
+  digits = "".join(c for c in value if c.isdigit())
+  return digits[-4:] if len(digits) >= 4 else value
+
+
+def _digits(value: str) -> str:
+  """An EIN as the submissions header writes it: nine digits, no separator.
+
+  The cover page writes ``94-3177549``, the header ``943177549``. Unnormalized,
+  the same filer's EIN differs by which route read the filing.
+  """
+  digits = "".join(c for c in value if c.isdigit())
+  return digits or value
+
+
+_DEI_NORMALIZERS = {
+  "dei:CurrentFiscalYearEndDate": _fiscal_year_end,
+  "dei:EntityTaxIdentificationNumber": _digits,
 }
 
 
 def _enrich_from_dei(model: XbrlModel) -> XbrlModel:
-  """Fill the entity's name, ticker and the filing's form / period end from
-  the cover page ``dei`` facts when the EDGAR header did not supply them."""
+  """Fill the entity's identity and the filing's form / period end from the
+  cover page ``dei`` facts.
+
+  The cover page is the filing's own account of who filed it, true as of the
+  day it was filed. It is applied before the EDGAR submissions header, which
+  is *current* rather than as-filed: a filer that has since changed exchange,
+  name or filer category would otherwise have this year's answer attached to
+  a filing from six years ago.
+  """
   entity_updates: dict[str, Any] = {}
   filing_updates: dict[str, Any] = {}
+  phone_parts: dict[str, str] = {}
   # A cover page that lists several securities tags the symbol per class
   # (with a dimension); the undimensioned fact wins, the first class stands
   # in when there is none.
@@ -1432,9 +1619,13 @@ def _enrich_from_dei(model: XbrlModel) -> XbrlModel:
     value = (fact.value_str or "").strip()
     if not value:
       continue
+    if fact.concept_qname in _DEI_PHONE_FIELDS and not fact.dims:
+      phone_parts.setdefault(fact.concept_qname, value)
+      continue
     field_name = _DEI_ENTITY_FIELDS.get(fact.concept_qname)
     if field_name and getattr(model.entity, field_name) in (None, ""):
-      entity_updates.setdefault(field_name, value)
+      normalize = _DEI_NORMALIZERS.get(fact.concept_qname)
+      entity_updates.setdefault(field_name, normalize(value) if normalize else value)
     elif fact.dims:
       continue
     elif fact.concept_qname == "dei:DocumentType" and not model.filing.form:
@@ -1443,6 +1634,9 @@ def _enrich_from_dei(model: XbrlModel) -> XbrlModel:
       fact.concept_qname == "dei:DocumentPeriodEndDate" and not model.filing.report_date
     ):
       filing_updates.setdefault("report_date", _date_or_none(value))
+  area, local = (phone_parts.get(name) for name in _DEI_PHONE_FIELDS)
+  if area and local and not model.entity.phone:
+    entity_updates["phone"] = f"{area}-{local}"
   if not entity_updates and not filing_updates:
     return model
   return model.model_copy(
