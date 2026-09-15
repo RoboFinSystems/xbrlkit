@@ -1,5 +1,7 @@
 """Tests for the HTML table → markdown conversion (``xbrlkit.text.tables``)."""
 
+import signal
+
 import pytest
 
 from xbrlkit.text.tables import (
@@ -243,6 +245,25 @@ class TestHtmlTablesToMarkdown:
   def test_no_tables(self):
     html = "<p>No tables here</p>"
     assert html_tables_to_markdown(html) == html
+
+  def test_a_table_that_is_never_closed_terminates(self):
+    """An unclosed <TABLE> left the scan where it started, so the outer loop
+    found the same opening tag again and appended forever — a 154 KB Apple
+    10-Q from 1999 ran the process out of memory and was killed, which no
+    per-filing try/except can catch. The alarm is here so a regression fails
+    the suite rather than hanging it."""
+    html = "<p>before</p><TABLE><TR><TD>cell</TD></TR>"
+
+    def _timeout(*_args):
+      raise AssertionError("html_tables_to_markdown did not terminate")
+
+    signal.signal(signal.SIGALRM, _timeout)
+    signal.alarm(10)
+    try:
+      result = html_tables_to_markdown(html)
+    finally:
+      signal.alarm(0)
+    assert "before" in result and "cell" in result
 
   def test_nested_tables(self):
     html = """
