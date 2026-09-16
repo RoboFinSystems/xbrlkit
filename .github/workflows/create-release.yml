@@ -105,11 +105,28 @@ jobs:
           # Update version in pyproject.toml
           sed -i "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" pyproject.toml
 
+          # server.json is the Official MCP Registry listing. Clients that install
+          # from the registry run exactly the version it pins, so it moves with the
+          # package in the same commit; publish.yml lists it after the PyPI upload.
+          python - "$NEW_VERSION" <<'PY'
+          import json
+          import sys
+
+          version = sys.argv[1]
+          with open("server.json") as f:
+            listing = json.load(f)
+          listing["version"] = version
+          for package in listing["packages"]:
+            package["version"] = version
+          with open("server.json", "w") as f:
+            f.write(json.dumps(listing, indent=2, ensure_ascii=False) + "\n")
+          PY
+
           # Update lock file
           uv sync --all-extras
 
           # Commit and push to main
-          git add pyproject.toml
+          git add pyproject.toml server.json
           git commit -m "Release v$NEW_VERSION"
           git push origin main
 
