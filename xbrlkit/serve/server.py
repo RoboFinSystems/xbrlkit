@@ -59,8 +59,7 @@ SC 13D/G. Read as fields and record tables through `records`, and as text.
 
 START
 - list_filings says what is loaded. Nothing? load_filing takes a local path \
-(an inline .htm, an instance .xml, a filing directory or zip, or a taxonomy \
-package with no report in it), a URL, an \
+(an inline .htm, an instance .xml, a filing directory or zip), a URL, an \
 EDGAR `cik:accession`, or a ticker (`NVDA`, `NVDA 10-Q`). Outside the SEC it \
 takes `lei:<LEI>` for a filer's latest filing on filings.xbrl.org, or that \
 index's own filing id — ESEF and the national regimes, identified by LEI \
@@ -312,12 +311,9 @@ def build_server(
       "the SEC — `lei:<LEI>` for that filer's latest filing on "
       "filings.xbrl.org, or one of that index's filing ids (e.g. "
       "`213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0`). Any XBRL "
-      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. A taxonomy published on its "
-      "own loads too — a .zip or directory with schemas and linkbases and no "
-      "report, local or by URL (`https://xbrl.fasb.org/us-gaap/2026/"
-      "us-gaap-2026.zip`): its concepts and networks, no facts. The receipt's "
-      "`taxonomy` names the entry point loaded — the first the package's "
-      "manifest lists, or its one root schema — and the others it offers. "
+      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. A zip or directory with no "
+      "report loads as a taxonomy; the receipt names the entry point, and "
+      "`entry_point` picks another. "
       "Takes seconds to a minute; the taxonomy cache makes repeat loads fast, "
       "and a JSON report loads at once, with no Arelle and no taxonomy fetch."
     ),
@@ -337,9 +333,8 @@ def build_server(
       str | None,
       Field(
         description=(
-          "For a taxonomy package: the entry point to load, by its document "
-          "path, file name or name from the receipt's `taxonomy` "
-          "(e.g. `us-gaap-entryPoint-all-2025`). Omit for the default."
+          "A taxonomy's entry point, by path, file name or name from the "
+          "receipt's `taxonomy`; omit for the default."
         )
       ),
     ] = None,
@@ -491,9 +486,8 @@ def build_server(
       "describe_filing; under the product profile a kind also works "
       "(balance_sheet, income_statement, cash_flow_statement, equity_statement, "
       "or a phrase like 'balance sheet'). `periods` limits the columns to those "
-      "keys, end dates, or years; otherwise the most recent eight. A network "
-      "longer than `max_rows` — a taxonomy's statements run to hundreds of "
-      "rows — is `truncated`; pass its `next_offset` as `offset` for the rest."
+      "keys, end dates, or years; otherwise the most recent eight. A "
+      "`truncated` response continues from its `next_offset` as `offset`."
     ),
     structured_output=False,
   )
@@ -600,8 +594,8 @@ def build_server(
       "disclosures first for the family index, and narrow this one with "
       "`member` or `periods` when part of the block answers the question. "
       "`block` is an id from disclosures or describe_filing, a name or "
-      "part of one, or a role URI. A block longer than `max_rows` is "
-      "`truncated`; pass its `next_offset` as `offset` for the rest."
+      "part of one, or a role URI. A `truncated` response continues from its "
+      "`next_offset` as `offset`."
     ),
     structured_output=False,
   )
