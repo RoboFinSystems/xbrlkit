@@ -40,6 +40,47 @@ jobs:
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "Current version: $CURRENT_VERSION"
 
+      # Before anything irreversible: the registry listing must name this version.
+      # create-release.yml bumps both together; a hand edit could split them.
+      - name: Check server.json matches the release
+        run: |
+          python - <<'PY'
+          import json
+          import tomllib
+
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          listing = json.load(open("server.json"))
+          versions = {listing["version"], *(p["version"] for p in listing["packages"])}
+          if versions != {project["version"]}:
+            raise SystemExit(f"server.json pins {sorted(versions)}, pyproject.toml releases {project['version']}")
+          if f"mcp-name: {listing['name']}" not in open(project["readme"]).read():
+            raise SystemExit(f"README is missing the registry ownership token for {listing['name']}")
+          print(f"server.json lists {listing['name']} {project['version']}")
+          PY
+
+      # Pinned by version and checksum (the sha256 is the one in the release's
+      # registry_1.8.1_checksums.txt), so a new publisher build never runs here
+      # unreviewed. Installed outside the checkout, so the build below cannot
+      # sweep the binary into the sdist.
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/mcp-publisher" --version
+
+      # The registry's own validation, which needs no login. Run before the PyPI
+      # upload: a version number is burned once uploaded, and a listing the
+      # registry rejects could not be published for it afterwards.
+      - name: Validate server.json against the registry
+        run: mcp-publisher validate server.json
+
       - name: Build package
         run: python -m build
 
@@ -66,3 +107,49 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           verbose: true
+
+      # The Official MCP Registry validates a PyPI listing against the uploaded
+      # release (the version must exist and its README must carry the mcp-name
+      # token), so wait until PyPI serves it.
+      - name: Wait for PyPI to serve the release
+        if: steps.check-pypi.outputs.version_exists == 'false'
+        run: |
+          VERSION="${{ steps.current-version.outputs.current_version }}"
+          PACKAGE_NAME=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['name'])")
+          for _ in $(seq 1 30); do
+            if curl -sf -o /dev/null "https://pypi.org/pypi/${PACKAGE_NAME}/${VERSION}/json"; then
+              echo "PyPI serves ${PACKAGE_NAME} ${VERSION}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::PyPI did not serve ${PACKAGE_NAME} ${VERSION} within 5 minutes"
+          exit 1
+
+      # Clients that install from the registry run the version it pins, so a
+      # release the registry does not list never reaches them. The ai.robosystems
+      # namespace is proven by DNS on robosystems.ai; the key is a production
+      # environment secret. Skips when this version is already listed, so the
+      # listing is published at most once per release.
+      - name: Publish to the MCP Registry
+        if: steps.check-pypi.outputs.version_exists == 'false'
+        env:
+          MCP_REGISTRY_DOMAIN: robosystems.ai
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: |
+          NAME=$(python -c "import json; print(json.load(open('server.json'))['name'])")
+          VERSION=$(python -c "import json; print(json.load(open('server.json'))['version'])")
+          ENCODED=$(python -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$NAME")
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0/servers/${ENCODED}/versions/${VERSION}")
+          if [ "$STATUS" = "200" ]; then
+            echo "${NAME} ${VERSION} is already listed"
+            exit 0
+          fi
+          if [ -z "$MCP_REGISTRY_PRIVATE_KEY" ]; then
+            echo "::error::MCP_REGISTRY_PRIVATE_KEY is not set on the production environment, so ${NAME} ${VERSION} was not listed"
+            exit 1
+          fi
+          mcp-publisher login dns --domain "$MCP_REGISTRY_DOMAIN" --private-key "$MCP_REGISTRY_PRIVATE_KEY"
+          mcp-publisher publish server.json
+          echo "Listed ${NAME} ${VERSION} on the Official MCP Registry"
