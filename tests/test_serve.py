@@ -755,7 +755,7 @@ def test_view_filing_serves_it_for_the_viewer(loaded: LoadedFiling) -> None:
   try:
     out = tools.view_filing(loaded, "holon", viewers)
     assert out["filing"] == loaded.id and out["bytes"] > 0
-    assert out["viewer_url"].startswith(f"{DEFAULT_VIEWER}/?url=")
+    assert out["viewer_url"].startswith(f"{DEFAULT_VIEWER}/view?url=")
     assert out["document_url"] in out["viewer_url"]
     assert out["document_url"].startswith("http://127.0.0.1:")
     with pytest.raises(tools.ToolError):

@@ -307,7 +307,8 @@ uvx xbrlkit view NVDA
 A browser cannot be handed a local path — `file://` is unreachable from an
 https page, and a file input cannot be pre-populated — so this serves the
 document instead, on an ephemeral loopback port with an unguessable path, and
-opens `xbrlkit.com/?url=…` pointing at it. `http://127.0.0.1` is a
+opens `xbrlkit.com/view?url=…` pointing at it (earlier releases open
+`xbrlkit.com/?url=…`, which keeps working). `http://127.0.0.1` is a
 potentially trustworthy origin, so the https page may read it; the CORS header
 names the viewer's origin and no other. The document is readable there, by that
 origin, until you press Ctrl-C. `--viewer` points at a different build.
