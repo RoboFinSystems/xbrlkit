@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import textwrap
 from datetime import date
 from pathlib import Path
@@ -496,6 +497,30 @@ def test_statement_by_kind_renders_rows_in_order(loaded: LoadedFiling) -> None:
   ]
 
 
+def test_statement_pages_a_network_longer_than_max_rows(loaded: LoadedFiling) -> None:
+  whole = tools.statement(loaded, "income statement")
+  assert whole["truncated"] is False and "next_offset" not in whole
+
+  first = tools.statement(loaded, "income statement", max_rows=2)
+  assert first["truncated"] is True and first["next_offset"] == 2
+  assert "offset" not in first and "ancestors" not in first
+  rest = tools.statement(
+    loaded, "income statement", max_rows=2, offset=first["next_offset"]
+  )
+  assert rest["offset"] == 2 and rest["truncated"] is False
+  assert "next_offset" not in rest
+  # Pages join back into the whole, depths intact, and a later page says
+  # which headers it opens under.
+  assert first["rows"] + rest["rows"] == whole["rows"]
+  assert rest["ancestors"] == [
+    {"concept": "us-gaap:IncomeStatementAbstract", "label": "Income Statement Abstract"}
+  ]
+  with pytest.raises(
+    tools.ToolError, match="past the end of this network \\(4 rows\\)"
+  ):
+    tools.statement(loaded, "income statement", offset=4)
+
+
 def test_statement_columns_put_the_year_before_its_fourth_quarter() -> None:
   model = _model()
   model.periods.append(
@@ -825,6 +850,217 @@ def test_find_load_target_prefers_inline_document(tmp_path: Path) -> None:
     "<xbrl xmlns='http://www.xbrl.org/2003/instance'/>"
   )
   assert _find_load_target(tmp_path).name == "acme-20241231.xml"
+
+
+# -- a taxonomy published on its own ------------------------------------------------
+
+
+XS = "xmlns:xs='http://www.w3.org/2001/XMLSchema'"
+GAAP_URL = "https://taxonomies.example/gaap/2025/"
+
+
+def _bare_taxonomy(root: Path) -> Path:
+  """A taxonomy shipped the way GASB's exposure draft is: no manifest, one
+  schema importing its roles and types, its linkbases beside it pointing back
+  at it."""
+  root.mkdir(parents=True, exist_ok=True)
+  (root / "gov-2026.xsd").write_text(
+    f"<xs:schema {XS}>"
+    "<xs:import namespace='http://gov.example/roles' schemaLocation='gov-roles.xsd'/>"
+    "<xs:import namespace='http://gov.example/types' schemaLocation='./gov-types.xsd'/>"
+    "<xs:import namespace='http://www.xbrl.org/2003/instance' "
+    "schemaLocation='http://www.xbrl.org/2003/xbrl-instance-2003-12-31.xsd'/>"
+    "</xs:schema>"
+  )
+  (root / "gov-roles.xsd").write_text(f"<xs:schema {XS}/>")
+  (root / "gov-types.xsd").write_text(f"<xs:schema {XS}/>")
+  (root / "gov-2026-pre.xml").write_text(
+    "<link:linkbase xmlns:link='http://www.xbrl.org/2003/linkbase' "
+    "xmlns:xlink='http://www.w3.org/1999/xlink'>"
+    "<link:roleRef xlink:href='gov-roles.xsd#stmt'/>"
+    "<link:loc xlink:href='gov-2026.xsd#gov_Cash'/></link:linkbase>"
+  )
+  return root
+
+
+def _published_package(root: Path) -> Path:
+  """A taxonomy package shipped the way FASB ships US GAAP: a manifest listing
+  its entry points by their published URLs, a catalog mapping those URLs into
+  the package, and no report."""
+  pkg = root / "gaap-2025"
+  (pkg / "META-INF").mkdir(parents=True)
+
+  def entry(name: str, href: str) -> str:
+    return (
+      f"<tp:entryPoint><tp:name>{name}</tp:name>"
+      f"<tp:entryPointDocument href='{href}'/></tp:entryPoint>"
+    )
+
+  (pkg / "META-INF" / "taxonomyPackage.xml").write_text(
+    "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package'>"
+    "<tp:entryPoints>"
+    + entry("Everything", f"{GAAP_URL}entire/gaap-entryPoint-all-2025.xsd")
+    + entry("Published elsewhere", "https://elsewhere.example/other.xsd")
+    + entry("Elements only", f"{GAAP_URL}elts/gaap-2025.xsd")
+    + entry("Meta model", "../meta/gaap-meta-2025.xsd")
+    + "</tp:entryPoints></tp:taxonomyPackage>"
+  )
+  (pkg / "META-INF" / "catalog.xml").write_text(
+    "<catalog xmlns='urn:oasis:names:tc:entity:xmlns:xml:catalog'>"
+    f"<rewriteURI uriStartString='{GAAP_URL}' rewritePrefix='../'/></catalog>"
+  )
+  for rel in (
+    "entire/gaap-entryPoint-all-2025.xsd",
+    "elts/gaap-2025.xsd",
+    "meta/gaap-meta-2025.xsd",
+  ):
+    (pkg / rel).parent.mkdir(parents=True, exist_ok=True)
+    (pkg / rel).write_text(f"<xs:schema {XS}/>")
+  return root
+
+
+def _zip(tree: Path, archive: Path) -> Path:
+  import zipfile
+
+  with zipfile.ZipFile(archive, "w") as zf:
+    for path in sorted(tree.rglob("*")):
+      if path.is_file():
+        zf.write(path, path.relative_to(tree))
+  return archive
+
+
+def test_a_taxonomy_holds_no_report(tmp_path: Path) -> None:
+  assert _find_load_target(_bare_taxonomy(tmp_path)) is None
+  assert _find_load_target(_published_package(tmp_path / "pkg")) is None
+
+
+def test_a_bare_taxonomy_loads_from_the_schema_nothing_imports(tmp_path: Path) -> None:
+  from xbrlkit.serve.session import _choose_entry_point
+
+  # The roles and types are imported, so they are not where the DTS starts;
+  # the linkbase pointing back at the main schema does not make it an import.
+  chosen = _choose_entry_point(_bare_taxonomy(tmp_path), None)
+  assert chosen.entry_point.document == "gov-2026.xsd"
+  assert chosen.others == []
+
+
+def test_a_bare_taxonomy_with_several_roots_asks_for_one(tmp_path: Path) -> None:
+  from xbrlkit.serve.session import _choose_entry_point
+
+  root = _bare_taxonomy(tmp_path)
+  (root / "gov-2026-alt.xsd").write_text(f"<xs:schema {XS}/>")
+  with pytest.raises(SourceError, match="entry_point"):
+    _choose_entry_point(root, None)
+  chosen = _choose_entry_point(root, "gov-2026-alt")
+  assert chosen.entry_point.document == "gov-2026-alt.xsd"
+  assert [e.document for e in chosen.others] == ["gov-2026.xsd"]
+
+
+def test_a_manifest_loads_the_first_entry_point_it_lists(tmp_path: Path) -> None:
+  from xbrlkit.serve.session import _choose_entry_point
+
+  chosen = _choose_entry_point(_published_package(tmp_path), None)
+  assert chosen.entry_point.name == "Everything"
+  assert chosen.entry_point.document == "gaap-2025/entire/gaap-entryPoint-all-2025.xsd"
+  # The one published outside the package is not offered; a relative href
+  # resolves against the manifest.
+  assert [e.document for e in chosen.others] == [
+    "gaap-2025/elts/gaap-2025.xsd",
+    "gaap-2025/meta/gaap-meta-2025.xsd",
+  ]
+
+
+def test_an_entry_point_is_named_by_path_file_or_name(tmp_path: Path) -> None:
+  from xbrlkit.serve.session import _choose_entry_point
+
+  root = _published_package(tmp_path)
+
+  def chosen(wanted: str) -> str:
+    return _choose_entry_point(root, wanted).entry_point.document
+
+  elements = "gaap-2025/elts/gaap-2025.xsd"
+  assert chosen("gaap-2025/elts/gaap-2025.xsd") == elements
+  assert chosen("gaap-2025.xsd") == elements
+  assert chosen("Elements only") == elements
+  assert chosen("gaap-entryPoint-all-2025").endswith("entryPoint-all-2025.xsd")
+  assert chosen("meta") == "gaap-2025/meta/gaap-meta-2025.xsd"
+  with pytest.raises(SourceError, match="matches 3"):
+    chosen("gaap")
+  with pytest.raises(SourceError, match="No entry point matches 'nope'"):
+    chosen("nope")
+
+
+def test_a_taxonomy_zip_loads_with_its_entry_point_stated(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  from xbrlkit.serve.session import NoXbrlFound
+
+  parsed: list[Path] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append(Path(target))
+    if Path(target).name == "gaap-2025.xsd":
+      raise NoXbrlFound(f"{target} holds no XBRL facts or concepts")
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  archive = _zip(_published_package(tmp_path / "tree"), tmp_path / "gaap-2025.zip")
+  session = FilingSession()
+  try:
+    lf = session.load(str(archive))
+    assert (
+      parsed[-1].as_posix().endswith("gaap-2025/entire/gaap-entryPoint-all-2025.xsd")
+    )
+    receipt = tools.load_receipt(lf)
+    taxonomy = receipt["taxonomy"]
+    assert taxonomy["entry_point"]["name"] == "Everything"
+    assert [e["document"] for e in taxonomy["other_entry_points"]] == [
+      "gaap-2025/elts/gaap-2025.xsd",
+      "gaap-2025/meta/gaap-meta-2025.xsd",
+    ]
+    assert tools.describe_filing(lf)["next"][0].startswith("resolve_element")
+
+    other = session.load(str(archive), entry_point="meta")
+    assert other.taxonomy is not None
+    assert other.taxonomy.entry_point.document == "gaap-2025/meta/gaap-meta-2025.xsd"
+
+    # An elements-only schema has no networks to read; the error says so and
+    # names the entry points that do, rather than that this is not XBRL.
+    with pytest.raises(SourceError, match="declares no networks"):
+      session.load(str(archive), entry_point="Elements only")
+  finally:
+    session.close()
+
+
+def test_a_taxonomy_zip_loads_by_url(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  monkeypatch.setattr(FilingSession, "_parse", lambda self, *a, **kw: _model())
+  archive = _zip(_bare_taxonomy(tmp_path / "tree"), tmp_path / "gov-2026.zip")
+  session = FilingSession()
+
+  def fake_fetch(url: str, into: Path | None = None) -> Path:
+    assert into is not None
+    return Path(shutil.copy(archive, into / Path(url).name))
+
+  monkeypatch.setattr(session, "_fetch", fake_fetch)
+  try:
+    lf = session.load("https://taxonomies.example/gov/gov-2026.zip")
+    assert lf.taxonomy is not None
+    assert lf.taxonomy.entry_point.document == "gov-2026.xsd"
+  finally:
+    session.close()
+
+
+def test_entry_point_is_refused_where_there_is_no_package(tmp_path: Path) -> None:
+  schema = _bare_taxonomy(tmp_path) / "gov-2026.xsd"
+  session = FilingSession()
+  try:
+    for source in (str(schema), "ACME", "https://example.test/report.htm"):
+      with pytest.raises(SourceError, match="taxonomy package"):
+        session.load(source, entry_point="gov-2026")
+  finally:
+    session.close()
 
 
 # -- the pure profile and the document toggle -------------------------------------

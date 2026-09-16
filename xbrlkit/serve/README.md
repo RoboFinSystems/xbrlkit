@@ -25,6 +25,7 @@ chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
 | an EDGAR `cik:accession` | `1045810:0001045810-26-000021` |
 | a **LEI**, or a filings.xbrl.org filing id | `lei:213800H2PQMIF3OVZY47` |
 | a local filing | an inline `.htm`, an instance `.xml`, a directory, a `.zip` package |
+| a **taxonomy** published on its own, by path or URL | `us-gaap-2025.zip`, `https://xbrl.fasb.org/us-gaap/2026/us-gaap-2026.zip`, an unpacked taxonomy directory |
 | a **JSON report**, by path or URL | `.clawdog.jsonld`, `.tavi.json`, `.holon.jsonld`, or a `model.json` from `export_filing` |
 | a URL Arelle can load | any of the above on the web |
 
@@ -33,6 +34,17 @@ The two indexes behind the first three are [`edgar/`](../edgar/README.md) and
 [`deserialize/`](../deserialize/README.md), with no Arelle and no taxonomy
 fetch. Several filings load at once, each under an id; `unload_filing` drops
 one.
+
+A zip or directory with no report in it is a taxonomy, and loads from an
+entry point: the first one its `META-INF/taxonomyPackage.xml` lists
+(FASB's US GAAP package lists `entire/us-gaap-entryPoint-all` first), or —
+with no manifest, as GASB's exposure drafts ship — the one schema nothing else
+in the package imports. The receipt's `taxonomy` names the entry point loaded
+and the others on offer; `entry_point` on `load_filing` picks another, by its
+path, file name or name. A taxonomy answers with its concepts and networks —
+`resolve_element`, `disclosures`, `statement`, `information_block` — and no
+facts. An elements-only entry point (a schema with no linkbases) has no
+networks to read, and is refused as such.
 
 ## The tools
 

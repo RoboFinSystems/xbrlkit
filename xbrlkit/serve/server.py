@@ -311,9 +311,11 @@ def build_server(
       "the SEC — `lei:<LEI>` for that filer's latest filing on "
       "filings.xbrl.org, or one of that index's filing ids (e.g. "
       "`213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0`). Any XBRL "
-      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. Takes seconds to a minute; "
-      "the taxonomy cache makes repeat loads fast, and a JSON report loads at "
-      "once, with no Arelle and no taxonomy fetch."
+      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. A zip or directory with no "
+      "report loads as a taxonomy; the receipt names the entry point, and "
+      "`entry_point` picks another. "
+      "Takes seconds to a minute; the taxonomy cache makes repeat loads fast, "
+      "and a JSON report loads at once, with no Arelle and no taxonomy fetch."
     ),
     structured_output=False,
   )
@@ -327,9 +329,20 @@ def build_server(
         )
       ),
     ] = None,
+    entry_point: Annotated[
+      str | None,
+      Field(
+        description=(
+          "A taxonomy's entry point, by path, file name or name from the "
+          "receipt's `taxonomy`; omit for the default."
+        )
+      ),
+    ] = None,
   ) -> str:
     try:
-      loaded = await anyio.to_thread.run_sync(session.load, source, filing_id)
+      loaded = await anyio.to_thread.run_sync(
+        session.load, source, filing_id, entry_point
+      )
     except (SourceError, FileNotFoundError, ValueError) as exc:
       return _error(str(exc))
     return run(receipt, loaded)
@@ -473,7 +486,8 @@ def build_server(
       "describe_filing; under the product profile a kind also works "
       "(balance_sheet, income_statement, cash_flow_statement, equity_statement, "
       "or a phrase like 'balance sheet'). `periods` limits the columns to those "
-      "keys, end dates, or years; otherwise the most recent eight."
+      "keys, end dates, or years; otherwise the most recent eight. A "
+      "`truncated` response continues from its `next_offset` as `offset`."
     ),
     structured_output=False,
   )
@@ -490,10 +504,22 @@ def build_server(
     max_rows: Annotated[
       int, Field(description="Rows to return (max 400).", ge=1, le=400)
     ] = 400,
+    offset: Annotated[
+      int,
+      Field(
+        description="Rows to skip: the `next_offset` a truncated response returned.",
+        ge=0,
+      ),
+    ] = 0,
   ) -> str:
     return run(
       lambda: tools.statement(
-        session.get(filing), statement, periods=periods, max_rows=max_rows, pure=pure
+        session.get(filing),
+        statement,
+        periods=periods,
+        max_rows=max_rows,
+        pure=pure,
+        offset=offset,
       )
     )
 
@@ -568,7 +594,8 @@ def build_server(
       "disclosures first for the family index, and narrow this one with "
       "`member` or `periods` when part of the block answers the question. "
       "`block` is an id from disclosures or describe_filing, a name or "
-      "part of one, or a role URI."
+      "part of one, or a role URI. A `truncated` response continues from its "
+      "`next_offset` as `offset`."
     ),
     structured_output=False,
   )
@@ -600,6 +627,13 @@ def build_server(
         le=200,
       ),
     ] = None,
+    offset: Annotated[
+      int,
+      Field(
+        description="Rows to skip: the `next_offset` a truncated response returned.",
+        ge=0,
+      ),
+    ] = 0,
   ) -> str:
     return run(
       lambda: tools.information_block(
@@ -609,6 +643,7 @@ def build_server(
         member=member,
         max_rows=max_rows,
         max_members=max_members,
+        offset=offset,
         pure=pure,
         whole=whole,
       )
