@@ -20,6 +20,7 @@ import pytest
 
 from xbrlkit.view import (
   DEFAULT_VIEWER,
+  VIEWER_PAGE,
   ViewerHost,
   origin_of,
   serve_report,
@@ -71,13 +72,22 @@ def test_the_path_carries_an_unguessable_token(served) -> None:
 
 
 def test_the_viewer_url_names_the_document(served) -> None:
-  assert served.viewer_url.startswith(f"{DEFAULT_VIEWER}/?url=")
+  assert served.viewer_url.startswith(f"{DEFAULT_VIEWER}/view?url=")
   assert served.file_url in served.viewer_url
+
+
+def test_the_link_opens_the_viewers_view_page() -> None:
+  # `/view`, not `/`: the viewer's analytics see the path and drop the query,
+  # so the path is what tells an open from xbrlkit apart from a web link.
+  assert VIEWER_PAGE == "view"
+  assert viewer_url(DEFAULT_VIEWER, "http://127.0.0.1:1/t/a.json") == (
+    "https://xbrlkit.com/view?url=http://127.0.0.1:1/t/a.json"
+  )
 
 
 def test_viewer_url_and_origin_helpers() -> None:
   assert viewer_url("https://example.test/", "http://127.0.0.1:1/a.json") == (
-    "https://example.test/?url=http://127.0.0.1:1/a.json"
+    "https://example.test/view?url=http://127.0.0.1:1/a.json"
   )
   assert origin_of("https://example.test/path?q=1") == "https://example.test"
   with pytest.raises(ValueError):

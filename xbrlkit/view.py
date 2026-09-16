@@ -17,6 +17,12 @@ in the way.
 The only machinery this needs, then, is a CORS header, because the viewer's
 origin is not this one.
 
+**The link.** It opens the viewer's ``/view`` page, ``https://xbrlkit.com/view?url=…``.
+The viewer reads ``/view`` and ``/`` the same way: a ``?url=`` on either opens the
+document. The path is what separates an open from here from a report link on the
+web, because the viewer's page-view analytics record the path and drop the query
+string. Earlier releases open ``/?url=…``, which the viewer keeps serving for good.
+
 **Posture.** Loopback only, one document per path, and each path carries an
 unguessable token — so the document is readable by the viewer origin, for as
 long as the process runs, and not by every other page the browser has open.
@@ -40,6 +46,10 @@ from urllib.parse import quote, urlsplit
 # origin, so the old name must keep working for those installs.
 DEFAULT_VIEWER = "https://xbrlkit.com"
 
+# The viewer page a link from xbrlkit opens: `/view` rather than `/`, so the
+# viewer can count these opens apart from report links on the web.
+VIEWER_PAGE = "view"
+
 _CONTENT_TYPES = {
   ".jsonld": "application/ld+json",
   ".json": "application/json",
@@ -55,8 +65,8 @@ def origin_of(url: str) -> str:
 
 
 def viewer_url(viewer: str, file_url: str) -> str:
-  """The viewer page that opens ``file_url`` — the ``?url=`` link."""
-  return f"{viewer.rstrip('/')}/?url={quote(file_url, safe=':/')}"
+  """The viewer's ``/view`` page, opening ``file_url`` — the ``?url=`` link."""
+  return f"{viewer.rstrip('/')}/{VIEWER_PAGE}?url={quote(file_url, safe=':/')}"
 
 
 class _Handler(BaseHTTPRequestHandler):
