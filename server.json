@@ -1,0 +1,52 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.robosystems/xbrlkit",
+  "title": "xbrlkit",
+  "description": "Read SEC EDGAR and XBRL filings with an AI: 18 tools over the filing itself. Local, free, no account",
+  "version": "0.16.4",
+  "websiteUrl": "https://github.com/RoboFinSystems/xbrlkit#readme",
+  "repository": {
+    "url": "https://github.com/RoboFinSystems/xbrlkit",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "xbrlkit",
+      "version": "0.16.4",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--with",
+          "value": "xbrlkit[mcp]",
+          "description": "The MCP server is the package's optional [mcp] extra; this pulls it into the uvx environment."
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve"
+        },
+        {
+          "type": "named",
+          "name": "--transport",
+          "value": "stdio"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "SEC_GOV_USER_AGENT",
+          "description": "Your name and email, sent to EDGAR as the User-Agent when a filing is fetched from sec.gov. Optional: EDGAR works unattributed under the default, and local files, filings.xbrl.org and JSON reports need no identity.",
+          "isRequired": false,
+          "isSecret": false,
+          "placeholder": "Your Name you@example.com"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

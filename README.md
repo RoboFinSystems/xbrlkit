@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<!-- mcp-name: ai.robosystems/xbrlkit -->
+
 Work with XBRL filings above [Arelle](https://arelle.org): fetch a filing, parse
 it **once** into a neutral typed model, and project that model into whichever
 portable representation you need — or hand it one of those representations and
