@@ -375,6 +375,53 @@ def test_resolve_element_by_qname_and_label(loaded: LoadedFiling) -> None:
     tools.resolve_element(loaded, "  ")
 
 
+def test_resolve_element_ranks_a_taxonomy_with_no_facts_to_lean_on() -> None:
+  """A taxonomy reports nothing, so fact counts cannot separate the hundreds
+  of concepts a phrase prefixes. Before the tie-break, US GAAP answered
+  "revenue" with RevenueChangeInJudgment and ranked Revenues past 100."""
+  lease = "us-gaap:OperatingLeaseLiability"
+  cash = "us-gaap:CashAndCashEquivalentsAtCarryingValue"
+  concepts = {
+    "us-gaap:RevenueChangeInJudgment": _concept(
+      "RevenueChangeInJudgment", is_numeric=False, item_type="stringItemType"
+    ),
+    "us-gaap:RevenueCommissionersIrelandMember": _concept(
+      "RevenueCommissionersIrelandMember", is_abstract=True, is_numeric=False
+    ),
+    "us-gaap:RevenueFromRelatedParties": _concept("RevenueFromRelatedParties"),
+    "us-gaap:Revenues": _concept("Revenues"),
+    "us-gaap:IncreaseDecreaseInOperatingLeaseLiability": _concept(
+      "IncreaseDecreaseInOperatingLeaseLiability",
+      pref_label="Increase (Decrease) in Operating Lease Liability",
+    ),
+    lease: _concept("OperatingLeaseLiability", pref_label="Operating Lease, Liability"),
+    "us-gaap:CashAndCashEquivalentsFairValueDisclosure": _concept(
+      "CashAndCashEquivalentsFairValueDisclosure",
+      pref_label="Cash and Cash Equivalents, Fair Value Disclosure",
+    ),
+    cash: _concept(
+      "CashAndCashEquivalentsAtCarryingValue", pref_label="Cash and Cash Equivalent"
+    ),
+  }
+  model = XbrlModel(
+    filing=FilingMeta(accession="us-gaap-entryPoint-all-2025", cik=""),
+    entity=EntityIdentity(cik=""),
+    concepts=concepts,
+  )
+  lf = LoadedFiling(id="taxonomy", source="memory", model=model, text="", sections=[])
+
+  def first(query: str) -> str:
+    return tools.resolve_element(lf, query)["matches"][0]["qname"]
+
+  # The closest name among equal matches, an amount ahead of a text item and
+  # a heading.
+  assert first("revenue") == "us-gaap:Revenues"
+  # Spacing and punctuation do not keep a label from matching whole.
+  assert first("operating lease liability") == lease
+  # Nor does a plural.
+  assert first("cash and cash equivalents") == cash
+
+
 # -- fact grid ------------------------------------------------------------------
 
 

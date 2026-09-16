@@ -234,6 +234,12 @@ def _label_for_role(concept: Concept | None, role: str | None) -> str | None:
   return _pref_label(concept)
 
 
+def _squash(text: str) -> str:
+  """Text with its case, spacing and punctuation gone, for comparing a phrase
+  with a concept name or label."""
+  return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def _documentation(concept: Concept) -> str | None:
   for label in concept.labels:
     if label.role and label.role.endswith("documentation") and label.value:
@@ -895,10 +901,11 @@ def resolve_element(lf: LoadedFiling, query: str, limit: int = 20) -> dict[str, 
   if not q:
     raise ToolError("query is required")
   ql = q.lower()
+  squashed = _squash(ql)
   tokens = [t for t in re.split(r"[\s_\-]+", ql) if t]
   limit = max(1, min(int(limit or 20), 100))
 
-  scored: list[tuple[float, int, str]] = []
+  scored: list[tuple[tuple[Any, ...], int, str]] = []
   for qname, concept in model.concepts.items():
     if concept.is_hypercube_item or concept.is_dimension_item:
       continue
@@ -910,6 +917,14 @@ def resolve_element(lf: LoadedFiling, query: str, limit: int = 20) -> dict[str, 
       score = 100
     elif local == ql or pref == ql:
       score = 90
+    elif squashed and squashed.removesuffix("s") in (
+      local.removesuffix("s"),
+      _squash(pref).removesuffix("s"),
+    ):
+      # The phrase is the name or label but for spacing, punctuation or a
+      # plural: "operating lease liability" is "Operating Lease, Liability",
+      # "cash and cash equivalents" is "Cash and Cash Equivalent".
+      score = 90
     elif local.startswith(ql) or pref.startswith(ql):
       score = 70
     elif tokens and all(t in local for t in tokens):
@@ -919,11 +934,18 @@ def resolve_element(lf: LoadedFiling, query: str, limit: int = 20) -> dict[str, 
     elif ql in qname.lower():
       score = 40
     if score:
-      scored.append((score, len(idx.by_concept.get(qname, ())), qname))
-  scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
+      # Within a tier the concepts the filing reports come first. A tier's
+      # hundreds of prefix matches all report nothing in a taxonomy, so after
+      # that: an amount before a heading, a text block or an enumeration, and
+      # the closest name — `Revenues` before `RevenueChangeInJudgment` —
+      # before the alphabet decides.
+      count = len(idx.by_concept.get(qname, ()))
+      rank = (-score, -count, concept.is_abstract, not concept.is_numeric, len(local))
+      scored.append((rank, count, qname))
+  scored.sort(key=lambda t: (t[0], t[2]))
 
   rows = []
-  for score, count, qname in scored[:limit]:
+  for _, count, qname in scored[:limit]:
     concept = model.concepts[qname]
     roles = idx.concept_roles.get(qname, [])
     names = []
