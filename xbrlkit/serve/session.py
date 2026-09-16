@@ -100,6 +100,28 @@ class TextSection:
 
 
 @dataclass
+class EntryPoint:
+  """One way into a taxonomy: the schema its DTS is discovered from.
+
+  ``document`` is the schema's path inside the package, as a caller names it
+  back through ``entry_point``; ``path`` is where it sits on disk.
+  """
+
+  name: str
+  document: str
+  path: Path
+
+
+@dataclass
+class TaxonomyEntry:
+  """The entry point a taxonomy package with no report was loaded from, and
+  the ones it offers that were not."""
+
+  entry_point: EntryPoint
+  others: list[EntryPoint] = field(default_factory=list)
+
+
+@dataclass
 class LoadedFiling:
   """One filing the server holds: the model plus its readable text.
 
@@ -134,6 +156,10 @@ class LoadedFiling:
   # for, and the reader who asked to see the report asked to see that one.
   source_document: str | None = None
   source_kind: str | None = None
+  # Set when the source was a taxonomy published on its own — a package with
+  # schemas and linkbases and no report — and so holds concepts and networks
+  # but no facts.
+  taxonomy: TaxonomyEntry | None = None
 
   @property
   def has_xbrl(self) -> bool:
@@ -319,13 +345,20 @@ class FilingSession:
 
   # -- loading ---------------------------------------------------------------
 
-  def load(self, source: str, filing_id: str | None = None) -> LoadedFiling:
-    """Resolve ``source`` and load it; returns the new :class:`LoadedFiling`."""
+  def load(
+    self, source: str, filing_id: str | None = None, entry_point: str | None = None
+  ) -> LoadedFiling:
+    """Resolve ``source`` and load it; returns the new :class:`LoadedFiling`.
+
+    ``entry_point`` names the schema to load from a taxonomy package — a zip
+    or directory, local or by URL — in place of the one chosen by default.
+    """
     source = source.strip()
     if not source:
       raise SourceError("An empty source.")
+    entry_point = (entry_point or "").strip() or None
     with self._lock:
-      loaded = self._load(source)
+      loaded = self._load(source, entry_point)
       wanted = filing_id or loaded.id
       loaded.id = self._unique_id(wanted)
       self._filings[loaded.id] = loaded
@@ -350,12 +383,14 @@ class FilingSession:
       n += 1
     return f"{wanted}-{n}"
 
-  def _load(self, source: str) -> LoadedFiling:
+  def _load(self, source: str, entry_point: str | None = None) -> LoadedFiling:
     path = Path(source).expanduser()
     if path.exists():
-      return self._load_local(path, source)
+      return self._load_local(path, source, entry_point)
     if source.startswith(("http://", "https://")):
-      return self._load_url(source)
+      return self._load_url(source, entry_point)
+    if entry_point:
+      raise SourceError(_ENTRY_POINT_NEEDS_A_PACKAGE.format(source=source))
     m = _CIK_ACCESSION_RE.match(source)
     if m:
       return self._load_edgar(m.group(1), m.group(2), source)
@@ -385,18 +420,31 @@ class FilingSession:
       "filing outside EDGAR — `lei:<LEI>` or a filings.xbrl.org filing id."
     )
 
-  def _load_local(self, path: Path, source: str) -> LoadedFiling:
+  def _load_local(
+    self, path: Path, source: str, entry_point: str | None = None
+  ) -> LoadedFiling:
     package_dir: Path | None = None
+    taxonomy: TaxonomyEntry | None = None
+    is_package = path.is_dir() or path.suffix.lower() == ".zip"
+    if entry_point and not is_package:
+      raise SourceError(_ENTRY_POINT_NEEDS_A_PACKAGE.format(source=source))
     if path.is_file() and path.suffix.lower() in _JSON_SUFFIXES:
       return self._load_json(path, source)
-    if path.is_dir():
-      package_dir = path
-      target = _find_load_target(path)
-    elif path.suffix.lower() == ".zip":
-      package_dir = Path(tempfile.mkdtemp(prefix="zip-", dir=self._tmp))
-      with ZipFile(path) as archive:
-        archive.extractall(package_dir)
-      target = _find_load_target(package_dir)
+    if is_package:
+      if path.is_dir():
+        package_dir = path
+      else:
+        package_dir = Path(tempfile.mkdtemp(prefix="zip-", dir=self._tmp))
+        with ZipFile(path) as archive:
+          archive.extractall(package_dir)
+      report = None if entry_point else _find_load_target(package_dir)
+      if report is None:
+        # No report in the package: a taxonomy published on its own, which
+        # loads from one of its schemas and answers with concepts and networks.
+        taxonomy = _choose_entry_point(package_dir, entry_point)
+        target = taxonomy.entry_point.path
+      else:
+        target = report
     else:
       target = path
       package_dir = path.parent
@@ -417,11 +465,23 @@ class FilingSession:
       model = self._parse(
         target, accession=accession, filing=None, entity=None, packages=packages
       )
-    except NoXbrlFound:
+    except NoXbrlFound as exc:
+      if taxonomy is not None:
+        # The model holds the concepts its networks and facts reach, so an
+        # elements-only schema — no linkbases, nothing to reach them — reads
+        # as empty. Say so, rather than that the package is not XBRL.
+        others = ", ".join(e.document for e in taxonomy.others)
+        raise SourceError(
+          f"Entry point {taxonomy.entry_point.document} declares no networks "
+          "for the tools to read (an elements-only schema); load an entry "
+          f"point with linkbases instead{': ' + others if others else ''}."
+        ) from exc
       if target.suffix.lower() not in _DOCUMENT_SUFFIXES:
         raise
       return self._document_only(target, source, accession, package_dir)
-    return self._finish(_local_id(path, model), source, model, target, package_dir)
+    loaded = self._finish(_local_id(path, model), source, model, target, package_dir)
+    loaded.taxonomy = taxonomy
+    return loaded
 
   def _load_json(
     self, path: Path, source: str, document: Path | None = None
@@ -479,10 +539,21 @@ class FilingSession:
       source_kind=kind if served else None,
     )
 
-  def _load_url(self, url: str) -> LoadedFiling:
+  def _load_url(self, url: str, entry_point: str | None = None) -> LoadedFiling:
     clean = Path(url.split("?", 1)[0])
     accession = clean.stem or url
     suffix = clean.suffix.lower()
+    if suffix == ".zip":
+      # A package by URL is downloaded and loaded as a local one: the report
+      # found inside it, or — for a taxonomy published on its own, which is
+      # how FASB, XBRL US and the IFRS Foundation distribute theirs — an
+      # entry point.
+      archive = self._fetch(
+        url, into=Path(tempfile.mkdtemp(prefix="url-", dir=self._tmp))
+      )
+      return self._load_local(archive, url, entry_point)
+    if entry_point:
+      raise SourceError(_ENTRY_POINT_NEEDS_A_PACKAGE.format(source=url))
     if suffix in _JSON_SUFFIXES:
       # A JSON report is read here, not by Arelle, which cannot load one. This
       # is how a report published as an artifact — a holon or a TAVI on a CDN —
@@ -1437,12 +1508,14 @@ def _is_inline(head: bytes) -> bool:
   return b"ix:nonNumeric" in head or b"ix:nonFraction" in head or b"ix:header" in head
 
 
-def _find_load_target(package_dir: Path) -> Path:
-  """The file Arelle should load from a filing directory: the inline
+def _find_load_target(package_dir: Path) -> Path | None:
+  """The report Arelle should load from a filing directory: the inline
   document (the largest ``.htm`` carrying ``ix:`` markup), else the XBRL
   instance — recognised by its root element, since a package need not
   follow EDGAR's naming (an instance called ``instance.xml`` beside
-  ``report.xsd`` and hyphenated linkbases is a valid package too).
+  ``report.xsd`` and hyphenated linkbases is a valid package too). ``None``
+  when the package holds no report: a taxonomy published on its own, which
+  :func:`_choose_entry_point` picks a schema from.
 
   The whole tree is searched, not just the top level. A conformant XBRL
   taxonomy package puts nothing at its root: an ESEF report sits under
@@ -1479,10 +1552,174 @@ def _find_load_target(package_dir: Path) -> Path:
     raise SourceError(
       f"{len(instances)} XBRL instances in {package_dir} ({names}); point at one."
     )
-  raise SourceError(
-    f"No inline document or XBRL instance found in {package_dir}; "
-    "point at the file to load."
+  return None
+
+
+_ENTRY_POINT_NEEDS_A_PACKAGE = (
+  "entry_point picks a schema inside a taxonomy package — a .zip or a "
+  "directory, local or by URL; {source} is not one."
+)
+_SCHEMA_LOCATION_RE = re.compile(rb"""schemaLocation\s*=\s*(["'])(.*?)\1""", re.DOTALL)
+
+
+def _local_name(tag: str) -> str:
+  return tag.rsplit("}", 1)[-1]
+
+
+def _choose_entry_point(package_dir: Path, wanted: str | None) -> TaxonomyEntry:
+  """The schema to load a taxonomy package from, when it holds no report.
+
+  A package that declares its entry points (``META-INF/taxonomyPackage.xml``)
+  loads the one ``wanted`` names, else the first it lists: FASB lists the whole
+  taxonomy first — its US GAAP and SRT packages open with
+  ``entire/…-entryPoint-all``, ahead of the elements-only, DQC and meta-model
+  entry points. A package without a manifest loads its one root
+  schema, the one no other schema in it imports; with several, the caller
+  names one. The others are returned beside the choice so it is never silent.
+  """
+  # Resolved once, so a package unpacked under a symlinked temp directory
+  # (macOS's /var) still contains the resolved paths its entry points name.
+  package_dir = package_dir.resolve()
+  declared = _declared_entry_points(package_dir)
+  entry_points = declared or _root_schemas(package_dir)
+  if not entry_points:
+    raise SourceError(
+      f"No inline document, XBRL instance or taxonomy schema found in "
+      f"{package_dir}; point at the file to load."
+    )
+  if wanted:
+    chosen = _match_entry_point(entry_points, wanted)
+  elif declared or len(entry_points) == 1:
+    chosen = entry_points[0]
+  else:
+    raise SourceError(
+      f"This taxonomy package has no manifest and {len(entry_points)} root "
+      f"schemas; pass entry_point to choose one: "
+      f"{', '.join(e.document for e in entry_points)}."
+    )
+  return TaxonomyEntry(
+    entry_point=chosen, others=[e for e in entry_points if e is not chosen]
   )
+
+
+def _match_entry_point(entry_points: list[EntryPoint], wanted: str) -> EntryPoint:
+  """The entry point ``wanted`` names: exactly, by its name, its path in the
+  package or its file name with or without ``.xsd``; else the one it is part
+  of."""
+  key = wanted.strip().lower()
+
+  def names(e: EntryPoint) -> set[str]:
+    document = Path(e.document)
+    return {
+      e.name.lower(),
+      e.document.lower(),
+      document.name.lower(),
+      document.stem.lower(),
+    }
+
+  hits = [e for e in entry_points if key in names(e)]
+  if not hits:
+    hits = [e for e in entry_points if any(key in n for n in names(e))]
+  if len(hits) == 1:
+    return hits[0]
+  listed = ", ".join(e.document for e in hits or entry_points)
+  if hits:
+    raise SourceError(f"entry_point {wanted!r} matches {len(hits)}: {listed}.")
+  raise SourceError(f"No entry point matches {wanted!r}; this package has: {listed}.")
+
+
+def _declared_entry_points(package_dir: Path) -> list[EntryPoint]:
+  """The entry points the package's manifests declare, in their order, that
+  resolve to a schema inside the package.
+
+  An entry point names its schema by the URL it is published at
+  (``https://xbrl.fasb.org/us-gaap/2025/entire/…``); the package catalog's
+  ``rewriteURI`` maps that URL to the copy inside the package, and a relative
+  ``href`` resolves against the manifest itself.
+  """
+  found: list[EntryPoint] = []
+  for manifest in sorted(package_dir.rglob("META-INF/taxonomyPackage.xml")):
+    meta_inf = manifest.parent
+    try:
+      root = ElementTree.parse(manifest).getroot()
+    except ElementTree.ParseError as exc:
+      logger.warning("unreadable taxonomy package manifest %s: %s", manifest, exc)
+      continue
+    rewrites = _catalog_rewrites(meta_inf / "catalog.xml")
+    for element in root.iter():
+      if _local_name(element.tag) != "entryPoint":
+        continue
+      name = ""
+      href = ""
+      for child in element:
+        local = _local_name(child.tag)
+        if local == "name" and not name:
+          name = (child.text or "").strip()
+        elif local == "entryPointDocument" and not href:
+          href = (child.get("href") or "").strip()
+      path = _resolve_package_href(href, meta_inf, rewrites) if href else None
+      if path is None or not path.is_file() or not path.is_relative_to(package_dir):
+        continue
+      document = path.relative_to(package_dir).as_posix()
+      found.append(EntryPoint(name=name or path.stem, document=document, path=path))
+  return found
+
+
+def _catalog_rewrites(catalog: Path) -> list[tuple[str, Path]]:
+  """A package catalog's URL prefixes and the directories they map to,
+  longest prefix first."""
+  if not catalog.is_file():
+    return []
+  try:
+    root = ElementTree.parse(catalog).getroot()
+  except ElementTree.ParseError as exc:
+    logger.warning("unreadable taxonomy package catalog %s: %s", catalog, exc)
+    return []
+  rewrites = [
+    (start, catalog.parent / (element.get("rewritePrefix") or ""))
+    for element in root.iter()
+    if _local_name(element.tag) == "rewriteURI"
+    and (start := element.get("uriStartString"))
+  ]
+  return sorted(rewrites, key=lambda r: -len(r[0]))
+
+
+def _resolve_package_href(
+  href: str, base: Path, rewrites: list[tuple[str, Path]]
+) -> Path | None:
+  """Where an ``href`` in a package manifest sits on disk, or ``None`` when
+  it points outside the package."""
+  if "://" not in href:
+    return (base / href).resolve()
+  for start, prefix in rewrites:
+    if href.startswith(start):
+      return (prefix / href[len(start) :]).resolve()
+  return None
+
+
+def _root_schemas(package_dir: Path) -> list[EntryPoint]:
+  """The schemas in a package that no other schema in it imports or
+  includes — where a DTS starts when no manifest says so. A published
+  taxonomy with no manifest (GASB's exposure drafts) has one: the schema that
+  imports its roles and types and links its linkbases."""
+  schemas = sorted(
+    p for p in package_dir.rglob("*.xsd") if p.is_file() and not p.name.startswith(".")
+  )
+  imported: set[Path] = set()
+  for schema in schemas:
+    for match in _SCHEMA_LOCATION_RE.finditer(schema.read_bytes()):
+      for location in match.group(2).decode("utf-8", "replace").split():
+        if "://" not in location:
+          imported.add((schema.parent / location.split("#", 1)[0]).resolve())
+  return [
+    EntryPoint(
+      name=schema.stem,
+      document=schema.relative_to(package_dir).as_posix(),
+      path=schema,
+    )
+    for schema in schemas
+    if schema.resolve() not in imported
+  ]
 
 
 _XML_IDENTITY = {

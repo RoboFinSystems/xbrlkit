@@ -34,7 +34,12 @@ from typing import Any
 from xbrlkit.config import CONFIG, Config
 from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
 from xbrlkit.serialize import classify_network, root_qname
-from xbrlkit.serve.session import FilingSession, LoadedFiling, TextSection
+from xbrlkit.serve.session import (
+  FilingSession,
+  LoadedFiling,
+  TaxonomyEntry,
+  TextSection,
+)
 from xbrlkit.edgar.items import describe_items, is_earnings_release, items_note
 from xbrlkit.information_block import (
   Disclosure,
@@ -474,7 +479,7 @@ def list_filings(session: FilingSession) -> dict[str, Any]:
   return {"filings": rows, "count": len(rows)}
 
 
-LOAD_RECEIPT_KEYS = ("profile", "filing", "entity", "counts")
+LOAD_RECEIPT_KEYS = ("profile", "taxonomy", "filing", "entity", "counts")
 
 
 def load_receipt(
@@ -615,6 +620,7 @@ def describe_filing(
       "text": "primary document" if whole and lf.has_document else "tagged text blocks",
       "xbrl": lf.has_xbrl,
     },
+    **({"taxonomy": _describe_taxonomy(lf.taxonomy)} if lf.taxonomy else {}),
     "filing": {
       "id": lf.id,
       "source": lf.source,
@@ -690,6 +696,25 @@ def describe_filing(
   }
 
 
+def _describe_taxonomy(taxonomy: TaxonomyEntry) -> dict[str, Any]:
+  """Which entry point a taxonomy package was loaded from, and the others it
+  offers — the choice stated, never silent."""
+  return {
+    "entry_point": {
+      "name": taxonomy.entry_point.name,
+      "document": taxonomy.entry_point.document,
+    },
+    "other_entry_points": [
+      {"name": e.name, "document": e.document} for e in taxonomy.others
+    ],
+    "note": (
+      "a taxonomy with no report: concepts and networks, no facts, periods or "
+      "units. load_filing with the same source and `entry_point` set to another "
+      "entry point's document loads that one instead."
+    ),
+  }
+
+
 def _next_steps(lf: LoadedFiling) -> list[str]:
   """What to call next, given what this filing actually is.
 
@@ -698,6 +723,15 @@ def _next_steps(lf: LoadedFiling) -> list[str]:
   the item codes say the substance is elsewhere, that goes first — above the
   fact tools, which for an 8-K have almost nothing to work with.
   """
+  if lf.taxonomy is not None:
+    return [
+      "resolve_element to find concepts by phrase — each with its label, type, "
+      "balance, period type and the networks it sits in",
+      "disclosures for the taxonomy's networks as families",
+      "statement or information_block with a network from the list above to "
+      "read its tree",
+      "calculation for what sums to a total, where the taxonomy has calculation arcs",
+    ]
   exhibit_first: list[str] = []
   if is_earnings_release(lf.model.filing.items):
     exhibit_first = [

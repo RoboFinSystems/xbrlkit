@@ -59,7 +59,8 @@ SC 13D/G. Read as fields and record tables through `records`, and as text.
 
 START
 - list_filings says what is loaded. Nothing? load_filing takes a local path \
-(an inline .htm, an instance .xml, a filing directory or zip), a URL, an \
+(an inline .htm, an instance .xml, a filing directory or zip, or a taxonomy \
+package with no report in it), a URL, an \
 EDGAR `cik:accession`, or a ticker (`NVDA`, `NVDA 10-Q`). Outside the SEC it \
 takes `lei:<LEI>` for a filer's latest filing on filings.xbrl.org, or that \
 index's own filing id — ESEF and the national regimes, identified by LEI \
@@ -311,9 +312,14 @@ def build_server(
       "the SEC — `lei:<LEI>` for that filer's latest filing on "
       "filings.xbrl.org, or one of that index's filing ids (e.g. "
       "`213800H2PQMIF3OVZY47-2022-03-31-ESEF-GB-0`). Any XBRL "
-      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. Takes seconds to a minute; "
-      "the taxonomy cache makes repeat loads fast, and a JSON report loads at "
-      "once, with no Arelle and no taxonomy fetch."
+      "taxonomy loads: US GAAP, IFRS, ESEF, ACFR. A taxonomy published on its "
+      "own loads too — a .zip or directory with schemas and linkbases and no "
+      "report, local or by URL (`https://xbrl.fasb.org/us-gaap/2026/"
+      "us-gaap-2026.zip`): its concepts and networks, no facts. The receipt's "
+      "`taxonomy` names the entry point loaded — the first the package's "
+      "manifest lists, or its one root schema — and the others it offers. "
+      "Takes seconds to a minute; the taxonomy cache makes repeat loads fast, "
+      "and a JSON report loads at once, with no Arelle and no taxonomy fetch."
     ),
     structured_output=False,
   )
@@ -327,9 +333,21 @@ def build_server(
         )
       ),
     ] = None,
+    entry_point: Annotated[
+      str | None,
+      Field(
+        description=(
+          "For a taxonomy package: the entry point to load, by its document "
+          "path, file name or name from the receipt's `taxonomy` "
+          "(e.g. `us-gaap-entryPoint-all-2025`). Omit for the default."
+        )
+      ),
+    ] = None,
   ) -> str:
     try:
-      loaded = await anyio.to_thread.run_sync(session.load, source, filing_id)
+      loaded = await anyio.to_thread.run_sync(
+        session.load, source, filing_id, entry_point
+      )
     except (SourceError, FileNotFoundError, ValueError) as exc:
       return _error(str(exc))
     return run(receipt, loaded)
