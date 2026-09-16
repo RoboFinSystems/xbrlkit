@@ -497,6 +497,30 @@ def test_statement_by_kind_renders_rows_in_order(loaded: LoadedFiling) -> None:
   ]
 
 
+def test_statement_pages_a_network_longer_than_max_rows(loaded: LoadedFiling) -> None:
+  whole = tools.statement(loaded, "income statement")
+  assert whole["truncated"] is False and "next_offset" not in whole
+
+  first = tools.statement(loaded, "income statement", max_rows=2)
+  assert first["truncated"] is True and first["next_offset"] == 2
+  assert "offset" not in first and "ancestors" not in first
+  rest = tools.statement(
+    loaded, "income statement", max_rows=2, offset=first["next_offset"]
+  )
+  assert rest["offset"] == 2 and rest["truncated"] is False
+  assert "next_offset" not in rest
+  # Pages join back into the whole, depths intact, and a later page says
+  # which headers it opens under.
+  assert first["rows"] + rest["rows"] == whole["rows"]
+  assert rest["ancestors"] == [
+    {"concept": "us-gaap:IncomeStatementAbstract", "label": "Income Statement Abstract"}
+  ]
+  with pytest.raises(
+    tools.ToolError, match="past the end of this network \\(4 rows\\)"
+  ):
+    tools.statement(loaded, "income statement", offset=4)
+
+
 def test_statement_columns_put_the_year_before_its_fourth_quarter() -> None:
   model = _model()
   model.periods.append(

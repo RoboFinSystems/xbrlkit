@@ -1208,11 +1208,13 @@ def statement(
   periods: list[str] | None = None,
   max_rows: int = MAX_STATEMENT_ROWS,
   pure: bool = False,
+  offset: int = 0,
 ) -> dict[str, Any]:
   _require_xbrl(lf, "presentation networks")
   model, idx = lf.model, index_for(lf)
   network = _find_network(idx, statement, pure=pure)
   max_rows = max(1, min(int(max_rows or MAX_STATEMENT_ROWS), MAX_STATEMENT_ROWS))
+  offset = max(0, int(offset or 0))
 
   children: dict[str, list[Arc]] = defaultdict(list)
   parents: set[str] = set()
@@ -1228,14 +1230,10 @@ def statement(
   rows: list[dict[str, Any]] = []
   used_periods: dict[str, int] = defaultdict(int)
   truncated = False
+  walked = 0
+  page_trail: tuple[str, ...] = ()
 
-  def visit(
-    qname: str, depth: int, label_role: str | None, trail: tuple[str, ...]
-  ) -> None:
-    nonlocal truncated
-    if len(rows) >= max_rows:
-      truncated = True
-      return
+  def row_at(qname: str, depth: int, label_role: str | None) -> dict[str, Any]:
     concept = model.concepts.get(qname)
     row: dict[str, Any] = {
       "depth": depth,
@@ -1263,7 +1261,20 @@ def statement(
         used_periods[key] += 1
       if values:
         row["values"] = values
-    rows.append(row)
+    return row
+
+  def visit(
+    qname: str, depth: int, label_role: str | None, trail: tuple[str, ...]
+  ) -> None:
+    nonlocal truncated, walked, page_trail
+    if len(rows) >= max_rows:
+      truncated = True
+      return
+    walked += 1
+    if walked > offset:
+      if not rows:
+        page_trail = trail
+      rows.append(row_at(qname, depth, label_role))
     if qname in trail or depth > 14:
       return
     for arc in children.get(qname, []):
@@ -1271,6 +1282,8 @@ def statement(
 
   for root in roots:
     visit(root, 0, None, ())
+  if offset and not rows:
+    raise ToolError(f"offset {offset} is past the end of this network ({walked} rows)")
 
   period_by_key = {_period_key(p): p for p in model.periods}
   wanted = None
@@ -1312,12 +1325,36 @@ def statement(
     "rows": rows,
     "row_count": len(rows),
     "truncated": truncated,
+    **_page_fields(model, offset, len(rows), truncated, page_trail),
     "note": (
       "consolidated values only, most precise duplicate kept; depth is the "
       "presentation nesting; a label like 'Total' or a negated label reflects "
-      "the preferred label on the arc"
+      "the preferred label on the arc; a truncated network continues from "
+      "`next_offset` passed as `offset`"
     ),
   }
+
+
+def _page_fields(
+  model: XbrlModel,
+  offset: int,
+  returned: int,
+  truncated: bool,
+  trail: tuple[str, ...],
+) -> dict[str, Any]:
+  """Where a page of a presentation walk sits in the whole: the offset it
+  starts at, the headers above its first row — a later page opens deep in
+  the tree, and its depths alone do not say under what — and where the next
+  page starts."""
+  out: dict[str, Any] = {}
+  if offset:
+    out["offset"] = offset
+    out["ancestors"] = [
+      {"concept": q, "label": _pref_label(model.concepts.get(q), q)} for q in trail
+    ]
+  if truncated:
+    out["next_offset"] = offset + returned
+  return out
 
 
 def calculation(
@@ -1618,6 +1655,7 @@ def information_block(
   member: str | None = None,
   max_rows: int = MAX_BLOCK_ROWS,
   max_members: int | None = None,
+  offset: int = 0,
   *,
   pure: bool = False,
   whole: bool = True,
@@ -1628,12 +1666,18 @@ def information_block(
 
   Member breakdowns are kept most-reported first, up to the response budget
   (or ``max_members`` when the caller sets one); a row is never left blank
-  by that cut, and every row says how many breakdowns it lost."""
+  by that cut, and every row says how many breakdowns it lost.
+
+  A section longer than ``max_rows`` — a taxonomy's own networks run to
+  hundreds of concepts — pages by ``offset``. The axes, calculation arcs and
+  text blocks describe the section, not a page, and come with the first page
+  alone; a later page carries its rows and their columns."""
   _require_xbrl(lf, "presentation networks")
   model, idx = lf.model, index_for(lf)
   blocks, membership, families = blocks_for(lf)
   st = _find_block(idx, blocks, block, pure=pure)
   max_rows = max(1, min(int(max_rows or MAX_BLOCK_ROWS), MAX_BLOCK_ROWS))
+  offset = max(0, int(offset or 0))
   member_limit = (
     max(1, min(int(max_members), MAX_BLOCK_MEMBERS_CAP))
     if max_members is not None
@@ -1707,6 +1751,8 @@ def information_block(
   rows: list[dict[str, Any]] = []
   used_periods: dict[str, int] = defaultdict(int)
   truncated = False
+  walked = 0
+  page_trail: tuple[str, ...] = ()
 
   def cell(f: XbrlFact) -> Any:
     if f.is_nil:
@@ -1719,10 +1765,21 @@ def information_block(
   def visit(
     qname: str, depth: int, label_role: str | None, trail: tuple[str, ...]
   ) -> None:
-    nonlocal truncated
+    nonlocal truncated, walked, page_trail
     if len(rows) >= max_rows:
       truncated = True
       return
+    walked += 1
+    if walked > offset:
+      if not rows:
+        page_trail = trail
+      rows.append(row_at(qname, depth, label_role))
+    if qname in trail or depth > 14:
+      return
+    for arc in children.get(qname, []):
+      visit(arc.to_qname, depth + 1, arc.preferred_label, trail + (qname,))
+
+  def row_at(qname: str, depth: int, label_role: str | None) -> dict[str, Any]:
     concept = model.concepts.get(qname)
     row: dict[str, Any] = {
       "depth": depth,
@@ -1771,14 +1828,12 @@ def information_block(
         row["values"] = values
       if by_member:
         row["members"] = by_member
-    rows.append(row)
-    if qname in trail or depth > 14:
-      return
-    for arc in children.get(qname, []):
-      visit(arc.to_qname, depth + 1, arc.preferred_label, trail + (qname,))
+    return row
 
   for root in roots:
     visit(root, 0, None, ())
+  if offset and not rows:
+    raise ToolError(f"offset {offset} is past the end of this block ({walked} rows)")
 
   period_by_key = {_period_key(p): p for p in model.periods}
   wanted = {w.strip() for w in periods if w and w.strip()} if periods else None
@@ -1993,15 +2048,19 @@ def information_block(
       column.pop("duration", None)
       column.pop("calendar", None)
   out: dict[str, Any] = {"block": head, "columns": columns}
-  if axes_out:
+  # The axes, calculation and text describe the section; a later page of it
+  # would only repeat them.
+  first_page = not offset
+  if axes_out and first_page:
     out["axes"] = axes_out
   out["rows"] = rows
-  if calc_out:
+  if calc_out and first_page:
     out["calculation"] = calc_out
-  if text_out:
+  if text_out and first_page:
     out["text"] = text_out
   out["row_count"] = len(rows)
   out["truncated"] = truncated
+  out.update(_page_fields(model, offset, len(rows), truncated, page_trail))
   if members_omitted:
     out["members_omitted"] = members_omitted
   if columns_omitted:
@@ -2019,7 +2078,9 @@ def information_block(
     "and columns dropped from it, and a row is never left blank by either cut; "
     "`calculation` lists each total's children with weights, how many of the "
     "shown periods foot on consolidated values, and any difference; `text` "
-    "entries are tagged text blocks — read one with read_text from its offset"
+    "entries are tagged text blocks — read one with read_text from its offset; "
+    "a truncated block continues from `next_offset` passed as `offset`, and "
+    "axes, calculation and text come with the first page only"
   )
   return out
 

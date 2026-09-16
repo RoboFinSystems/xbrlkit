@@ -491,7 +491,9 @@ def build_server(
       "describe_filing; under the product profile a kind also works "
       "(balance_sheet, income_statement, cash_flow_statement, equity_statement, "
       "or a phrase like 'balance sheet'). `periods` limits the columns to those "
-      "keys, end dates, or years; otherwise the most recent eight."
+      "keys, end dates, or years; otherwise the most recent eight. A network "
+      "longer than `max_rows` — a taxonomy's statements run to hundreds of "
+      "rows — is `truncated`; pass its `next_offset` as `offset` for the rest."
     ),
     structured_output=False,
   )
@@ -508,10 +510,22 @@ def build_server(
     max_rows: Annotated[
       int, Field(description="Rows to return (max 400).", ge=1, le=400)
     ] = 400,
+    offset: Annotated[
+      int,
+      Field(
+        description="Rows to skip: the `next_offset` a truncated response returned.",
+        ge=0,
+      ),
+    ] = 0,
   ) -> str:
     return run(
       lambda: tools.statement(
-        session.get(filing), statement, periods=periods, max_rows=max_rows, pure=pure
+        session.get(filing),
+        statement,
+        periods=periods,
+        max_rows=max_rows,
+        pure=pure,
+        offset=offset,
       )
     )
 
@@ -586,7 +600,8 @@ def build_server(
       "disclosures first for the family index, and narrow this one with "
       "`member` or `periods` when part of the block answers the question. "
       "`block` is an id from disclosures or describe_filing, a name or "
-      "part of one, or a role URI."
+      "part of one, or a role URI. A block longer than `max_rows` is "
+      "`truncated`; pass its `next_offset` as `offset` for the rest."
     ),
     structured_output=False,
   )
@@ -618,6 +633,13 @@ def build_server(
         le=200,
       ),
     ] = None,
+    offset: Annotated[
+      int,
+      Field(
+        description="Rows to skip: the `next_offset` a truncated response returned.",
+        ge=0,
+      ),
+    ] = 0,
   ) -> str:
     return run(
       lambda: tools.information_block(
@@ -627,6 +649,7 @@ def build_server(
         member=member,
         max_rows=max_rows,
         max_members=max_members,
+        offset=offset,
         pure=pure,
         whole=whole,
       )

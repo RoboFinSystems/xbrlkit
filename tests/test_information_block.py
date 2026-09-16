@@ -676,6 +676,32 @@ def test_information_block_pivots_a_details_table_by_its_own_axis(loaded):
   assert "text" not in out and out["truncated"] is False
 
 
+def test_information_block_pages_a_block_longer_than_max_rows(loaded):
+  whole = tools.information_block(loaded, "Lease Cost", whole=False)
+  pages = [tools.information_block(loaded, "Lease Cost", max_rows=3, whole=False)]
+  while pages[-1]["truncated"]:
+    pages.append(
+      tools.information_block(
+        loaded,
+        "Lease Cost",
+        max_rows=3,
+        offset=pages[-1]["next_offset"],
+        whole=False,
+      )
+    )
+  assert len(pages) > 1
+  assert [r for p in pages for r in p["rows"]] == whole["rows"]
+  # The section's axes and calculation come once, with the first page.
+  assert pages[0]["axes"] == whole["axes"]
+  assert pages[0]["calculation"] == whole["calculation"]
+  assert all("axes" not in p and "calculation" not in p for p in pages[1:])
+  assert pages[1]["ancestors"][0]["concept"] == "us-gaap:LeaseCostTable"
+  with pytest.raises(tools.ToolError, match="past the end of this block"):
+    tools.information_block(
+      loaded, "Lease Cost", offset=len(whole["rows"]), whole=False
+    )
+
+
 def test_information_block_reports_a_total_that_does_not_foot(loaded):
   out = tools.information_block(loaded, "income statement", whole=False)
   assert out["block"]["kind"] == "income_statement"
