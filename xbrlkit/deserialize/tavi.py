@@ -11,16 +11,20 @@ cannot read TAVI, and a caller who has the JSON does not need it to.
 against this model — facts with their values, decimals, language and dimensions;
 concepts with their datatype, period type, balance and nillable flag; every
 label role; presentation and calculation networks with order, weight and
-preferred label; the extended link roles as groups. Four things have no home in
-it and are therefore *not* reconstructed here, because inventing them would make
-the importer's output disagree with the parse it claims to reproduce:
+preferred label; the extended link roles as groups. The definition linkbase is
+written as cubes, and :func:`_definition_networks` walks them back into arcs,
+reading the three things a cube does not name (the hypercube element, its
+primary items, an axis's default member) from the report's own structure. Four
+things have no home in it and are therefore *not* reconstructed here, because
+inventing them would make the importer's output disagree with the parse it
+claims to reproduce:
 
 - the derived period semantics (duration bucket, calendar placement) — the one
   exception, recomputed by :mod:`xbrlkit.periods` from the dates themselves,
   which is where the parse gets them too;
-- ``is_hypercube_item`` and the abstractness of axes, domains and members: the
-  emitter turns those elements into dimensional objects, and TAVI has no flag
-  for either;
+- the abstractness of axes, domains and members: the emitter turns those
+  elements into dimensional objects, and TAVI has no flag for it (a hypercube
+  is marked ``is_hypercube_item`` when its role presents the table);
 - reference linkbase entries, ``Network.role_id``, a fact's source hash and
   raw lexical value, and a dimension's segment/scenario axis;
 - a fact's own entity when it differs from the report's — the emitter writes
@@ -59,8 +63,14 @@ from ..periods import period_from_interval
 from ..serialize._values import CIK_SCHEME
 from ..serialize.tavi import (
   CALCULATION_RELATIONSHIP,
+  DIM_ALL,
+  DIM_DIMENSION_DEFAULT,
+  DIM_DIMENSION_DOMAIN,
+  DIM_DOMAIN_MEMBER,
+  DIM_HYPERCUBE_DIMENSION,
   ITEM_TYPE_DATATYPES,
   LABEL_ROLE_TYPES,
+  OPTIONAL_CORE_DIMENSIONS,
   PRESENTATION_RELATIONSHIP,
   ROOT_SOURCE,
 )
@@ -190,8 +200,9 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   }
   gaps = ImportGaps(
     missing=[
-      "is_hypercube_item",
       "abstract flag on axes, domains and members",
+      "a hypercube's name and primary items where its role presents no table",
+      "an axis's default member, read as its domain",
       "concept references",
       "network role_id",
       "fact source_hash and raw_value",
@@ -204,6 +215,7 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   concepts = _concepts(xbrl_model, namespaces, gaps)
   _apply_labels(xbrl_model, concepts, entity, _entity_sqname(xbrl_model), gaps)
   networks = _networks(xbrl_model)
+  networks.extend(_definition_networks(xbrl_model, networks, concepts))
   facts, periods, units = _facts(xbrl_model, concepts, entity, namespaces, gaps)
   _mark_text_facts(concepts, facts)
   filing = _filing(document, xbrl_model, namespaces, entity, facts, concepts)
@@ -492,8 +504,17 @@ def _apply_labels(
 # -- networks -------------------------------------------------------------------
 
 
-def _networks(xbrl_model: Mapping[str, Any]) -> list[Network]:
-  """Networks, rejoined to the extended link roles their groups stand for."""
+@dataclass
+class _Roles:
+  """What a group stands for: its extended link role, and that role's texts."""
+
+  by_object: dict[str, str]
+  definitions: dict[str, str]
+  documentations: dict[str, str]
+
+
+def _roles(xbrl_model: Mapping[str, Any]) -> _Roles:
+  """Each network or cube → the extended link role its group stands for."""
   group_roles: dict[str, str] = {}
   for entry in _sequence(xbrl_model.get("groups")):
     group = _mapping(entry)
@@ -521,12 +542,17 @@ def _networks(xbrl_model: Mapping[str, Any]) -> list[Network]:
     target = content.get("forObject")
     if role_uri and isinstance(target, str):
       network_roles[target] = role_uri
+  return _Roles(network_roles, definitions, documentations)
 
+
+def _networks(xbrl_model: Mapping[str, Any]) -> list[Network]:
+  """Networks, rejoined to the extended link roles their groups stand for."""
+  roles = _roles(xbrl_model)
   networks: list[Network] = []
   for entry in _sequence(xbrl_model.get("networks")):
     obj = _mapping(entry)
     name = str(obj.get("name", ""))
-    role_uri = network_roles.get(name)
+    role_uri = roles.by_object.get(name)
     if role_uri is None:
       continue
     kind: NetworkKind = (
@@ -543,13 +569,151 @@ def _networks(xbrl_model: Mapping[str, Any]) -> list[Network]:
     networks.append(
       Network(
         role_uri=role_uri,
-        definition=definitions.get(role_uri),
-        documentation=documentations.get(role_uri),
+        definition=roles.definitions.get(role_uri),
+        documentation=roles.documentations.get(role_uri),
         kind=kind,
         arcs=_arcs(_sequence(obj.get("relationships")), kind),
       )
     )
   return networks
+
+
+# The dimensions every reconstructed cube declares that are not taxonomy axes.
+_CORE_DIMENSIONS = frozenset(("xbrl:concept", *OPTIONAL_CORE_DIMENSIONS))
+
+
+def _definition_networks(
+  xbrl_model: Mapping[str, Any],
+  networks: Sequence[Network],
+  concepts: dict[str, Concept],
+) -> list[Network]:
+  """The definition linkbase, rebuilt from the cubes that replaced it.
+
+  The emitter turns each (role, hypercube) into a cube whose taxonomy
+  dimensions carry a domain network and an ``optional`` flag, and drops the
+  definition arcs. This walks the other way, one definition network per role,
+  so :func:`xbrlkit.information_block.build_hypercubes` reads a TAVI-loaded
+  filing's breakdowns as it reads a parsed one. Three things the cube does not
+  record are read back from the report's own structure:
+
+  - the hypercube element is the presentation parent of the cube's axes in its
+    role, which is where EDGAR filings place their tables;
+  - the primary items are that table's other presentation children, the line
+    items the ``all`` arc hangs the cube on;
+  - an optional axis defaults to its domain, the EDGAR convention.
+
+  Where the presentation tree does not supply a table, the cube's own name
+  stands in, so the axes, domains and members still read back.
+  """
+  roles = _roles(xbrl_model)
+  domain_networks = {
+    str(_mapping(entry).get("name", "")): _mapping(entry)
+    for entry in _sequence(xbrl_model.get("domainNetworks"))
+  }
+  parents: dict[str, dict[str, list[str]]] = {}
+  children: dict[str, dict[str, list[str]]] = {}
+  for network in networks:
+    if network.kind != "presentation":
+      continue
+    role_parents = parents.setdefault(network.role_uri, {})
+    role_children = children.setdefault(network.role_uri, {})
+    for arc in network.arcs:
+      role_parents.setdefault(arc.to_qname, []).append(arc.from_qname)
+      role_children.setdefault(arc.from_qname, []).append(arc.to_qname)
+  claimed_tables: set[tuple[str, str]] = set()
+
+  arcs_by_role: dict[str, list[Arc]] = {}
+  for entry in _sequence(xbrl_model.get("cubes")):
+    cube = _mapping(entry)
+    name = str(cube.get("name", ""))
+    role_uri = roles.by_object.get(name)
+    if role_uri is None:
+      continue
+    axes = [
+      _mapping(d)
+      for d in _sequence(cube.get("cubeDimensions"))
+      if str(_mapping(d).get("dimension", "")) not in _CORE_DIMENSIONS
+    ]
+    if not axes:
+      continue
+    axis_names = [str(axis["dimension"]) for axis in axes]
+    # Only the cube's own role is searched: a table another role presents is a
+    # guess, and a wrong name hides the wrong row. Two cubes that would claim
+    # one table keep their own names instead.
+    hypercube = _table_of(axis_names, parents.get(role_uri, {}))
+    if hypercube is None or (role_uri, hypercube) in claimed_tables:
+      hypercube = name
+    claimed_tables.add((role_uri, hypercube))
+    primary_items = sorted(
+      {
+        child
+        for child in children.get(role_uri, {}).get(hypercube, [])
+        if child not in axis_names
+      }
+    ) or [hypercube]
+    if hypercube in concepts:
+      concepts[hypercube].is_hypercube_item = True
+
+    arcs = arcs_by_role.setdefault(role_uri, [])
+    for primary in primary_items:
+      arcs.append(Arc(from_qname=primary, to_qname=hypercube, arcrole=DIM_ALL))
+    for order, axis in enumerate(axes, start=1):
+      axis_name = str(axis["dimension"])
+      arcs.append(
+        Arc(
+          from_qname=hypercube,
+          to_qname=axis_name,
+          arcrole=DIM_HYPERCUBE_DIMENSION,
+          order=float(order),
+        )
+      )
+      domain_network = domain_networks.get(str(axis.get("domainNetwork", "")))
+      root = domain_network.get("root") if domain_network else None
+      if not isinstance(root, str):
+        continue  # a typed axis: no domain element to walk
+      arcs.append(
+        Arc(from_qname=axis_name, to_qname=root, arcrole=DIM_DIMENSION_DOMAIN)
+      )
+      for position, entry in enumerate(
+        _sequence(domain_network.get("relationships")), 1
+      ):
+        relationship = _mapping(entry)
+        source, target = relationship.get("source"), relationship.get("target")
+        if isinstance(source, str) and isinstance(target, str):
+          arcs.append(
+            Arc(
+              from_qname=source,
+              to_qname=target,
+              arcrole=DIM_DOMAIN_MEMBER,
+              order=float(position),
+            )
+          )
+      if axis.get("optional") is True:
+        arcs.append(
+          Arc(from_qname=axis_name, to_qname=root, arcrole=DIM_DIMENSION_DEFAULT)
+        )
+
+  return [
+    Network(
+      role_uri=role_uri,
+      definition=roles.definitions.get(role_uri),
+      documentation=roles.documentations.get(role_uri),
+      kind="definition",
+      arcs=arcs,
+    )
+    for role_uri, arcs in arcs_by_role.items()
+  ]
+
+
+def _table_of(axes: Sequence[str], parents: Mapping[str, list[str]]) -> str | None:
+  """The one presentation parent every axis of a cube shares, if there is one."""
+  common: set[str] | None = None
+  for axis in axes:
+    found = set(parents.get(axis, []))
+    common = found if common is None else common & found
+  if not common:
+    return None
+  return sorted(common)[0]
 
 
 def _arcs(relationships: Sequence[Any], kind: NetworkKind) -> list[Arc]:

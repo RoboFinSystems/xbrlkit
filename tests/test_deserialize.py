@@ -695,32 +695,104 @@ def test_round_trip_keeps_the_concept_facts(model: XbrlModel, fmt: str) -> None:
 # -- what does not, and is reported rather than invented -------------------------
 
 
-def test_tavi_loses_the_definition_networks_the_holon_keeps(
+def test_tavi_rebuilds_the_definition_network_from_its_cube(
   through_tavi: XbrlModel, through_holon: XbrlModel
 ) -> None:
-  """TAVI turns the dimensional wiring into cube objects, which do not come
-  back as arcs. The holon writes it as associations of its own kind, so the
-  definition networks survive there — and the axes and members survive both."""
-  assert not [n for n in through_tavi.networks if n.kind == "definition"]
-  definition = [n for n in through_holon.networks if n.kind == "definition"]
-  assert [(a.from_qname, a.to_qname) for a in definition[0].arcs] == [
-    ("us-gaap:AssetsAbstract", "us-gaap:SegmentTable"),
-    ("us-gaap:SegmentTable", "us-gaap:SegmentAxis"),
-    ("us-gaap:SegmentAxis", "us-gaap:SegmentDomain"),
-    ("us-gaap:SegmentDomain", "us-gaap:NorthAmerica"),
-  ]
+  """TAVI turns the dimensional wiring into cube objects; the reader walks them
+  back into a definition network, so the axes, the domain and the members
+  (followed across the ``targetRole`` hop) read as the holon's do. This
+  fixture's role presents no table, so the hypercube keeps the cube's name."""
+  holon = [n for n in through_holon.networks if n.kind == "definition"]
+  tavi = [n for n in through_tavi.networks if n.kind == "definition"]
+  assert [n.role_uri for n in tavi] == [n.role_uri for n in holon]
+  by_arcrole = {a.arcrole.rsplit("/", 1)[-1]: a for a in tavi[0].arcs}
+  assert by_arcrole["hypercube-dimension"].to_qname == "us-gaap:SegmentAxis"
+  assert (
+    by_arcrole["dimension-domain"].from_qname,
+    by_arcrole["dimension-domain"].to_qname,
+  ) == ("us-gaap:SegmentAxis", "us-gaap:SegmentDomain")
+  assert (
+    by_arcrole["domain-member"].from_qname,
+    by_arcrole["domain-member"].to_qname,
+  ) == ("us-gaap:SegmentDomain", "us-gaap:NorthAmerica")
+  assert by_arcrole["all"].to_qname.startswith("rpt:cube-")
   for got in (through_tavi, through_holon):
     assert got.concepts["us-gaap:SegmentAxis"].is_dimension_item is True
     assert got.concepts["us-gaap:NorthAmerica"].is_domain_member is True
-  # Only the holon says a hypercube is one; TAVI has no flag for it.
-  assert through_holon.concepts["us-gaap:SegmentTable"].is_hypercube_item is True
-  assert through_tavi.concepts["us-gaap:SegmentTable"].is_hypercube_item is False
+
+
+def _presented_segment_role(model: XbrlModel, *, defaulted: bool) -> XbrlModel:
+  """The fixture's segment role with the table presented, as EDGAR files it."""
+  role = "http://example.com/role/Segments"
+  model.networks.append(
+    Network(
+      role_uri=role,
+      definition="Segments",
+      kind="presentation",
+      arcs=[
+        Arc(
+          from_qname="us-gaap:AssetsAbstract",
+          to_qname="us-gaap:SegmentTable",
+          arcrole=PARENT_CHILD,
+          order=1.0,
+          is_root=True,
+        ),
+        Arc(
+          from_qname="us-gaap:SegmentTable",
+          to_qname="us-gaap:SegmentAxis",
+          arcrole=PARENT_CHILD,
+          order=1.0,
+        ),
+        Arc(
+          from_qname="us-gaap:SegmentTable",
+          to_qname="us-gaap:SegmentLineItems",
+          arcrole=PARENT_CHILD,
+          order=2.0,
+        ),
+      ],
+    )
+  )
+  if defaulted:
+    definition = next(n for n in model.networks if n.kind == "definition")
+    definition.arcs.append(
+      Arc(
+        from_qname="us-gaap:SegmentAxis",
+        to_qname="us-gaap:SegmentDomain",
+        arcrole=f"{DIM}/dimension-default",
+      )
+    )
+  return model
+
+
+def test_tavi_names_the_table_its_role_presents(model: XbrlModel) -> None:
+  from xbrlkit.information_block import plan_blocks
+
+  got = from_tavi_json(to_tavi(_presented_segment_role(model, defaulted=False)))
+  segments = next(b for b in plan_blocks(got) if b.role_uri.endswith("/Segments"))
+  (cube,) = segments.hypercubes
+  assert cube.qname == "us-gaap:SegmentTable"
+  assert cube.primary_items == ["us-gaap:SegmentLineItems"]
+  assert [a.qname for a in cube.axes] == ["us-gaap:SegmentAxis"]
+  assert cube.axes[0].members == ["us-gaap:NorthAmerica"]
+  assert cube.axes[0].default is None
+  assert got.concepts["us-gaap:SegmentTable"].is_hypercube_item is True
+
+
+def test_tavi_reads_an_optional_axis_as_defaulting_to_its_domain(
+  model: XbrlModel,
+) -> None:
+  """The cube records only that an axis may be omitted, not the default member;
+  the domain is the EDGAR convention, and the one the reader supplies."""
+  from xbrlkit.information_block import plan_blocks
+
+  got = from_tavi_json(to_tavi(_presented_segment_role(model, defaulted=True)))
+  segments = next(b for b in plan_blocks(got) if b.role_uri.endswith("/Segments"))
+  assert segments.hypercubes[0].axes[0].default == "us-gaap:SegmentDomain"
 
 
 def test_tavi_gaps_are_declared(model: XbrlModel) -> None:
   _, gaps = from_tavi_report(to_tavi(model))
   reported = " ".join(gaps.missing)
-  assert "is_hypercube_item" in reported
   assert "source_hash" in reported
   assert gaps.unmapped_datatypes == {}
   assert gaps.unmapped_label_types == {}
