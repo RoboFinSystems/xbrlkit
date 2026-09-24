@@ -22,9 +22,9 @@ claims to reproduce:
 - the derived period semantics (duration bucket, calendar placement) — the one
   exception, recomputed by :mod:`xbrlkit.periods` from the dates themselves,
   which is where the parse gets them too;
-- the abstractness of axes, domains and members: the emitter turns those
-  elements into dimensional objects, and TAVI has no flag for it (a hypercube
-  is marked ``is_hypercube_item`` when its role presents the table);
+- nothing further on the dimensional elements: axes, domains and members are
+  objects of their own in TAVI, so they read back abstract, and a hypercube is
+  marked ``is_hypercube_item`` when its role presents the table;
 - reference linkbase entries, ``Network.role_id``, a fact's source hash and
   raw lexical value, and a dimension's segment/scenario axis;
 - a fact's own entity when it differs from the report's — the emitter writes
@@ -200,7 +200,6 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   }
   gaps = ImportGaps(
     missing=[
-      "abstract flag on axes, domains and members",
       "a hypercube's name and primary items where its role presents no table",
       "an axis's default member, read as its domain",
       "concept references",
@@ -352,13 +351,19 @@ def _concepts(
     concepts[qname] = _bare(qname, namespaces, is_abstract=True, is_dimension_item=True)
     domain = obj.get("domainClass")
     if isinstance(domain, str) and domain and domain not in concepts:
-      concepts[domain] = _bare(domain, namespaces, is_domain_member=True)
+      concepts[domain] = _bare(
+        domain, namespaces, is_abstract=True, is_domain_member=True
+      )
 
+  # Domains and members are objects of their own in TAVI, not concepts, so no
+  # fact can report against one: abstract is what the model says they are.
   for key in ("domainClasses", "members"):
     for entry in _sequence(xbrl_model.get(key)):
       qname = str(_mapping(entry).get("name", ""))
       if qname and qname not in concepts:
-        concepts[qname] = _bare(qname, namespaces, is_domain_member=True)
+        concepts[qname] = _bare(
+          qname, namespaces, is_abstract=True, is_domain_member=True
+        )
 
   return concepts
 
@@ -829,6 +834,10 @@ def _facts(
 
     numeric_value = _float(value_str) if unit is not None else None
     decimals = value_obj.get("decimals")
+    if decimals is None and unit is not None and value_str is not None:
+      # Absent on a numeric fact means infinitely precise (the fact value
+      # object's `decimals`), which is how the emitter writes INF.
+      decimals = "INF"
     language = dimensions.get("xbrl:language")
     facts.append(
       XbrlFact(

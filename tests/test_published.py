@@ -24,7 +24,7 @@ import pytest
 from tests.test_deserialize import _model
 from xbrlkit.config import Config
 from xbrlkit.model import Concept, Label, XbrlFact, XbrlModel
-from xbrlkit.serialize import to_holon
+from xbrlkit.serialize import to_holon, to_tavi
 from xbrlkit.serve import tools
 from xbrlkit.serve.session import FilingSession, PublishedFiling
 
@@ -341,7 +341,7 @@ def test_a_missing_fragment_stays_a_url_and_the_load_succeeds(
 
 
 @pytest.mark.unit
-def test_a_manifest_without_a_holon_is_not_a_published_filing() -> None:
+def test_a_manifest_without_a_model_is_not_a_published_filing() -> None:
   from xbrlkit.serve.session import _published_from
 
   assert (
@@ -354,6 +354,68 @@ def test_a_manifest_without_a_holon_is_not_a_published_filing() -> None:
   assert published == PublishedFiling(
     accession="acc", holon_url="http://x/f/holon.jsonld"
   )
+  # A filing published as a TAVI model alone is still a published filing.
+  only_tavi = _published_from(
+    "acc", [{"kind": "tavi", "name": "tavi.json"}], "http://x/f/"
+  )
+  assert only_tavi == PublishedFiling(accession="acc", tavi_url="http://x/f/tavi.json")
+  assert only_tavi.model_urls == ["http://x/f/tavi.json"]
+
+
+def _publish_tavi(tmp_path: Path, base: str, *, reachable: bool = True) -> None:
+  """List a TAVI model in the ACME catalog ahead of the holon; write the file
+  only when it should be reachable. The TAVI carries its text block inline."""
+  folder = f"{base}/2024/{CIK}/{ACCESSION}"
+  root = tmp_path / "2024" / CIK / ACCESSION
+  if reachable:
+    model = _model_with_text()
+    for fact in model.facts:
+      if fact.value_str == "__FRAGMENT_URL__":
+        fact.value_str = FRAGMENT
+    (root / "tavi.json").write_text(to_tavi(model))
+  catalog_path = tmp_path / "companies" / "acme.json"
+  catalog = json.loads(catalog_path.read_text())
+  newest = catalog["filings"][0]
+  newest["representations"] = [
+    {"kind": "tavi", "name": "tavi.json", "url": f"{folder}/tavi.json"},
+    *newest["representations"],
+  ]
+  catalog_path.write_text(json.dumps(catalog))
+
+
+@pytest.mark.unit
+def test_a_ticker_loads_the_published_tavi_first(
+  cdn: str, tmp_path: Path, no_edgar
+) -> None:
+  _publish_tavi(tmp_path, cdn)
+  session = _session(cdn)
+  try:
+    loaded = session.load("ACME")
+    assert loaded.source_kind == "tavi"
+    assert loaded.has_document is True
+    assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
+    block = next(
+      f
+      for f in loaded.model.facts
+      if f.concept_qname == "us-gaap:LesseeOperatingLeasesTextBlock"
+    )
+    assert block.value_str == FRAGMENT
+  finally:
+    session.close()
+
+
+@pytest.mark.unit
+def test_an_unreachable_tavi_falls_back_to_the_holon(
+  cdn: str, tmp_path: Path, no_edgar
+) -> None:
+  _publish_tavi(tmp_path, cdn, reachable=False)
+  session = _session(cdn)
+  try:
+    loaded = session.load("ACME")
+    assert loaded.source_kind == "holon"
+    assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
+  finally:
+    session.close()
 
 
 # ── The filer's identity ───────────────────────────────────────────────────
