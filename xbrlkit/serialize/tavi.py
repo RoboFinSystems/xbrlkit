@@ -745,6 +745,8 @@ def _namespaces(model: XbrlModel, report_id: str) -> dict[str, str]:
   if any(fact.provenance is not None for fact in model.facts):
     namespaces["prov"] = PROV_VOCAB
     namespaces["rs"] = HOLON_VOCAB
+  if _report_properties_used(model):
+    namespaces["rs"] = HOLON_VOCAB
 
   by_uri = {uri: prefix for prefix, uri in namespaces.items()}
   for concept in model.concepts.values():
@@ -781,6 +783,10 @@ def _model_properties(model: XbrlModel) -> list[dict[str, object]]:
         "value": model.filing.filing_date.isoformat(),
       }
     )
+  if model.filing.reporting_style:
+    properties.append(
+      {"property": "rs:reportingStyle", "value": model.filing.reporting_style}
+    )
   return properties
 
 
@@ -808,7 +814,22 @@ def _entities(model: XbrlModel) -> list[dict[str, object]]:
   under this report's own namespace, which dropped the scheme and gave two
   converters of one filing two different entities.
   """
-  return [{"name": entity_sqname(model.entity)}]
+  entity: dict[str, object] = {"name": entity_sqname(model.entity)}
+  legal_name = _distinct_legal_name(model)
+  if legal_name:
+    entity["properties"] = [{"property": "rs:legalName", "value": legal_name}]
+  return [entity]
+
+
+def _distinct_legal_name(model: XbrlModel) -> str | None:
+  """The legal name, when it says something the entity's name label does not.
+
+  The parse sets the legal name to the name when the filing gives only one;
+  writing that copy would put our vocabulary into every filing's document,
+  so only a legal name that differs from the name is written.
+  """
+  legal_name = model.entity.legal_name
+  return legal_name if legal_name and legal_name != model.entity.name else None
 
 
 def _entity_labels(model: XbrlModel, default_language: str) -> list[dict[str, object]]:
@@ -1111,13 +1132,15 @@ def _networks_and_groups(
       for position, root in enumerate(roots, start=1)
     ]
     relationships.extend(_relationship(arc, network) for arc in network.arcs)
-    networks.append(
-      {
-        "name": name,
-        "relationshipTypeName": relationship_type,
-        "relationships": relationships,
-      }
-    )
+    network_object: dict[str, object] = {
+      "name": name,
+      "relationshipTypeName": relationship_type,
+      "relationships": relationships,
+    }
+    properties = _network_properties(network)
+    if properties:
+      network_object["properties"] = properties
+    networks.append(network_object)
     group_contents.append({"groupName": group_for(network.role_uri), "forObject": name})
 
   # A cube joins the section whose definition linkbase declared its hypercube
@@ -1219,10 +1242,13 @@ def _facts(
         if decimals is not None:
           fact_value["decimals"] = decimals
       entry["factValues"] = [fact_value]
-    if fact.provenance is not None:
-      properties = _provenance_properties(fact.provenance)
-      if properties:
-        entry["properties"] = properties
+    properties = (
+      _provenance_properties(fact.provenance) if fact.provenance is not None else []
+    )
+    if fact.structure_id:
+      properties.append({"property": "rs:structureId", "value": fact.structure_id})
+    if properties:
+      entry["properties"] = properties
     facts.append(entry)
   return facts
 
@@ -1271,25 +1297,83 @@ PROVENANCE_PROPERTIES: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _property_types(model: XbrlModel) -> list[dict[str, object]]:
-  """The property type objects (section 11.6) the facts' provenance needs.
+# What an authored report carries that TAVI has no object for, as model-defined
+# properties under the RoboSystems vocabulary (sections 5.13 / 11.6): the
+# report's style, the entity's legal name, each network's structure, block
+# type, fact set and order, and each fact's structure. A filing carries none
+# of them, so its document declares and binds nothing new. The report's own IRI
+# is not among them: the report namespace already names the report, and a
+# filing's `report_uri` (its EDGAR document) would otherwise be written too.
+REPORT_PROPERTIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+  ("rs:reportingStyle", "xs:string", ("xbrl:xbrlModelObject",)),
+  ("rs:legalName", "xs:string", ("xbrl:entityObject",)),
+  ("rs:blockType", "xs:string", ("xbrl:networkObject",)),
+  ("rs:structureId", "xs:string", ("xbrl:networkObject", "xbrl:factObject")),
+  ("rs:factSetId", "xs:string", ("xbrl:networkObject",)),
+  ("rs:structureOrder", "xs:integer", ("xbrl:networkObject",)),
+)
 
-  Declared only when a fact carries provenance: section 3.1 forbids a
+
+def _network_properties(network: Network) -> list[dict[str, object]]:
+  properties: list[dict[str, object]] = []
+  for qname, value in (
+    ("rs:blockType", network.block_type),
+    ("rs:structureId", network.structure_id),
+    ("rs:factSetId", network.fact_set_id),
+    ("rs:structureOrder", network.structure_order),
+  ):
+    if value is not None and value != "":
+      properties.append({"property": qname, "value": value})
+  return properties
+
+
+def _report_properties_used(model: XbrlModel) -> set[str]:
+  """The report properties this model has a value for."""
+  used: set[str] = set()
+  if model.filing.reporting_style:
+    used.add("rs:reportingStyle")
+  if _distinct_legal_name(model):
+    used.add("rs:legalName")
+  for network in model.networks:
+    if network.kind != "definition":
+      used.update(str(entry["property"]) for entry in _network_properties(network))
+  if any(fact.structure_id for fact in model.facts):
+    used.add("rs:structureId")
+  return used
+
+
+def _property_types(model: XbrlModel) -> list[dict[str, object]]:
+  """The property type objects (section 11.6) the model's properties need.
+
+  Declared only when something carries the property: section 3.1 forbids a
   property no type declares, and the type is what makes the property mean
   the same thing to the next reader. ``definitional`` is false — where a fact
-  came from is contextual metadata, not part of its identity (11.6.1).
+  came from, or which structure a network renders, is contextual metadata,
+  not part of the object's identity (11.6.1).
   """
-  if not any(fact.provenance is not None for fact in model.facts):
-    return []
-  return [
+  types: list[dict[str, object]] = []
+  if any(fact.provenance is not None for fact in model.facts):
+    types.extend(
+      {
+        "name": qname,
+        "dataType": datatype,
+        "definitional": False,
+        "allowedObjects": ["xbrl:factObject"],
+      }
+      for _, qname, datatype in PROVENANCE_PROPERTIES
+    )
+  used = _report_properties_used(model)
+  types.extend(
     {
       "name": qname,
       "dataType": datatype,
       "definitional": False,
-      "allowedObjects": ["xbrl:factObject"],
+      "allowedObjects": list(allowed),
     }
-    for _, qname, datatype in PROVENANCE_PROPERTIES
-  ]
+    for qname, datatype, allowed in REPORT_PROPERTIES
+    if qname in used
+  )
+  return types
 
 
 def _provenance_properties(provenance: FactProvenance) -> list[dict[str, object]]:

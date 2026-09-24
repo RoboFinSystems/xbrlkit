@@ -49,7 +49,7 @@ from xbrlkit.model import (
 from xbrlkit.parse.ids import unit_id
 from xbrlkit.periods import duration_period, instant_period, period_from_interval
 from xbrlkit.deserialize.holon import _scheme_for
-from xbrlkit.namespaces import ENTITY_SCHEME
+from xbrlkit.namespaces import ENTITY_SCHEME, HOLON_VOCAB
 from xbrlkit.serialize import to_clawdog, to_clawdog_report, to_holon, to_tavi
 from xbrlkit.serialize._values import CIK_SCHEME
 from xbrlkit.serve import tools
@@ -599,6 +599,51 @@ def test_round_trip_keeps_the_facts(model: XbrlModel, fmt: str) -> None:
     ("us-gaap:SegmentAxis", "us-gaap:NorthAmerica")
   ]
   assert cash.unit_id == next(u.id for u in got.units if u.measure == "iso4217:USD")
+
+
+def test_tavi_round_trips_an_authored_reports_own_fields(model: XbrlModel) -> None:
+  """An authored report's style, legal name, and each network's structure,
+  block type, fact set and order, ride as `rs:` properties and come back."""
+  model.filing.reporting_style = "BSC-CORP-IS02-CF1"
+  model.entity.name = "Acme"
+  model.entity.legal_name = "Acme Holdings, Inc."
+  for network in model.networks:
+    if network.role_uri == BALANCE_SHEET:
+      network.block_type = "balance_sheet"
+      network.structure_id = "struct_01"
+      network.fact_set_id = "fs_01"
+      network.structure_order = 100
+  for fact in model.facts:
+    fact.structure_id = "struct_01"
+  text = to_tavi(model)
+  assert json.loads(text)["documentInfo"]["namespaces"]["rs"] == HOLON_VOCAB
+
+  got, gaps = from_tavi_report(text)
+  assert got.filing.reporting_style == "BSC-CORP-IS02-CF1"
+  assert got.entity.legal_name == "Acme Holdings, Inc."
+  presentation = next(
+    n for n in got.networks if n.role_uri == BALANCE_SHEET and n.kind == "presentation"
+  )
+  assert (
+    presentation.block_type,
+    presentation.structure_id,
+    presentation.fact_set_id,
+    presentation.structure_order,
+  ) == ("balance_sheet", "struct_01", "fs_01", 100)
+  assert all(f.structure_id == "struct_01" for f in got.facts)
+  assert gaps.unmapped_fact_properties == {}
+
+
+def test_a_filings_tavi_carries_no_report_properties(model: XbrlModel) -> None:
+  """A filing has none of those fields, so its document is spec-shaped only:
+  no `rs` binding, no property types. A legal name equal to the name, which
+  the parse always sets, writes nothing."""
+  model.entity.legal_name = model.entity.name
+  model.filing.report_uri = "https://www.sec.gov/Archives/edgar/data/1/0001-24-1.htm"
+  document = json.loads(to_tavi(model))
+  assert "rs" not in document["documentInfo"]["namespaces"]
+  assert "propertyTypes" not in document["xbrlModel"]
+  assert "rs:" not in json.dumps(document)
 
 
 def test_tavi_reads_an_exact_fact_as_infinitely_precise(model: XbrlModel) -> None:

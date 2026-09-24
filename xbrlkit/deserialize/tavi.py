@@ -57,7 +57,7 @@ from ..model import (
   XbrlModel,
 )
 from ..namespaces import HOLON_VOCAB, PROV_VOCAB, TAVI_REPORT_BASE
-from ..serialize.tavi import PROVENANCE_PROPERTIES, REPORT_PREFIX
+from ..serialize.tavi import PROVENANCE_PROPERTIES, REPORT_PREFIX, REPORT_PROPERTIES
 from ..parse.ids import unit_id
 from ..periods import period_from_interval
 from ..serialize._values import CIK_SCHEME
@@ -213,7 +213,7 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
   entity = _entity(xbrl_model, namespaces)
   concepts = _concepts(xbrl_model, namespaces, gaps)
   _apply_labels(xbrl_model, concepts, entity, _entity_sqname(xbrl_model), gaps)
-  networks = _networks(xbrl_model)
+  networks = _networks(xbrl_model, namespaces)
   networks.extend(_definition_networks(xbrl_model, networks, concepts))
   facts, periods, units = _facts(xbrl_model, concepts, entity, namespaces, gaps)
   _mark_text_facts(concepts, facts)
@@ -251,7 +251,17 @@ def _entity(
   if not identifier:
     prefix, identifier = "", name
   scheme = namespaces.get(prefix) or (CIK_SCHEME if prefix == "cik" else prefix)
-  return EntityIdentity(cik=identifier or "", scheme=scheme or CIK_SCHEME)
+  entities = _sequence(xbrl_model.get("entities"))
+  legal_name = (
+    _report_property(_mapping(entities[0]), "rs:legalName", namespaces)
+    if entities
+    else None
+  )
+  return EntityIdentity(
+    cik=identifier or "",
+    scheme=scheme or CIK_SCHEME,
+    legal_name=None if legal_name is None else str(legal_name),
+  )
 
 
 def _filing(
@@ -282,8 +292,10 @@ def _filing(
   fiscal_end = cover.get(_DEI_FISCAL_YEAR_END, "")
   if entity.name is None:
     entity.name = cover.get(_DEI_REGISTRANT_NAME)
+  reporting_style = _report_property(xbrl_model, "rs:reportingStyle", namespaces)
   return FilingMeta(
     accession=accession or "unknown",
+    reporting_style=None if reporting_style is None else str(reporting_style),
     cik=entity.cik,
     form=cover.get(_DEI_DOCUMENT_TYPE),
     is_inline_xbrl=None,
@@ -550,7 +562,9 @@ def _roles(xbrl_model: Mapping[str, Any]) -> _Roles:
   return _Roles(network_roles, definitions, documentations)
 
 
-def _networks(xbrl_model: Mapping[str, Any]) -> list[Network]:
+def _networks(
+  xbrl_model: Mapping[str, Any], namespaces: Mapping[str, str]
+) -> list[Network]:
   """Networks, rejoined to the extended link roles their groups stand for."""
   roles = _roles(xbrl_model)
   networks: list[Network] = []
@@ -578,9 +592,41 @@ def _networks(xbrl_model: Mapping[str, Any]) -> list[Network]:
         documentation=roles.documentations.get(role_uri),
         kind=kind,
         arcs=_arcs(_sequence(obj.get("relationships")), kind),
+        block_type=_optional_str(_report_property(obj, "rs:blockType", namespaces)),
+        structure_id=_optional_str(_report_property(obj, "rs:structureId", namespaces)),
+        fact_set_id=_optional_str(_report_property(obj, "rs:factSetId", namespaces)),
+        structure_order=_optional_int(
+          _report_property(obj, "rs:structureOrder", namespaces)
+        ),
       )
     )
   return networks
+
+
+def _report_property(
+  obj: Mapping[str, Any], qname: str, namespaces: Mapping[str, str]
+) -> Any:
+  """The value an object's ``properties`` give one report property, if any."""
+  for entry in _sequence(obj.get("properties")):
+    prop = _mapping(entry)
+    iri = _expand(str(prop.get("property", "")), namespaces)
+    if _REPORT_PROPERTY_IRIS.get(iri) == qname:
+      value = prop.get("value")
+      if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+      return value
+  return None
+
+
+def _optional_str(value: Any) -> str | None:
+  return None if value is None else str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+  try:
+    return None if value is None else int(value)
+  except (TypeError, ValueError):
+    return None
 
 
 # The dimensions every reconstructed cube declares that are not taxonomy axes.
@@ -856,6 +902,7 @@ def _facts(
         is_nil=not values,
         language=str(language) if isinstance(language, str) else None,
         provenance=_fact_provenance(obj, namespaces, gaps),
+        structure_id=_optional_str(_report_property(obj, "rs:structureId", namespaces)),
       )
     )
 
@@ -894,6 +941,13 @@ def _expand(qname: str, namespaces: Mapping[str, str]) -> str:
   return f"{uri}{local}" if uri.endswith(("#", "/")) else f"{uri}#{local}"
 
 
+# Expanded IRI of each report property, so a document is matched on the IRI
+# whatever prefix it bound.
+_REPORT_PROPERTY_IRIS: dict[str, str] = {
+  _expand(qname, {"rs": HOLON_VOCAB}): qname for qname, _, _ in REPORT_PROPERTIES
+}
+
+
 # Expanded property IRI -> ``FactProvenance`` field, for the four provenance
 # properties: a document is matched on the IRI, whatever prefix it bound.
 _PROVENANCE_IRIS: dict[str, str] = {
@@ -913,7 +967,10 @@ def _fact_provenance(
     value = prop.get("value")
     if isinstance(value, list) and len(value) == 1:
       value = value[0]
-    attr = _PROVENANCE_IRIS.get(_expand(qname, namespaces))
+    iri = _expand(qname, namespaces)
+    if iri in _REPORT_PROPERTY_IRIS:
+      continue  # read where the fact is built
+    attr = _PROVENANCE_IRIS.get(iri)
     if attr is None or value is None:
       if qname:
         gaps.unmapped_fact_properties[qname] = (
