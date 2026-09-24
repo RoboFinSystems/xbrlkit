@@ -601,6 +601,18 @@ def test_round_trip_keeps_the_facts(model: XbrlModel, fmt: str) -> None:
   assert cash.unit_id == next(u.id for u in got.units if u.measure == "iso4217:USD")
 
 
+def test_tavi_reads_an_exact_fact_as_infinitely_precise(model: XbrlModel) -> None:
+  """TAVI writes INF by leaving `decimals` out; the reader must not read that
+  as unknown, or an exact fact loses to a rounded duplicate of itself."""
+  assets = next(f for f in model.facts if f.concept_qname == "us-gaap:Assets")
+  assets.decimals = "INF"
+  got = from_tavi_json(to_tavi(model))
+  back = next(f for f in got.facts if f.concept_qname == "us-gaap:Assets")
+  assert back.decimals == "INF"
+  text = next(f for f in got.facts if f.concept_qname == "dei:DocumentType")
+  assert text.decimals is None
+
+
 @pytest.mark.parametrize("fmt", ["tavi", "holon"])
 def test_round_trip_keeps_the_networks(model: XbrlModel, fmt: str) -> None:
   got = _through(model, fmt)
