@@ -259,14 +259,21 @@ def _enrich_filer(loaded: LoadedFiling, fields: Mapping[str, Any]) -> None:
 
 @dataclass
 class PublishedFiling:
-  """A filing as the public data CDN lists it: the holon to load, the document
-  as filed when it was published beside it, and the filer's ticker — the key
-  the catalog holds that filer's identity under."""
+  """A filing as the public data CDN lists it: the representations to load
+  (the TAVI model first, the holon beside it), the document as filed when it
+  was published too, and the filer's ticker — the key the catalog holds that
+  filer's identity under."""
 
   accession: str
-  holon_url: str
+  holon_url: str | None = None
   document_url: str | None = None
   ticker: str | None = None
+  tavi_url: str | None = None
+
+  @property
+  def model_urls(self) -> list[str]:
+    """The representations to try, in order: the TAVI model, then the holon."""
+    return [url for url in (self.tavi_url, self.holon_url) if url]
 
 
 def _published_from(
@@ -276,8 +283,8 @@ def _published_from(
   ticker: str | None = None,
 ) -> PublishedFiling | None:
   """The published filing a catalog entry or manifest describes, or ``None``
-  when it lists no holon."""
-  holon = document = None
+  when it lists neither a TAVI model nor a holon."""
+  holon = document = tavi = None
   for rep in representations if isinstance(representations, list) else []:
     if not isinstance(rep, dict):
       continue
@@ -288,15 +295,18 @@ def _published_from(
       continue
     if rep.get("kind") == "holon":
       holon = url
+    elif rep.get("kind") == "tavi":
+      tavi = url
     elif rep.get("kind") == "document":
       document = url
-  if not holon:
+  if not (holon or tavi):
     return None
   return PublishedFiling(
     accession=accession or "",
     holon_url=holon,
     document_url=document,
     ticker=ticker,
+    tavi_url=tavi,
   )
 
 
@@ -998,19 +1008,31 @@ class FilingSession:
     }
 
   def _load_published(self, published: PublishedFiling, source: str) -> LoadedFiling:
-    """The filing from its published holon, with the document as filed beside
-    it when the CDN has that too — the same shape an EDGAR load gives, in a
-    fraction of the time and with no Arelle."""
-    into = self._tmp / (published.accession or Path(published.holon_url).stem)
-    holon = self._fetch(published.holon_url, into=into)
+    """The filing from its published TAVI model (or its holon when there is no
+    TAVI, or it cannot be read), with the document as filed beside it when the
+    CDN has that too — the same shape an EDGAR load gives, in a fraction of the
+    time and with no Arelle. The TAVI carries its text blocks inline, so there
+    are no fragments to fetch after it."""
+    urls = published.model_urls
+    into = self._tmp / (published.accession or Path(urls[0].split("?", 1)[0]).stem)
     document: Path | None = None
     if published.document_url:
       try:
         document = self._fetch(published.document_url, into=into)
       except requests.RequestException as exc:
         logger.warning("published document unavailable for %s: %s", source, exc)
-    logger.info("loading %s from its published holon", source)
-    loaded = self._load_json(holon, source, document=document)
+    loaded: LoadedFiling | None = None
+    for position, url in enumerate(urls):
+      try:
+        path = self._fetch(url, into=into)
+        logger.info("loading %s from %s", source, Path(url.split("?", 1)[0]).name)
+        loaded = self._load_json(path, source, document=document)
+        break
+      except (requests.RequestException, SourceError) as exc:
+        if position == len(urls) - 1:
+          raise
+        logger.warning("%s unavailable for %s (%s); trying the next", url, source, exc)
+    assert loaded is not None
     _enrich_filer(
       loaded, self._filer_metadata(loaded.model.entity.cik, ticker=published.ticker)
     )
