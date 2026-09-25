@@ -13,17 +13,55 @@ itself emits no semantic block type.
 
 from __future__ import annotations
 
-from .classify import classify_network, root_qname
-from .clawdog import GapReport as ClawDogGapReport
-from .clawdog import to_clawdog, to_clawdog_report
-from .graph import build_holon_graph
-from .holon import to_holon
-from .lpg import GraphTables, build_lbug, to_graph_tables, write_parquet
-from .oim import to_oim, to_oim_document
-from .tavi import GapReport as TaviGapReport
-from .tavi import to_tavi, to_tavi_report
+import importlib
+from typing import TYPE_CHECKING, Any
 
-GapReport = TaviGapReport
+if TYPE_CHECKING:
+  from .classify import classify_network, root_qname
+  from .clawdog import GapReport as ClawDogGapReport
+  from .clawdog import to_clawdog, to_clawdog_report
+  from .graph import build_holon_graph
+  from .holon import to_holon
+  from .lpg import GraphTables, build_lbug, to_graph_tables, write_parquet
+  from .oim import to_oim, to_oim_document
+  from .tavi import GapReport as TaviGapReport
+  from .tavi import to_tavi, to_tavi_report
+
+  GapReport = TaviGapReport
+
+# Loaded on first use (PEP 562), not on import. Importing any submodule runs
+# this file first, so eager imports here made
+# `xbrlkit.serialize.tavi` load rdflib through the holon and graph projections.
+_LAZY: dict[str, tuple[str, str]] = {
+  "classify_network": (".classify", "classify_network"),
+  "root_qname": (".classify", "root_qname"),
+  "ClawDogGapReport": (".clawdog", "GapReport"),
+  "to_clawdog": (".clawdog", "to_clawdog"),
+  "to_clawdog_report": (".clawdog", "to_clawdog_report"),
+  "build_holon_graph": (".graph", "build_holon_graph"),
+  "to_holon": (".holon", "to_holon"),
+  "GraphTables": (".lpg", "GraphTables"),
+  "build_lbug": (".lpg", "build_lbug"),
+  "to_graph_tables": (".lpg", "to_graph_tables"),
+  "write_parquet": (".lpg", "write_parquet"),
+  "to_oim": (".oim", "to_oim"),
+  "to_oim_document": (".oim", "to_oim_document"),
+  "GapReport": (".tavi", "GapReport"),
+  "TaviGapReport": (".tavi", "GapReport"),
+  "to_tavi": (".tavi", "to_tavi"),
+  "to_tavi_report": (".tavi", "to_tavi_report"),
+}
+
+
+def __getattr__(name: str) -> Any:
+  entry = _LAZY.get(name)
+  if entry is None:
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+  module, attribute = entry
+  value = getattr(importlib.import_module(module, __name__), attribute)
+  globals()[name] = value
+  return value
+
 
 __all__ = (
   "GapReport",
