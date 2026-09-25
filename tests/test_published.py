@@ -227,6 +227,23 @@ def test_a_ticker_loads_the_published_holon_and_its_document(
 
 
 @pytest.mark.unit
+def test_a_missing_document_leaves_the_published_load_standing(
+  cdn: str, no_edgar, tmp_path: Path
+) -> None:
+  """The document as filed is optional: a failed fetch of it is logged and
+  the filing loads from its model alone."""
+  (tmp_path / "2024" / CIK / ACCESSION / "acme-20241231.htm").unlink()
+  session = _session(cdn)
+  try:
+    loaded = session.load("ACME")
+    assert loaded.id == ACCESSION
+    assert loaded.has_xbrl is True
+    assert loaded.has_document is False
+  finally:
+    session.close()
+
+
+@pytest.mark.unit
 def test_a_form_that_is_not_the_newest_still_resolves_by_form(
   cdn: str, no_edgar
 ) -> None:

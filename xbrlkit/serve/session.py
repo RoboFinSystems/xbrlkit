@@ -592,9 +592,10 @@ class FilingSession:
       resp.raise_for_status()
     except requests.HTTPError as exc:
       # The query is left out: on a presigned link it is the credential.
+      status = exc.response.status_code
+      hint = " A signed link may have expired." if status == 403 else ""
       raise SourceError(
-        f"Fetching {bare} failed: {exc.response.status_code} "
-        f"{exc.response.reason}. A signed link may have expired."
+        f"Fetching {bare} failed: {status} {exc.response.reason}.{hint}"
       ) from None
     except requests.RequestException as exc:
       raise SourceError(f"Fetching {bare} failed: {type(exc).__name__}.") from None
@@ -1031,7 +1032,7 @@ class FilingSession:
     if published.document_url:
       try:
         document = self._fetch(published.document_url, into=into)
-      except requests.RequestException as exc:
+      except (requests.RequestException, SourceError) as exc:
         logger.warning("published document unavailable for %s: %s", source, exc)
     loaded: LoadedFiling | None = None
     for position, url in enumerate(urls):
@@ -1832,7 +1833,8 @@ def _local_accession(path: Path, target: Path) -> str:
 
 def _local_id(path: Path, model: XbrlModel) -> str:
   """The id a local filing gets: its accession-shaped name when it has one,
-  else the ticker, else the loaded document's stem."""
+  else the ticker, else its primary document's stem, else the accession it
+  carries, else the loaded file's stem."""
   stem = path.stem if path.is_file() else path.name
   if _ACCESSION_RE.match(stem):
     return stem
