@@ -638,7 +638,9 @@ def describe_filing(
       "fiscal_period": filing.fiscal_period_focus,
       "fiscal_year_end_month": filing.fiscal_year_end_month,
       "inline_xbrl": filing.is_inline_xbrl,
-      "primary_document": filing.primary_document,
+      # A published TAVI or holon names no primary document; the document
+      # fetched beside it does.
+      "primary_document": filing.primary_document or filing.document_name,
       "extension_namespace": filing.extension_namespace,
       "taxonomies": len(filing.taxonomy_namespaces),
       **(
