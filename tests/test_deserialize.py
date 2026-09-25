@@ -1307,6 +1307,61 @@ def test_the_session_loads_a_json_report_from_a_url(
       httpd.shutdown()
 
 
+# A presigned object-store link: its security token alone runs past the
+# 255-byte file-name limit, so probing it as a local path raises.
+_SIGNED_QUERY = "?X-Amz-Expires=300&X-Amz-Security-Token=" + "A" * 1800
+
+
+def test_the_session_loads_a_json_report_from_a_signed_url(
+  model: XbrlModel, tmp_path: Path
+) -> None:
+  (tmp_path / "g1.tavi.json").write_text(to_tavi(model))
+  handler = functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=str(tmp_path)
+  )
+  with socketserver.TCPServer(("127.0.0.1", 0), handler) as httpd:
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    session = FilingSession()
+    try:
+      loaded = session.load(f"http://127.0.0.1:{port}/g1.tavi.json{_SIGNED_QUERY}")
+      assert loaded.has_xbrl is True
+      # Named for the report it carries, not the object key's stem.
+      assert loaded.id == model.filing.accession
+    finally:
+      session.close()
+      httpd.shutdown()
+
+
+def test_a_failed_fetch_is_a_source_error_without_the_signature(
+  tmp_path: Path,
+) -> None:
+  handler = functools.partial(
+    http.server.SimpleHTTPRequestHandler, directory=str(tmp_path)
+  )
+  with socketserver.TCPServer(("127.0.0.1", 0), handler) as httpd:
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    session = FilingSession()
+    try:
+      with pytest.raises(SourceError, match="404") as caught:
+        session.load(f"http://127.0.0.1:{port}/gone.tavi.json{_SIGNED_QUERY}")
+      assert "gone.tavi.json" in str(caught.value)
+      assert "Security-Token" not in str(caught.value)
+    finally:
+      session.close()
+      httpd.shutdown()
+
+
+def test_a_source_too_long_for_a_path_is_still_resolved() -> None:
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError, match="Cannot resolve"):
+      session.load("x" * 300)
+  finally:
+    session.close()
+
+
 def test_the_session_still_refuses_an_oim_report(tmp_path: Path) -> None:
   """xBRL-JSON is Arelle's own serialization and wants its loader, not an
   importer of ours — so it is named rather than half-read."""

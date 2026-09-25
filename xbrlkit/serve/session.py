@@ -394,11 +394,13 @@ class FilingSession:
     return f"{wanted}-{n}"
 
   def _load(self, source: str, entry_point: str | None = None) -> LoadedFiling:
-    path = Path(source).expanduser()
-    if path.exists():
-      return self._load_local(path, source, entry_point)
+    # A URL first: a presigned link runs past the file-name limit, and
+    # probing it as a path raises.
     if source.startswith(("http://", "https://")):
       return self._load_url(source, entry_point)
+    path = Path(source).expanduser()
+    if _is_local(path):
+      return self._load_local(path, source, entry_point)
     if entry_point:
       raise SourceError(_ENTRY_POINT_NEEDS_A_PACKAGE.format(source=source))
     m = _CIK_ACCESSION_RE.match(source)
@@ -584,11 +586,22 @@ class FilingSession:
   def _fetch(self, url: str, into: Path | None = None) -> Path:
     """The document at ``url``, saved beside this session's other work — under
     ``into`` when two filings would otherwise share a file name."""
-    resp = requests.get(url, headers=self.config.headers, timeout=60)
-    resp.raise_for_status()
+    bare = url.split("?", 1)[0]
+    try:
+      resp = requests.get(url, headers=self.config.headers, timeout=60)
+      resp.raise_for_status()
+    except requests.HTTPError as exc:
+      # The query is left out: on a presigned link it is the credential.
+      status = exc.response.status_code
+      hint = " A signed link may have expired." if status == 403 else ""
+      raise SourceError(
+        f"Fetching {bare} failed: {status} {exc.response.reason}.{hint}"
+      ) from None
+    except requests.RequestException as exc:
+      raise SourceError(f"Fetching {bare} failed: {type(exc).__name__}.") from None
     folder = into or self._tmp
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / Path(url.split("?", 1)[0]).name
+    target = folder / Path(bare).name
     target.write_bytes(resp.content)
     return target
 
@@ -1019,7 +1032,7 @@ class FilingSession:
     if published.document_url:
       try:
         document = self._fetch(published.document_url, into=into)
-      except requests.RequestException as exc:
+      except (requests.RequestException, SourceError) as exc:
         logger.warning("published document unavailable for %s: %s", source, exc)
     loaded: LoadedFiling | None = None
     for position, url in enumerate(urls):
@@ -1820,7 +1833,8 @@ def _local_accession(path: Path, target: Path) -> str:
 
 def _local_id(path: Path, model: XbrlModel) -> str:
   """The id a local filing gets: its accession-shaped name when it has one,
-  else the ticker, else the loaded document's stem."""
+  else the ticker, else its primary document's stem, else the accession it
+  carries, else the loaded file's stem."""
   stem = path.stem if path.is_file() else path.name
   if _ACCESSION_RE.match(stem):
     return stem
@@ -1828,7 +1842,19 @@ def _local_id(path: Path, model: XbrlModel) -> str:
     return model.filing.accession
   if model.entity.ticker:
     return model.entity.ticker.lower()
-  return Path(model.filing.primary_document or stem).stem
+  if model.filing.primary_document:
+    return Path(model.filing.primary_document).stem
+  # A JSON report names itself; the file's stem may be an object-store key.
+  return model.filing.accession or Path(stem).stem
+
+
+def _is_local(path: Path) -> bool:
+  """Whether ``path`` names something on disk — False, not an error, for a
+  string too long to be a file name."""
+  try:
+    return path.exists()
+  except OSError:
+    return False
 
 
 def _filing_meta_from_instance(
