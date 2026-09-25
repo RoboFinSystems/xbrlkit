@@ -51,3 +51,17 @@ def test_periods_does_not_load_arelle() -> None:
     timeout=120,
   )
   assert result.stdout.strip() == "False", result.stderr
+
+
+@pytest.mark.parametrize(
+  "module", ["xbrlkit.serialize.tavi", "xbrlkit.deserialize.tavi"]
+)
+def test_tavi_does_not_load_rdflib(module: str) -> None:
+  """TAVI is JSON; reading or writing it should not pay for an RDF stack."""
+  result = subprocess.run(
+    [sys.executable, "-c", f"import sys, {module}; print('rdflib' in sys.modules)"],
+    capture_output=True,
+    text=True,
+    timeout=120,
+  )
+  assert result.stdout.strip() == "False", result.stderr
