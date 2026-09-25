@@ -3,7 +3,7 @@
   "name": "ai.robosystems/xbrlkit",
   "title": "xbrlkit",
   "description": "Read SEC EDGAR and XBRL filings with an AI: 18 tools over the filing itself. Local, free, no account",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "websiteUrl": "https://github.com/RoboFinSystems/xbrlkit#readme",
   "repository": {
     "url": "https://github.com/RoboFinSystems/xbrlkit",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "xbrlkit",
-      "version": "0.18.1",
+      "version": "0.18.2",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
