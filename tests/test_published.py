@@ -210,6 +210,8 @@ def test_a_ticker_loads_the_published_holon_and_its_document(
     # filing, not only the tagged blocks.
     assert loaded.has_document is True
     assert loaded.model.filing.document_name == "acme-20241231.htm"
+    receipt = tools.load_receipt(loaded)
+    assert receipt["filing"]["primary_document"] == "acme-20241231.htm"
     assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
     hits = tools.search_text(loaded, "widgets")
     assert hits["hits"], hits
