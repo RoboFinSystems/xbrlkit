@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -259,6 +260,106 @@ def test_records_returns_the_rows_and_names_the_tables(tmp_path: Path) -> None:
     assert out["fields"]["issuer.issuerTradingSymbol"] == "ACME"
     with pytest.raises(tools.ToolError, match="nonDerivativeTransaction"):
       tools.records(lf, table="holdings")
+  finally:
+    session.close()
+
+
+THIRTEEN_F_COVER = """<?xml version="1.0"?>
+<edgarSubmission>
+  <headerData>
+    <submissionType>13F-HR</submissionType>
+    <filerInfo><periodOfReport>06-30-2026</periodOfReport></filerInfo>
+  </headerData>
+  <formData>
+    <coverPage><filingManager><name>Acme Capital</name></filingManager></coverPage>
+    <summaryPage><tableEntryTotal>2</tableEntryTotal></summaryPage>
+  </formData>
+</edgarSubmission>
+"""
+
+THIRTEEN_F_INFO_TABLE = """<?xml version="1.0"?>
+<informationTable>
+  <infoTable>
+    <nameOfIssuer>WIDGET CO</nameOfIssuer><cusip>000000001</cusip><value>100</value>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>GADGET INC</nameOfIssuer><cusip>000000002</cusip><value>200</value>
+  </infoTable>
+</informationTable>
+"""
+
+
+class _EdgarDocuments:
+  """The two session calls records makes, answered from memory."""
+
+  def __init__(self, documents: list[Any], fail: bool = False) -> None:
+    self.documents = documents
+    self.fail = fail
+    self.listed = 0
+
+  def other_documents(self, lf: object) -> list[Any]:
+    self.listed += 1
+    if self.fail:
+      raise SourceError("x was not loaded from EDGAR")
+    return self.documents
+
+  def read_other_document(self, lf: object, name: str) -> Any:
+    from xbrlkit.serve.session import ReadDocument
+
+    parsed = parse_xml_document(THIRTEEN_F_INFO_TABLE)
+    return ReadDocument(render(parsed), [], parsed)
+
+
+def _info_table() -> Any:
+  from xbrlkit.edgar.filing_index import FilingDocument
+
+  return FilingDocument(seq=2, type="INFORMATION TABLE", document="56757.xml")
+
+
+def test_a_13f_returns_its_holdings_not_only_its_cover(tmp_path: Path) -> None:
+  path = tmp_path / "primary_doc.xml"
+  path.write_text(THIRTEEN_F_COVER)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    out = tools.records(lf, session=_EdgarDocuments([_info_table()]))
+    holdings = out["tables"][0]
+    assert out["form"] == "13F-HR" and holdings["name"] == "infoTable"
+    assert holdings["source_document"] == "56757.xml"
+    assert [r["nameOfIssuer"] for r in holdings["rows"]] == ["WIDGET CO", "GADGET INC"]
+    assert out["fields"]["formData.coverPage.filingManager.name"] == "Acme Capital"
+    only = tools.records(
+      lf, table="infoTable", session=_EdgarDocuments([_info_table()])
+    )
+    assert [t["name"] for t in only["tables"]] == ["infoTable"]
+    assert "INFORMATION TABLE" in tools.describe_filing(lf)["next"][0]
+  finally:
+    session.close()
+
+
+def test_a_13f_whose_holdings_cannot_be_read_says_so(tmp_path: Path) -> None:
+  path = tmp_path / "primary_doc.xml"
+  path.write_text(THIRTEEN_F_COVER)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    out = tools.records(lf, session=_EdgarDocuments([], fail=True))
+    assert "INFORMATION TABLE" in out["note"] and "could not be read" in out["note"]
+    assert all(t["name"] != "infoTable" for t in out["tables"])
+  finally:
+    session.close()
+
+
+def test_a_form_4_never_reaches_for_other_documents(tmp_path: Path) -> None:
+  path = tmp_path / "wk-form4.xml"
+  path.write_text(FORM4)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    edgar = _EdgarDocuments([_info_table()])
+    out = tools.records(lf, session=edgar)
+    assert edgar.listed == 0 and "note" not in out
+    assert out["tables"][0]["source_document"] == "wk-form4.xml"
   finally:
     session.close()
 
