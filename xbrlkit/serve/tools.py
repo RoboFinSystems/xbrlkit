@@ -31,12 +31,15 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from xbrlkit.config import CONFIG, Config
 from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
 from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import (
   FilingSession,
   LoadedFiling,
+  SourceError,
   TaxonomyEntry,
   TextSection,
 )
@@ -757,8 +760,12 @@ def _next_steps(lf: LoadedFiling) -> list[str]:
       "search_text for anything in the document, read_text to page it",
     ]
     if lf.xml_document:
+      beside = _RECORDS_FILED_BESIDE.get(_xml_form(lf))
       return [
-        "records for this form's tables — its transactions, holdings or rows",
+        f"records for the positions — fetched from this filing's {beside}; "
+        "the primary document is only the cover page"
+        if beside
+        else "records for this form's tables — its transactions, holdings or rows",
         *document,
       ]
     return document
@@ -788,11 +795,63 @@ def _require_xbrl(lf: LoadedFiling, what: str) -> None:
   )
 
 
+# Forms whose records are not in the primary document: a 13F-HR's primary is
+# the cover page, and every position is in the INFORMATION TABLE filed with it.
+_RECORDS_FILED_BESIDE = {
+  "13F-HR": "INFORMATION TABLE",
+  "13F-HR/A": "INFORMATION TABLE",
+}
+
+
+def _xml_form(lf: LoadedFiling) -> str:
+  """The form an XML filing is, from EDGAR or, loaded locally, from itself."""
+  doc = lf.xml_document
+  return (lf.model.filing.form or (doc.form_hint if doc else None) or "").upper()
+
+
+def _records_filed_beside(
+  lf: LoadedFiling, session: Any
+) -> tuple[list[tuple[str, Any]], str | None]:
+  """The record tables of the documents a form's rows are filed in, each with
+  its document's name — or, when they cannot be read, why not."""
+  form = _xml_form(lf)
+  kind = _RECORDS_FILED_BESIDE.get(form)
+  if kind is None or session is None:
+    return [], None
+  try:
+    found = [
+      d
+      for d in session.other_documents(lf)
+      if d.type.upper() == kind and d.suffix == ".xml"
+    ]
+    tables = []
+    for d in found:
+      read = session.read_other_document(lf, d.document)
+      if read.xml_document is not None:
+        tables += [(d.document, t) for t in read.xml_document.tables]
+  except (SourceError, OSError, requests.RequestException) as exc:
+    return [], (
+      f"This {form}'s rows are in its {kind}, which could not be read ({exc}). "
+      "The cover page's tables are below."
+    )
+  if not found:
+    return [], f"This {form} lists no {kind}; the cover page's tables are below."
+  return tables, None
+
+
 def records(
-  lf: LoadedFiling, table: str | None = None, limit: int = 100
+  lf: LoadedFiling,
+  table: str | None = None,
+  limit: int = 100,
+  session: Any = None,
 ) -> dict[str, Any]:
   """The record tables of an XML filing — a Form 4's transactions, a 13F's
-  holdings — as rows, with the document's header fields alongside."""
+  holdings — as rows, with the document's header fields alongside.
+
+  With a ``session``, a form whose rows are filed in a second document (a
+  13F's INFORMATION TABLE) has that document's tables fetched and returned
+  first, each naming the document it came from.
+  """
   doc = lf.xml_document
   if doc is None:
     raise ToolError(
@@ -800,28 +859,34 @@ def records(
       "13F, N-PORT and the rest of EDGAR's XML. Use fact_grid or statement "
       "for an XBRL filing."
     )
+  beside, note = _records_filed_beside(lf, session)
+  primary = lf.model.filing.document_name or doc.root
+  found = [*beside, *((primary, t) for t in doc.tables)]
   wanted = (table or "").strip().lower()
-  tables = doc.tables
   if wanted:
-    tables = [t for t in doc.tables if t.name.lower() == wanted]
-    if not tables:
-      names = [t.name for t in doc.tables]
-      raise ToolError(f"No table {table!r} in this document; it has {names}")
-  return {
+    names = [t.name for _, t in found]
+    found = [(d, t) for d, t in found if t.name.lower() == wanted]
+    if not found:
+      raise ToolError(f"No table {table!r} in this filing; it has {names}")
+  out: dict[str, Any] = {
     "document": doc.root,
     "form": lf.model.filing.form or doc.form_hint,
     "fields": doc.fields,
     "tables": [
       {
         "name": t.name,
+        "source_document": d,
         "columns": t.columns,
         "row_count": len(t.rows),
         "rows": t.rows[:limit],
         "truncated": len(t.rows) > limit,
       }
-      for t in tables
+      for d, t in found
     ],
   }
+  if note:
+    out["note"] = note
+  return out
 
 
 def documents(lf: LoadedFiling, session: Any) -> dict[str, Any]:

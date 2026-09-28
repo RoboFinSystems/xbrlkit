@@ -119,7 +119,9 @@ in GAAP. Treat it as a primary source, not as a supplement to the 10-Q.
 RECORDS (XML filings)
 - records returns the form's own tables — a Form 4's transactions and \
 holdings, a 13F's positions — as rows with the header fields beside them. \
-describe_filing's `sections.records` lists the tables and their columns.
+A 13F's positions live in its INFORMATION TABLE; records fetches it, so ask \
+records for them rather than stopping at the cover page. \
+describe_filing's `sections.records` lists the primary document's tables.
 
 TEXT
 - search_text is a regular-expression search over the readable text — the \
@@ -698,8 +700,10 @@ def build_server(
     description=(
       "The record tables of an XML filing — a Form 4's transactions and "
       "holdings, a 13F's positions — as rows, with the document's header "
-      "fields beside them. Omit `table` for every table; describe_filing's "
-      "`sections.records` lists their names and columns."
+      "fields beside them. A 13F's positions are filed in its INFORMATION "
+      "TABLE, not the cover page; records fetches that document and returns "
+      "its `infoTable` first. Omit `table` for every table; describe_filing's "
+      "`sections.records` lists the primary document's tables."
     ),
     structured_output=False,
   )
@@ -711,7 +715,11 @@ def build_server(
     ] = None,
     limit: Annotated[int, Field(description="Rows per table.", ge=1, le=1000)] = 100,
   ) -> str:
-    return run(lambda: tools.records(session.get(filing), table=table, limit=limit))
+    return run(
+      lambda: tools.records(
+        session.get(filing), table=table, limit=limit, session=session
+      )
+    )
 
   text_scope = (
     "the filing's primary document as plain text — every Item, note, table, "
