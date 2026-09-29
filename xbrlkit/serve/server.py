@@ -815,14 +815,15 @@ def build_server(
       "JSON-LD), `holon` (RDF / JSON-LD, opens in the RoboSystems holon "
       "viewer), `tavi` (the Project TAVI compiled model, JSON), `oim` "
       "(xBRL-JSON), `lpg` (a single-filing LadybugDB graph; needs the lpg "
-      "extra), or `model` (the parse itself as JSON — load_filing reloads it "
-      "without Arelle)."
+      "extra), `icebug` (the same graph as an icebug-disk directory any "
+      "LadybugDB queries in place; needs pyarrow), or `model` (the parse itself "
+      "as JSON — load_filing reloads it without Arelle)."
     ),
     structured_output=False,
   )
   def export_filing(
     format: Annotated[
-      Literal["clawdog", "holon", "tavi", "oim", "lpg", "model"],
+      Literal["clawdog", "holon", "tavi", "oim", "lpg", "icebug", "model"],
       Field(description="The projection to write."),
     ],
     filing: Filing = None,

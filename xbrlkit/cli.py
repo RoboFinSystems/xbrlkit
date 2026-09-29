@@ -4,6 +4,7 @@
     xbrlkit build --cik 320193 --accno … --format clawdog    # -> output/<accno>.clawdog.jsonld
     xbrlkit build --cik 320193 --accno … --format tavi       # -> output/<accno>.tavi.json
     xbrlkit build --cik 320193 --accno … --format lpg        # -> output/<accno>.lbug
+    xbrlkit build --cik 320193 --accno … --format icebug     # -> output/<accno>.icebug/
     xbrlkit fetch --ticker NVDA --form 10-K --n 1            # -> output/
     xbrlkit view NVDA                                        # -> the browser
 
@@ -14,6 +15,10 @@ model, an OIM report, or a property-graph database).
 ``--format lpg`` needs the ``lpg`` extra (``pip install "xbrlkit[lpg]"``) and
 writes the filing as a single-file LadybugDB database with the same tables as
 the RoboSystems ``sec`` graph, text blocks inline.
+
+``--format icebug`` writes the same tables as an icebug-disk tree — a directory
+of parquet in CSR layout plus a ``schema.cypher`` — that any LadybugDB queries
+in place, whatever its version. It needs pyarrow only (``xbrlkit[icebug]``).
 
 ``--format clawdog`` and ``--format tavi`` write gap-report sidecars for fields
 the target document does not carry. Those files are part of the projection, not
@@ -46,6 +51,7 @@ from .serialize import (
   to_holon,
   to_oim_document,
   to_tavi_report,
+  write_icebug,
 )
 from .view import DEFAULT_VIEWER, serve_report
 
@@ -53,13 +59,14 @@ from .view import DEFAULT_VIEWER, serve_report
 # are git-ignored (see output/.gitignore). Relative to the working directory.
 DEFAULT_OUTPUT_DIR = Path("output")
 
-FORMATS = ("clawdog", "holon", "tavi", "oim", "lpg", "all", "both")
+FORMATS = ("clawdog", "holon", "tavi", "oim", "lpg", "icebug", "all", "both")
 SUFFIXES = {
   "clawdog": ".clawdog.jsonld",
   "holon": ".holon.jsonld",
   "tavi": ".tavi.json",
   "oim": ".oim.json",
   "lpg": ".lbug",
+  "icebug": ".icebug",
 }
 # "both" predates the OIM projection and is kept as an alias for the two it
 # originally meant, so an existing invocation keeps writing the same two files.
@@ -115,6 +122,10 @@ def _write_outputs(model: XbrlModel, out_path: Path, fmt: str, named: bool) -> N
         f"wrote {target}  ({counts.get('Fact', 0)} facts, "
         f"{counts.get('Element', 0)} elements, {counts.get('Structure', 0)} structures)"
       )
+    elif name == "icebug":
+      tables = to_graph_tables(model)
+      write_icebug(tables, target)
+      print(f"wrote {target}/  (icebug-disk; mount with {target / 'schema.cypher'})")
     else:
       document, gaps = to_tavi_report(model)
       target.write_text(json.dumps(document, indent=2, default=str))
@@ -501,7 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
     "--format",
     choices=FORMATS,
     default="holon",
-    help="Projection: clawdog | holon | tavi | oim | lpg | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra.",
+    help="Projection: clawdog | holon | tavi | oim | lpg | icebug | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra; 'icebug' writes an icebug-disk directory and needs pyarrow.",
   )
   b.set_defaults(func=_cmd_build)
 
@@ -521,7 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     "--format",
     choices=FORMATS,
     default="holon",
-    help="Projection: clawdog | holon | tavi | oim | lpg | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra.",
+    help="Projection: clawdog | holon | tavi | oim | lpg | icebug | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra; 'icebug' writes an icebug-disk directory and needs pyarrow.",
   )
   f.set_defaults(func=_cmd_fetch)
 

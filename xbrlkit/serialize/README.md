@@ -9,7 +9,7 @@ parse captures the full XBRL and each serializer decides what to shed.
 | **holon** (`.holon.jsonld`) | shipped | RDF/JSON-LD, renders in the [xbrlkit viewer](https://xbrlkit.com/). **Lossless against the model** — see below |
 | **TAVI** (`.tavi.json`) | shipped | [Project TAVI](https://www.xbrl.org/Specification/tavi/PWD-2026-09-01/tavi-PWD-2026-09-01.html) compiled model, PWD-2026-09-01 |
 | **OIM** (`.oim.json`) | shipped | xBRL-JSON, checked fact-for-fact against Arelle's own writer |
-| **property graph** (`.lbug`, parquet) | shipped | the [RoboSystems](https://robosystems.ai) `sec` graph's tables, ids and DDL, as one LadybugDB file per filing |
+| **property graph** (`.lbug`, icebug-disk, parquet) | shipped | the [RoboSystems](https://robosystems.ai) `sec` graph's tables, ids and DDL, as one LadybugDB file per filing or an icebug-disk tree any LadybugDB queries in place |
 | **ClawDog** (`.clawdog.jsonld`) | shipped | authored-report JSON-LD with fact provenance and calculation equations |
 
 Three of them read back: see [`deserialize/`](../deserialize/README.md).
@@ -95,12 +95,48 @@ relationship types, columns and ids, declared once in
 shared graph runs on the file and a fact in either is the same row.
 
 ```python
-from xbrlkit.serialize import to_graph_tables, write_parquet, build_lbug
+from xbrlkit.serialize import to_graph_tables, write_parquet, build_lbug, write_icebug
 
 tables = to_graph_tables(model)  # node and relationship rows, schema order
 write_parquet(tables, Path("out/mmm"))  # nodes/*.parquet, relationships/*.parquet
 build_lbug(tables, Path("out/mmm.lbug"))  # CREATE TABLE … + COPY FROM, one file
+write_icebug(tables, Path("out/mmm.icebug"))  # icebug-disk: parquet CSR + schema.cypher
 ```
+
+### Two containers, one set of rows
+
+A `.lbug` is LadybugDB's own storage: one file, loaded by `COPY`, and readable
+only by the engine version that wrote it or a later one that still reads that
+storage version. An **icebug-disk** tree
+([spec](https://github.com/Ladybug-Memory/icebug-format)) is the same tables as
+plain parquet in CSR layout — `nodes_<Label>.parquet` (a row's position is the
+node's offset), and per relationship an `indices_<TYPE>.parquet` (targets and
+edge properties, sorted by source) and an `indptr_<TYPE>.parquet` (row
+pointers) — plus a `schema.cypher` that declares every table over the tree. A
+LadybugDB database runs that file and queries the parquet where it lies: no
+load, no engine version tied to the files, and no LadybugDB needed to write
+them. LadybugDB's own `EXPORT DATABASE` writes the same layout from 0.21 on.
+
+```python
+import ladybug
+
+conn = ladybug.Connection(ladybug.Database(":memory:"))
+for statement in Path("out/mmm.icebug/schema.cypher").read_text().split(";\n"):
+  if statement.strip():
+    conn.execute(statement)
+conn.execute("MATCH (f:Fact)-[:FACT_HAS_ELEMENT]->(e:Element) RETURN e.qname, count(f)")
+```
+
+`schema.cypher` names where the tree lives — this directory's absolute path by
+default, or `write_icebug(..., storage="https://…")` (or `s3://`, `hf://`) for a
+tree you host; remote reads need LadybugDB's `httpfs` extension. Every table is
+read back through Cypher identical to the `.lbug` built from the same rows, on
+LadybugDB 0.18.1, 0.20.2 and 0.21.0. Two engine defects to know while they are
+open: write relationship patterns with a type (`-[:FACT_HAS_ELEMENT]->`, never
+`-[r]->`), since untyped patterns over icebug-disk tables return wrong rows
+([#1066](https://github.com/LadybugDB/ladybug/issues/1066)); and on 0.21.0 a
+pattern that changes direction and then filters a later node can fail
+([#1068](https://github.com/LadybugDB/ladybug/issues/1068)).
 
 What the platform adds *after* projection is not in the file: text blocks stay
 inline in `Fact.value`, and the enrichment columns and tables

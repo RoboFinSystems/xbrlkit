@@ -14,7 +14,7 @@ get the model back.
   filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
   XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
-                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbug)
+                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbug, icebug-disk)
 
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 
@@ -77,8 +77,9 @@ pip install xbrlkit
 ```
 
 Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `cache`, `serve`) and the
-library. Two optional extras: `xbrlkit[lpg]` for the property-graph projection
-(pyarrow, LadybugDB) and `xbrlkit[mcp]` for the MCP server.
+library. Three optional extras: `xbrlkit[lpg]` for the property graph as a
+LadybugDB database (pyarrow, LadybugDB), `xbrlkit[icebug]` for the same graph as
+an icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for the MCP server.
 
 From a source checkout:
 
@@ -114,8 +115,10 @@ needs it — a local file, a JSON report and filings.xbrl.org all load without.
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
 # The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
-# the property graph (needs the lpg extra), or every one of them
+# the property graph (lpg: a .lbug, needs the lpg extra; icebug: a directory
+# any LadybugDB queries in place), or every one of them
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
+xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format icebug
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
 
 # Fetch the latest filing for a ticker (-> ./output/); --form and --n filter
