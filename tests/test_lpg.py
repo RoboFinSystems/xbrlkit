@@ -26,6 +26,7 @@ from xbrlkit.model import (
   XbrlModel,
 )
 from xbrlkit.serialize.lpg import (
+  ICEBUG_DISK_VERSION,
   PLATFORM_NAMESPACE,
   GraphTables,
   build_lbug,
@@ -33,6 +34,7 @@ from xbrlkit.serialize.lpg import (
   graph_id,
   parse_structure_definition,
   to_graph_tables,
+  write_icebug,
   write_parquet,
 )
 
@@ -680,3 +682,162 @@ class TestParquetAndDatabase:
       'COPY Fact FROM "C:/Users/user/AppData/Local/Temp/xbrlkit-lpg-1/nodes/Fact.parquet"'
     )
     assert "\\" not in statement
+
+
+def _read(path: Path):
+  with open(path, "rb") as handle:
+    return pq.read_table(handle)
+
+
+def _mount(lbug, schema_cypher: Path):
+  db = lbug.Database(":memory:")
+  conn = lbug.Connection(db)
+  for statement in schema_cypher.read_text().split(";\n"):
+    if statement.strip():
+      conn.execute(statement)
+  return db, conn
+
+
+@pytest.mark.unit
+class TestIcebug:
+  def test_every_table_is_written_in_the_icebug_disk_layout(
+    self, model, tmp_path: Path
+  ):
+    write_icebug(to_graph_tables(model), tmp_path / "tree")
+    names = {p.name for p in (tmp_path / "tree").iterdir()}
+    for table in schema.NODE_TABLES:
+      assert f"nodes_{table.name}.parquet" in names  # empty tables too
+    for table in schema.REL_TABLES:
+      assert {f"indices_{table.name}.parquet", f"indptr_{table.name}.parquet"} <= names
+    assert "schema.cypher" in names
+    metadata = pq.read_metadata(tmp_path / "tree" / "nodes_Fact.parquet").metadata
+    assert metadata[b"icebug_disk_version"] == ICEBUG_DISK_VERSION.encode()
+    fact = _read(tmp_path / "tree" / "nodes_Fact.parquet")
+    assert fact.column_names == list(schema.node_table("Fact").columns)
+
+  def test_csr_arrays_reproduce_every_edge(self, model, tmp_path: Path):
+    tables = to_graph_tables(model)
+    write_icebug(tables, tmp_path / "tree")
+    for spec in schema.REL_TABLES:
+      sources = [r["identifier"] for r in tables.nodes[spec.from_node]]
+      targets = [r["identifier"] for r in tables.nodes[spec.to_node]]
+      pointers = (
+        _read(tmp_path / "tree" / f"indptr_{spec.name}.parquet")
+        .column("ptr")
+        .to_pylist()
+      )
+      indices = _read(tmp_path / "tree" / f"indices_{spec.name}.parquet")
+      assert len(pointers) == len(sources) + 1 and pointers[-1] == indices.num_rows
+      assert pointers == sorted(pointers)
+      target_offsets = indices.column("target").to_pylist()
+      rebuilt = sorted(
+        (sources[i], targets[target_offsets[k]])
+        for i in range(len(sources))
+        for k in range(pointers[i], pointers[i + 1])
+      )
+      assert rebuilt == sorted(
+        (r["from"], r["to"]) for r in tables.relationships[spec.name]
+      )
+    label = _read(tmp_path / "tree" / "indices_TAXONOMY_HAS_LABEL.parquet")
+    assert label.column_names == ["target", "element_uri"]
+
+  def test_columns_are_written_in_their_declared_type(self, model, tmp_path: Path):
+    """No COPY casts a tree on its way in, so a STRING column holds strings —
+    ``Association.root`` included, which the parquet projection writes as
+    booleans and a ``.lbug`` stores as ``"True"`` / ``"False"``."""
+    write_icebug(to_graph_tables(model), tmp_path / "tree")
+    association = _read(tmp_path / "tree" / "nodes_Association.parquet")
+    assert str(association.schema.field("root").type) == "string"
+    assert set(association.column("root").to_pylist()) == {"True"}
+    report = _read(tmp_path / "tree" / "nodes_Report.parquet")
+    assert str(report.schema.field("fiscal_year_focus").type) == "int32"
+
+  def test_schema_cypher_declares_every_table_over_the_storage(
+    self, model, tmp_path: Path
+  ):
+    tables = to_graph_tables(model)
+    write_icebug(tables, tmp_path / "tree")
+    statements = [
+      s
+      for s in (tmp_path / "tree" / "schema.cypher").read_text().split(";\n")
+      if s.strip()
+    ]
+    assert len(statements) == len(schema.NODE_TABLES) + len(schema.REL_TABLES)
+    local = (tmp_path / "tree").resolve().as_posix()
+    assert all(
+      s.endswith(f"WITH (storage = '{local}', format = 'icebug-disk')")
+      for s in statements
+    )
+    write_icebug(
+      tables, tmp_path / "hosted", storage="hf://datasets/acme/filings/main/mmm"
+    )
+    hosted = (tmp_path / "hosted" / "schema.cypher").read_text()
+    assert (
+      "storage = 'hf://datasets/acme/filings/main/mmm'" in hosted
+      and local not in hosted
+    )
+
+  def test_a_rewrite_replaces_the_tree(self, model, tmp_path: Path):
+    write_icebug(to_graph_tables(model), tmp_path / "tree")
+    (tmp_path / "tree" / "stray.parquet").write_bytes(b"")
+    write_icebug(GraphTables(), tmp_path / "tree")
+    assert not (tmp_path / "tree" / "stray.parquet").exists()
+    assert _read(tmp_path / "tree" / "nodes_Fact.parquet").num_rows == 0
+
+  def test_an_edge_to_a_missing_node_is_refused(self, model, tmp_path: Path):
+    tables = to_graph_tables(model)
+    tables.relationships["FACT_HAS_ELEMENT"].append(
+      {"from": "no-such-fact", "to": "no-such-element"}
+    )
+    with pytest.raises(ValueError, match="FACT_HAS_ELEMENT"):
+      write_icebug(tables, tmp_path / "tree")
+
+  def test_a_mounted_tree_reads_as_the_database_does(
+    self, model, tmp_path: Path, monkeypatch
+  ):
+    """Every table, read through Cypher from a tree mounted in place, matches
+    the same table in a ``.lbug`` built from the same rows — from another
+    working directory, since the storage path is absolute. Typed patterns only:
+    untyped ones are wrong on icebug-disk tables (LadybugDB/ladybug#1066)."""
+    lbug = pytest.importorskip("ladybug")
+    tables = to_graph_tables(model)
+    built = build_lbug(tables, tmp_path / "filing.lbug")
+    write_icebug(tables, tmp_path / "tree")
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+
+    def rows(conn) -> dict[str, list]:
+      out = {}
+      for spec in schema.NODE_TABLES:
+        columns = ", ".join(f"n.{p.name}" for p in spec.properties)
+        out[spec.name] = conn.execute(
+          f"MATCH (n:{spec.name}) RETURN {columns} ORDER BY n.identifier"
+        ).get_all()
+      for spec in schema.REL_TABLES:
+        props = "".join(f", r.{p.name}" for p in spec.properties)
+        out[spec.name] = sorted(
+          conn.execute(
+            f"MATCH (a:{spec.from_node})-[r:{spec.name}]->(b:{spec.to_node}) RETURN a.identifier, b.identifier{props}"
+          ).get_all()
+        )
+      return out
+
+    db = lbug.Database(str(built), read_only=True)
+    conn = lbug.Connection(db)
+    try:
+      expected = rows(conn)
+    finally:
+      conn.close()
+      db.close()
+    db, conn = _mount(lbug, tmp_path / "tree" / "schema.cypher")
+    try:
+      assert rows(conn) == expected
+      assert sum(len(v) for v in expected.values()) > 0
+      assert conn.execute(
+        "MATCH (r:Report)-[:REPORT_HAS_FACT]->(f:Fact {has_dimensions: false})-[:FACT_HAS_ELEMENT]->"
+        "(e:Element {qname: 'us-gaap:Revenues'}), (f)-[:FACT_HAS_PERIOD]->(p:Period) "
+        "RETURN r.form, e.qname, p.end_date, f.numeric_value"
+      ).get_all() == [["10-K", "us-gaap:Revenues", "2024-12-31", 24575000000.0]]
+    finally:
+      conn.close()
+      db.close()

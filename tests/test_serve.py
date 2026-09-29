@@ -820,6 +820,18 @@ def test_export_filing_writes_projection(
     tools.export_filing(loaded, "pdf", tmp_path)
 
 
+def test_export_filing_writes_an_icebug_tree(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  pytest.importorskip("pyarrow")
+  out = tools.export_filing(loaded, "icebug", tmp_path)
+  path = Path(out["path"])
+  assert path.parent == tmp_path and path.is_dir() and out["bytes"] is None
+  assert out["files"] == [str(path), str(path / "schema.cypher")]
+  assert (path / "nodes_Fact.parquet").is_file()
+  assert "format = 'icebug-disk'" in (path / "schema.cypher").read_text()
+
+
 def test_view_filing_serves_it_for_the_viewer(loaded: LoadedFiling) -> None:
   from xbrlkit.view import DEFAULT_VIEWER, ViewerHost
 

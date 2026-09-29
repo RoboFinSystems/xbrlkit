@@ -50,6 +50,11 @@ lpg = [
     "pyarrow>=17",
     "ladybug>=0.18",
 ]
+# The same graph as an icebug-disk tree (`xbrlkit build --format icebug`):
+# parquet in CSR layout, queried in place by any LadybugDB. No engine needed.
+icebug = [
+    "pyarrow>=17",
+]
 # The local MCP server over loaded filings (`xbrlkit serve`).
 mcp = [
     "mcp>=2.1",

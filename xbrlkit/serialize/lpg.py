@@ -1,5 +1,6 @@
 """Project a neutral ``XbrlModel`` into the XBRL property graph — node and
-relationship tables, parquet files, and a single-filing LadybugDB database.
+relationship tables, parquet files, a single-filing LadybugDB database, and an
+icebug-disk tree any LadybugDB queries in place.
 
 This is the projection the RoboSystems platform builds its shared ``sec``
 graph from, expressed as a function of the model instead of a walk over
@@ -702,6 +703,105 @@ def copy_statement(table: str, parquet: PurePath) -> str:
   return f'COPY {table} FROM "{parquet.as_posix()}"'
 
 
+# ---- icebug-disk --------------------------------------------------------------
+
+ICEBUG_DISK_VERSION = "v1"
+
+
+def write_icebug(
+  tables: GraphTables, out_dir: Path, storage: str | None = None
+) -> Path:
+  """Write ``tables`` as an icebug-disk tree at ``out_dir``.
+
+  icebug-disk (https://github.com/Ladybug-Memory/icebug-format) is plain
+  parquet laid out as CSR: ``nodes_<Name>.parquet`` per node table, where a
+  row's position is the node's offset, and per relationship table an
+  ``indices_<NAME>.parquet`` (each edge's target offset plus its properties,
+  sorted by source) and an ``indptr_<NAME>.parquet`` (``N + 1`` row pointers
+  over the source table). ``schema.cypher`` declares every table over the tree,
+  so a LadybugDB database queries it in place with no load — from this
+  directory, or from wherever the tree is hosted once ``storage`` names that
+  location (an ``https://``, ``s3://`` or ``hf://`` prefix). It defaults to
+  this directory's absolute path.
+
+  Needs pyarrow only; no LadybugDB is involved in writing it. An existing tree
+  at ``out_dir`` is replaced.
+  """
+  import pyarrow as pa
+
+  out_dir = Path(out_dir)
+  if out_dir.exists():
+    shutil.rmtree(out_dir)
+  out_dir.mkdir(parents=True)
+  location = storage if storage is not None else out_dir.resolve().as_posix()
+  with_clause = f" WITH (storage = '{location}', format = 'icebug-disk')"
+
+  offsets: dict[str, dict[str, int]] = {}
+  statements: list[str] = []
+  for spec in NODE_TABLES:
+    rows = tables.nodes.get(spec.name) or []
+    offsets[spec.name] = {row[spec.primary_key]: i for i, row in enumerate(rows)}
+    columns = {
+      p.name: _declared_column([r.get(p.name) for r in rows], p.type)
+      for p in spec.properties
+    }
+    _write_icebug_file(pa.table(columns), out_dir / f"nodes_{spec.name}.parquet")
+    statements.append(spec.ddl() + with_clause)
+
+  for spec in REL_TABLES:
+    sources, targets = offsets[spec.from_node], offsets[spec.to_node]
+    try:
+      edges = sorted(
+        (
+          (sources[row["from"]], targets[row["to"]], row)
+          for row in tables.relationships.get(spec.name) or []
+        ),
+        key=lambda edge: (edge[0], edge[1]),
+      )
+    except KeyError as exc:
+      raise ValueError(
+        f"{spec.name} has an edge to a node that is not in the tables: {exc.args[0]}"
+      ) from exc
+    pointers = [0] * (len(sources) + 1)
+    for source, _, _ in edges:
+      pointers[source + 1] += 1
+    for i in range(1, len(pointers)):
+      pointers[i] += pointers[i - 1]
+    columns = {"target": pa.array([target for _, target, _ in edges], pa.int64())}
+    for prop in spec.properties:
+      columns[prop.name] = _declared_column(
+        [row.get(prop.name) for _, _, row in edges], prop.type
+      )
+    _write_icebug_file(pa.table(columns), out_dir / f"indices_{spec.name}.parquet")
+    _write_icebug_file(
+      pa.table({"ptr": pa.array(pointers, pa.int64())}),
+      out_dir / f"indptr_{spec.name}.parquet",
+    )
+    statements.append(spec.ddl() + with_clause)
+
+  (out_dir / "schema.cypher").write_text("".join(f"{s};\n" for s in statements))
+  return out_dir
+
+
+def _declared_column(values: list[Any], type_: str) -> Any:
+  """A column in its declared type. A tree is read in place, with no ``COPY``
+  to cast it on the way in, so ``Association.root``'s booleans are written as
+  the strings a ``.lbug`` stores for them."""
+  if type_ == STRING:
+    values = [str(v) if isinstance(v, bool) else v for v in values]
+  return _column(values, type_)
+
+
+def _write_icebug_file(table: Any, path: Path) -> None:
+  # Snappy, as LadybugDB's own EXPORT DATABASE writes: engines before 0.20 can
+  # hang decompressing zstd parquet (LadybugDB/ladybug#820).
+  import pyarrow.parquet as pq
+
+  table = table.replace_schema_metadata({"icebug_disk_version": ICEBUG_DISK_VERSION})
+  with open(path, "wb") as handle:
+    pq.write_table(table, handle, compression="snappy")
+
+
 # ---- helpers ------------------------------------------------------------------
 
 
@@ -748,11 +848,13 @@ def _period_uri(period: Period) -> str:
 
 __all__ = (
   "GraphTables",
+  "ICEBUG_DISK_VERSION",
   "PLATFORM_NAMESPACE",
   "XBRL_GRAPH_PROCESSOR_VERSION",
   "build_lbug",
   "graph_id",
   "parse_structure_definition",
   "to_graph_tables",
+  "write_icebug",
   "write_parquet",
 )

@@ -110,6 +110,7 @@ EXPORT_FORMATS = {
   "tavi": "tavi.json",
   "oim": "oim.json",
   "lpg": "lbug",
+  "icebug": "icebug",
   "model": "model.json",
 }
 PURE_MAX_READ = 4000
@@ -2401,6 +2402,16 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
   elif fmt == "model":
     # The parse itself: reloadable by load_filing without Arelle.
     target.write_text(model.model_dump_json(indent=2))
+  elif fmt == "icebug":
+    try:
+      from xbrlkit.serialize import to_graph_tables, write_icebug
+
+      write_icebug(to_graph_tables(model), target)
+    except ImportError as exc:  # pragma: no cover - depends on the extra
+      raise ToolError(
+        "the icebug format needs `pip install 'xbrlkit[icebug]'`"
+      ) from exc
+    written.append(target / "schema.cypher")
   else:
     try:
       from xbrlkit.serialize import build_lbug, to_graph_tables
