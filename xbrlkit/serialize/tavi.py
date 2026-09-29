@@ -453,12 +453,15 @@ def to_tavi_report(
   networks, groups, group_contents, group_labels = _networks_and_groups(
     model, dimensional, default_language
   )
+  fact_groups = _fact_groups(model, groups)
+  if fact_groups:
+    namespaces.setdefault("rs", HOLON_VOCAB)
 
   xbrl_model: dict[str, object] = {
     "name": f"{REPORT_PREFIX}:Report",
     "modelType": "xbrl:report",
     "properties": _model_properties(model),
-    "propertyTypes": _property_types(model),
+    "propertyTypes": _property_types(model, sections=bool(fact_groups)),
     "entities": _entities(model),
     "units": _units(model),
     "dataTypes": datatypes,
@@ -475,7 +478,7 @@ def to_tavi_report(
     "networks": networks,
     "groups": groups,
     "groupContents": group_contents,
-    "facts": _facts(model, gaps, dimensional),
+    "facts": _facts(model, gaps, dimensional, fact_groups),
   }
 
   document: dict[str, object] = {
@@ -1175,7 +1178,10 @@ def _relationship(arc: Arc, network: Network) -> dict[str, object]:
 
 
 def _facts(
-  model: XbrlModel, gaps: GapReport, dimensional: Dimensional
+  model: XbrlModel,
+  gaps: GapReport,
+  dimensional: Dimensional,
+  fact_groups: dict[str, str] | None = None,
 ) -> list[dict[str, object]]:
   """Fact objects (section 8.3) — the near-identity mapping.
 
@@ -1247,6 +1253,8 @@ def _facts(
     )
     if fact.structure_id:
       properties.append({"property": "rs:structureId", "value": fact.structure_id})
+    if fact_groups and fact.id in fact_groups:
+      properties.append({"property": SECTIONS_PROPERTY, "value": fact_groups[fact.id]})
     if properties:
       entry["properties"] = properties
     facts.append(entry)
@@ -1314,6 +1322,11 @@ REPORT_PROPERTIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
+# The groups a fact belongs to (see _fact_groups). The draft has no list
+# datatype, so the value is the group names separated by spaces.
+SECTIONS_PROPERTY = "rs:groups"
+
+
 def _network_properties(network: Network) -> list[dict[str, object]]:
   properties: list[dict[str, object]] = []
   for qname, value in (
@@ -1342,7 +1355,33 @@ def _report_properties_used(model: XbrlModel) -> set[str]:
   return used
 
 
-def _property_types(model: XbrlModel) -> list[dict[str, object]]:
+def _fact_groups(model: XbrlModel, groups: list[dict[str, object]]) -> dict[str, str]:
+  """Fact id → the groups (report sections, section 10.1) it belongs to, as
+  space-separated group names in document order.
+
+  The draft's group contents name networks and cubes but not facts, so which
+  facts a section shows is otherwise every reader's own inference. The rule is
+  :func:`xbrlkit.information_block.fact_membership`, the same one the holon's
+  fact sets are written from.
+  """
+  from xbrlkit.information_block import fact_membership, plan_blocks
+
+  position = {str(g["groupURI"]): (i, str(g["name"])) for i, g in enumerate(groups)}
+  by_fact: dict[str, list[tuple[int, str]]] = {}
+  for role, facts in fact_membership(model, plan_blocks(model)).items():
+    group = position.get(role)
+    if group is None:
+      continue
+    for fact in facts:
+      by_fact.setdefault(fact.id, []).append(group)
+  return {
+    fid: " ".join(name for _, name in sorted(set(gs))) for fid, gs in by_fact.items()
+  }
+
+
+def _property_types(
+  model: XbrlModel, *, sections: bool = False
+) -> list[dict[str, object]]:
   """The property type objects (section 11.6) the model's properties need.
 
   Declared only when something carries the property: section 3.1 forbids a
@@ -1361,6 +1400,15 @@ def _property_types(model: XbrlModel) -> list[dict[str, object]]:
         "allowedObjects": ["xbrl:factObject"],
       }
       for _, qname, datatype in PROVENANCE_PROPERTIES
+    )
+  if sections:
+    types.append(
+      {
+        "name": SECTIONS_PROPERTY,
+        "dataType": "xs:string",
+        "definitional": False,
+        "allowedObjects": ["xbrl:factObject"],
+      }
     )
   used = _report_properties_used(model)
   types.extend(

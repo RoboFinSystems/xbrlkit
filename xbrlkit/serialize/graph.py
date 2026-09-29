@@ -36,6 +36,7 @@ from collections.abc import Mapping
 
 from rdflib import RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
 
+from ..information_block import fact_membership, plan_blocks
 from ..model import Concept, Network, Unit, XbrlModel
 from .tavi import LABEL_ROLE_TYPES
 from ..namespaces import FACTSET_BASE, PROV_VOCAB, REPORT_BASE
@@ -668,30 +669,17 @@ def _fact_membership(
 ) -> dict[str, set[str]]:
   """Map each fact id → the role_uris of the structures it belongs to.
 
-  A filing says nothing about membership, so a fact belongs to every section
-  whose presentation cites its concept. An authored report pins each fact to
-  one structure (``XbrlFact.structure_id``); the pin wins, so a fact reported
-  in several statements links to its own fact set and not to every section
-  that happens to show the concept.
+  The rule is :func:`xbrlkit.information_block.fact_membership`, the one every
+  reader of a filing shares, so the fact sets written here are the sections
+  xbrlkit's own tools and the report renderer show.
   """
-  by_concept: dict[str, list[str]] = {}
-  for st in structures.values():
-    if not st.renderable:
-      continue
-    for concept in st.pres_concepts:
-      by_concept.setdefault(concept, []).append(st.role_uri)
-  by_structure_id = {
-    st.structure_id: st.role_uri for st in structures.values() if st.structure_id
-  }
   membership: dict[str, set[str]] = {}
-  for fact in model.facts:
-    pinned = by_structure_id.get(fact.structure_id or "")
-    if pinned is not None:
-      membership[fact.id] = {pinned}
+  for role, facts in fact_membership(model, plan_blocks(model)).items():
+    st = structures.get(role)
+    if st is None or not st.renderable:
       continue
-    roles = by_concept.get(fact.concept_qname)
-    if roles:
-      membership[fact.id] = set(roles)
+    for fact in facts:
+      membership.setdefault(fact.id, set()).add(role)
   return membership
 
 

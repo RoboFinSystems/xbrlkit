@@ -57,7 +57,12 @@ from ..model import (
   XbrlModel,
 )
 from ..namespaces import HOLON_VOCAB, PROV_VOCAB, TAVI_REPORT_BASE
-from ..serialize.tavi import PROVENANCE_PROPERTIES, REPORT_PREFIX, REPORT_PROPERTIES
+from ..serialize.tavi import (
+  PROVENANCE_PROPERTIES,
+  REPORT_PREFIX,
+  REPORT_PROPERTIES,
+  SECTIONS_PROPERTY,
+)
 from ..parse.ids import unit_id
 from ..periods import period_from_interval
 from ..serialize._values import CIK_SCHEME
@@ -943,6 +948,8 @@ def _expand(qname: str, namespaces: Mapping[str, str]) -> str:
 
 # Expanded IRI of each report property, so a document is matched on the IRI
 # whatever prefix it bound.
+_SECTIONS_IRI = _expand(SECTIONS_PROPERTY, {"rs": HOLON_VOCAB})
+
 _REPORT_PROPERTY_IRIS: dict[str, str] = {
   _expand(qname, {"rs": HOLON_VOCAB}): qname for qname, _, _ in REPORT_PROPERTIES
 }
@@ -970,6 +977,8 @@ def _fact_provenance(
     iri = _expand(qname, namespaces)
     if iri in _REPORT_PROPERTY_IRIS:
       continue  # read where the fact is built
+    if iri == _SECTIONS_IRI:
+      continue  # derived: the model recomputes membership with the same rule
     attr = _PROVENANCE_IRIS.get(iri)
     if attr is None or value is None:
       if qname:

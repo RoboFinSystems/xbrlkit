@@ -593,6 +593,134 @@ def test_fact_membership_admits_by_the_blocks_own_cube(model):
   assert "ocus" not in {f.id for facts in membership.values() for f in facts}
 
 
+DUE_12M = "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths"
+
+
+def _with(model: XbrlModel, networks=(), facts=()) -> XbrlModel:
+  return model.model_copy(
+    update={"networks": [*model.networks, *networks], "facts": [*model.facts, *facts]}
+  )
+
+
+def _breakdown(fid: str, qname: str, member: str, pid: str = "I-2024") -> XbrlFact:
+  return XbrlFact(
+    id=fid,
+    concept_qname=qname,
+    period_id=pid,
+    unit_id="usd",
+    entity_cik="0001234567",
+    dims=[DimQualifier(axis_qname=SEGMENT_AXIS, member_qname=member)],
+    value_str="10",
+    numeric_value=10.0,
+    value_kind="numeric",
+  )
+
+
+def _presents(role: str, parent: str, members: list[str]) -> Network:
+  return Network(
+    role_uri=role,
+    kind="presentation",
+    arcs=[Arc(from_qname=parent, to_qname=SEGMENT_AXIS)]
+    + [Arc(from_qname=SEGMENT_AXIS, to_qname=m) for m in members],
+  )
+
+
+def test_a_breakdown_the_presentation_declares_is_admitted_without_a_cube(model):
+  """The maturities section declares no cube but presents the segment axis and
+  one member: that member's breakdown shows, and a member it does not list
+  does not, because a presentation that lists members is closed to others."""
+  m = _with(
+    model,
+    [
+      _presents(
+        MATURITY_ROLE,
+        "us-gaap:LesseeOperatingLeaseLiabilityPaymentsDue",
+        ["acme:WidgetsMember"],
+      )
+    ],
+    [
+      _breakdown("m1w", DUE_12M, "acme:WidgetsMember"),
+      _breakdown("m1g", DUE_12M, "acme:GadgetsMember"),
+    ],
+  )
+  ids = {f.id for f in fact_membership(m, plan_blocks(m))[MATURITY_ROLE]}
+  assert "m1w" in ids and "m1g" not in ids
+  assert {"m1", "m2", "m"} <= ids
+
+
+def test_a_cube_admits_only_the_members_of_its_domain(model):
+  """The lease-cost cube's domain is widgets, gadgets and gizmos. A breakdown
+  on the same axis by a member the domain omits is not this section's."""
+  m = _with(
+    model,
+    facts=[
+      _breakdown("ocd", "us-gaap:OperatingLeaseCost", "acme:DoohickeysMember", "D-2024")
+    ],
+  )
+  ids = {f.id for f in fact_membership(m, plan_blocks(m))[COST_ROLE]}
+  assert "ocw" in ids and "ocd" not in ids
+
+
+def test_a_presented_member_outside_the_cube_domain_is_admitted(model):
+  """The filer presented a member its definition linkbase left out of the
+  domain: the presentation is what the section shows, so the fact belongs."""
+  m = _with(
+    model,
+    [
+      _presents(
+        COST_ROLE,
+        "us-gaap:LeaseCostTable",
+        ["acme:WidgetsMember", "acme:DoohickeysMember"],
+      )
+    ],
+    [
+      _breakdown("ocd", "us-gaap:OperatingLeaseCost", "acme:DoohickeysMember", "D-2024")
+    ],
+  )
+  ids = {f.id for f in fact_membership(m, plan_blocks(m))[COST_ROLE]}
+  assert "ocd" in ids and "ocw" in ids
+  assert "ocus" not in ids  # geography is neither in the cube nor presented
+
+
+def test_the_holon_and_the_tavi_carry_the_same_membership(model):
+  """Both projections write their sections from the one rule, so a renderer
+  reading either finds the facts xbrlkit's own tools show."""
+  from rdflib import RDF, Namespace
+
+  from xbrlkit.namespaces import HOLON_VOCAB
+  from xbrlkit.serialize import build_holon_graph, to_tavi_report
+
+  expected = {
+    role: {f.id for f in facts}
+    for role, facts in fact_membership(model, plan_blocks(model)).items()
+  }
+
+  rs = Namespace(HOLON_VOCAB)
+  graph = build_holon_graph(model)
+  structures = {}
+  for st in graph.subjects(rs.roleUri, None):
+    for fs in graph.objects(st, rs.factSet):
+      structures[fs] = str(next(graph.objects(st, rs.roleUri)))
+  holon: dict[str, set[str]] = {}
+  for fact in set(graph.subjects(RDF.type, rs.Fact)):
+    fid = next(graph.objects(fact, rs.internalId))
+    for fs in graph.objects(fact, rs.factSet):
+      if fs in structures:
+        holon.setdefault(structures[fs], set()).add(str(fid))
+  assert holon == expected
+
+  document, _ = to_tavi_report(model)
+  xm = document["xbrlModel"]
+  role_of = {g["name"]: g["groupURI"] for g in xm["groups"]}
+  tavi: dict[str, set[str]] = {}
+  for fact in xm["facts"]:
+    for prop in fact.get("properties", []):
+      if prop["property"] == "rs:groups":
+        for group in prop["value"].split():
+          tavi.setdefault(role_of[group], set()).add(fact["name"].split(":", 1)[-1])
+  assert tavi == expected
+
+
 # -- the two tools ------------------------------------------------------------------
 
 

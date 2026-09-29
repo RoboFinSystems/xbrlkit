@@ -635,15 +635,21 @@ def test_tavi_round_trips_an_authored_reports_own_fields(model: XbrlModel) -> No
 
 
 def test_a_filings_tavi_carries_no_report_properties(model: XbrlModel) -> None:
-  """A filing has none of those fields, so its document is spec-shaped only:
-  no `rs` binding, no property types. A legal name equal to the name, which
-  the parse always sets, writes nothing."""
+  """A filing has none of an authored report's fields, so the only property it
+  declares is each fact's sections (`rs:groups`), which every filing has. A
+  legal name equal to the name, which the parse always sets, writes nothing."""
   model.entity.legal_name = model.entity.name
   model.filing.report_uri = "https://www.sec.gov/Archives/edgar/data/1/0001-24-1.htm"
   document = json.loads(to_tavi(model))
-  assert "rs" not in document["documentInfo"]["namespaces"]
-  assert "propertyTypes" not in document["xbrlModel"]
-  assert "rs:" not in json.dumps(document)
+  declared = [t["name"] for t in document["xbrlModel"].get("propertyTypes", [])]
+  assert declared == ["rs:groups"]
+  assert document["documentInfo"]["namespaces"]["rs"] == HOLON_VOCAB
+  used = {
+    p["property"]
+    for obj in (document["xbrlModel"], *document["xbrlModel"]["facts"])
+    for p in obj.get("properties", [])
+  }
+  assert {u for u in used if u.startswith("rs:")} <= {"rs:groups"}
 
 
 def test_tavi_reads_an_exact_fact_as_infinitely_precise(model: XbrlModel) -> None:
