@@ -195,6 +195,9 @@ class InformationBlock:
   definition_networks: list[Network] = field(default_factory=list)
   # Every concept the presentation trees cite.
   concepts: set[str] = field(default_factory=set)
+  # Whether the presentation lists domain members, which closes the section
+  # to the members it lists.
+  presents_members: bool = False
   hypercubes: list[Hypercube] = field(default_factory=list)
 
   @property
@@ -224,15 +227,44 @@ class InformationBlock:
     """Whether the fact's dimensional signature falls inside this section.
 
     A fact with no qualifier is the consolidated value and belongs wherever
-    its concept is presented. A qualified fact belongs only where a cube
-    declares every axis it uses; a section that declares no cube shows
-    consolidated values alone, which is what its presentation tree
-    promises.
+    its concept is presented. A qualified fact belongs where the section
+    declares its breakdown, in either of the two places a filer declares one:
+    a cube that holds every axis the fact uses and each member in that axis's
+    domain, or a presentation tree that shows every axis and, when it lists
+    members, each member. A filer that presents a breakdown without a cube,
+    or presents a member its cube's domain omits, still shows it.
     """
     if not fact.dims:
       return True
-    used = frozenset(d.axis_qname for d in fact.dims)
-    return any(used <= cube.axis_qnames for cube in self.hypercubes)
+    return self._cube_admits(fact) or self._presentation_admits(fact)
+
+  def _cube_admits(self, fact: XbrlFact) -> bool:
+    for cube in self.hypercubes:
+      axes = {axis.qname: axis for axis in cube.axes}
+      if all(_in_domain(axes.get(d.axis_qname), d.member_qname) for d in fact.dims):
+        return True
+    return False
+
+  def _presentation_admits(self, fact: XbrlFact) -> bool:
+    return all(
+      d.axis_qname in self.concepts
+      and (
+        not self.presents_members
+        or d.member_qname is None
+        or d.member_qname in self.concepts
+      )
+      for d in fact.dims
+    )
+
+
+def _in_domain(axis: Axis | None, member: str | None) -> bool:
+  """Whether a cube axis takes this member: a typed value or an axis whose
+  domain the definition linkbase does not enumerate takes any."""
+  if axis is None:
+    return False
+  if member is None or axis.typed or not (axis.members or axis.domain):
+    return True
+  return member == axis.domain or member in axis.members
 
 
 @dataclass
@@ -439,6 +471,10 @@ def plan_blocks(model: XbrlModel) -> list[InformationBlock]:
   for st in by_role.values():
     if st.definition_networks:
       st.hypercubes = build_hypercubes(definition_arcs, st.role_uri)
+    st.presents_members = any(
+      (concept := model.concepts.get(qname)) is not None and concept.is_domain_member
+      for qname in st.concepts
+    )
   return sorted(by_role.values(), key=order_key)
 
 
@@ -468,9 +504,10 @@ def fact_membership(
   """Role URI → the facts that belong to that block.
 
   A fact belongs to every section whose presentation cites its concept and
-  whose cube admits its dimensions (:meth:`InformationBlock.admits`). An authored
+  that declares its breakdown (:meth:`InformationBlock.admits`). An authored
   report that pinned a fact to one structure (``XbrlFact.structure_id``)
-  keeps the pin.
+  keeps the pin. This is the one membership rule: the holon's fact sets and
+  the TAVI's ``rs:groups`` are written from it.
   """
   by_concept: dict[str, list[InformationBlock]] = defaultdict(list)
   for st in blocks:

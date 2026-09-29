@@ -860,7 +860,9 @@ def test_provenance_is_written_as_declared_properties() -> None:
   )
   document, _ = to_tavi_report(model)
   xbrl_model = document["xbrlModel"]
-  assert xbrl_model["facts"][0]["properties"] == [
+  assert [
+    p for p in xbrl_model["facts"][0]["properties"] if p["property"] != "rs:groups"
+  ] == [
     {"property": "prov:hadPrimarySource", "value": "src:trial-balance#assets"},
     {"property": "rs:sourceKind", "value": "trial_balance_line"},
     {"property": "rs:contentHash", "value": "sha256:0f0f"},
@@ -869,7 +871,9 @@ def test_provenance_is_written_as_declared_properties() -> None:
       "value": "https://example.com/agents/close-bot",
     },
   ]
-  assert "properties" not in xbrl_model["facts"][1]
+  assert all(
+    p["property"] == "rs:groups" for p in xbrl_model["facts"][1].get("properties", [])
+  )
   declared = {p["name"]: p for p in xbrl_model["propertyTypes"]}
   assert declared["prov:hadPrimarySource"]["dataType"] == "xs:anyURI"
   assert declared["rs:sourceKind"]["allowedObjects"] == ["xbrl:factObject"]
@@ -881,6 +885,13 @@ def test_provenance_is_written_as_declared_properties() -> None:
 
 def test_a_model_without_provenance_declares_nothing_for_it() -> None:
   document, _ = to_tavi_report(_model())
-  assert "propertyTypes" not in document["xbrlModel"]
+  declared = [t["name"] for t in document["xbrlModel"].get("propertyTypes", [])]
+  assert not any(
+    name.startswith("prov:") or name.startswith("rs:source") for name in declared
+  )
   assert "prov" not in document["documentInfo"]["namespaces"]
-  assert not any("properties" in f for f in document["xbrlModel"]["facts"])
+  assert all(
+    p["property"] == "rs:groups"
+    for f in document["xbrlModel"]["facts"]
+    for p in f.get("properties", [])
+  )
