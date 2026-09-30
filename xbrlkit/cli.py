@@ -16,9 +16,11 @@ model, an OIM report, or a property-graph database).
 writes the filing as a single-file LadybugDB database with the same tables as
 the RoboSystems ``sec`` graph, text blocks inline.
 
-``--format icebug`` writes the same tables as an icebug-disk tree — a directory
-of parquet in CSR layout plus a ``schema.cypher`` — that any LadybugDB queries
-in place, whatever its version. It needs pyarrow only (``xbrlkit[icebug]``).
+``--format icebug`` (experimental) writes the same tables as an icebug-disk tree
+— a directory of parquet in CSR layout plus a ``schema.cypher`` — that any
+LadybugDB reads in place, whatever its version. It needs pyarrow only
+(``xbrlkit[icebug]``). The ``.lbdb`` is the graph to query: over a tree,
+patterns that join several relationships slow sharply as a stack grows.
 
 ``--format clawdog`` and ``--format tavi`` write gap-report sidecars for fields
 the target document does not carry. Those files are part of the projection, not
@@ -512,7 +514,7 @@ def build_parser() -> argparse.ArgumentParser:
     "--format",
     choices=FORMATS,
     default="holon",
-    help="Projection: clawdog | holon | tavi | oim | lpg | icebug | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra; 'icebug' writes an icebug-disk directory and needs pyarrow.",
+    help="Projection: clawdog | holon | tavi | oim | lpg | icebug | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra; 'icebug' (experimental) writes an icebug-disk directory and needs pyarrow.",
   )
   b.set_defaults(func=_cmd_build)
 
@@ -532,7 +534,7 @@ def build_parser() -> argparse.ArgumentParser:
     "--format",
     choices=FORMATS,
     default="holon",
-    help="Projection: clawdog | holon | tavi | oim | lpg | icebug | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra; 'icebug' writes an icebug-disk directory and needs pyarrow.",
+    help="Projection: clawdog | holon | tavi | oim | lpg | icebug | all (default holon). 'clawdog' and 'tavi' also write gap reports; 'lpg' writes a LadybugDB database and needs the lpg extra; 'icebug' (experimental) writes an icebug-disk directory and needs pyarrow.",
   )
   f.set_defaults(func=_cmd_fetch)
 

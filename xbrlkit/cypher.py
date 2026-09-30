@@ -13,7 +13,7 @@ that calls :func:`run_cypher` at module level needs the usual guard, or the
 worker stops with multiprocessing's "bootstrapping phase" error::
 
     if __name__ == "__main__":
-        print(run_cypher(Path("out/mmm-stack.icebug"), "MATCH (r:Report) RETURN count(r)"))
+        print(run_cypher(Path("out/mmm-stack.lbdb"), "MATCH (r:Report) RETURN count(r)"))
 
 A notebook, a REPL or a function imported from a module needs nothing.
 

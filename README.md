@@ -82,7 +82,7 @@ pip install xbrlkit
 Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `cache`, `serve`) and the
 library. Three optional extras: `xbrlkit[lpg]` for the property graph as a
 LadybugDB database and for querying it (pyarrow, LadybugDB), `xbrlkit[icebug]`
-for the same graph as an icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for
+for the same graph as an experimental icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for
 the MCP server. Install `xbrlkit[mcp,lpg]` for the server's graph tools.
 
 From a source checkout:
@@ -119,10 +119,10 @@ needs it — a local file, a JSON report and filings.xbrl.org all load without.
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
 # The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
-# the property graph (lpg: a .lbdb, needs the lpg extra; icebug: a directory
-# any LadybugDB queries in place), or every one of them
+# the property graph (lpg: a .lbdb to query, needs the lpg extra; icebug: an
+# experimental directory any LadybugDB reads in place), or every one of them
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
-xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format icebug
+xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format lpg
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
 
 # Fetch the latest filing for a ticker (-> ./output/); --form and --n filter

@@ -105,9 +105,11 @@ write_icebug(tables, Path("out/mmm.icebug"))  # icebug-disk: parquet CSR + schem
 
 ### Two containers, one set of rows
 
-A `.lbdb` is LadybugDB's own storage: one file, loaded by `COPY`, and readable
-only by the engine version that wrote it or a later one that still reads that
-storage version. An **icebug-disk** tree
+**The `.lbdb` is the graph to build and query.** It is LadybugDB's own storage:
+one file, loaded by `COPY`, with the indexes the engine plans around, readable
+by the engine version that wrote it or a later one that still reads that
+storage version. **The icebug-disk tree is experimental** — a proof of concept of
+the portable form. An icebug-disk tree
 ([spec](https://github.com/Ladybug-Memory/icebug-format)) is the same tables as
 plain parquet in CSR layout — `nodes_<Label>.parquet` (a row's position is the
 node's offset), and per relationship an `indices_<TYPE>.parquet` (targets and
@@ -138,6 +140,19 @@ open: write relationship patterns with a type (`-[:FACT_HAS_ELEMENT]->`, never
 pattern that changes direction and then filters a later node can fail
 ([#1068](https://github.com/LadybugDB/ladybug/issues/1068)).
 
+And a pattern that joins several relationships in one `MATCH` slows sharply as
+the tree grows. The same query — facts of one concept joined to their periods —
+on stacks of 10-Ks, on engine 0.20.2 (the 90-filing tree times out the same way
+on 0.18.1 and 0.21.1):
+
+| stack | facts | tree, one `MATCH` | tree, chained with `WITH` | `.lbdb` |
+| --- | --- | --- | --- | --- |
+| 10 filings | 23 k | 1.0 s | 0.2 s | — |
+| 90 filings | 240 k | over 45 s | 0.8–2.7 s | 0.2 s |
+
+So query the `.lbdb`; on a tree, keep one relationship per `MATCH` and chain
+the steps with `WITH`.
+
 ### Stacking filings
 
 `merge_graph_tables` puts several filings into one graph before either
@@ -152,7 +167,7 @@ positional, and `COPY` into an existing `.lbdb` stops at the first shared id.
 from xbrlkit.serialize import merge_graph_tables
 
 stack = merge_graph_tables(to_graph_tables(m) for m in (fy2024, fy2025))
-write_icebug(stack, Path("out/mmm-stack.icebug"))
+build_lbug(stack, Path("out/mmm-stack.lbdb"))
 ```
 
 Two things to know when reading a stack. An element's id carries its taxonomy
@@ -175,7 +190,7 @@ from xbrlkit.cypher import run_cypher
 
 if __name__ == "__main__":
   out = run_cypher(
-    Path("out/mmm-stack.icebug"),
+    Path("out/mmm-stack.lbdb"),
     "MATCH (r:Report)-[:REPORT_HAS_FACT]->(f:Fact) "
     "RETURN r.accession_number AS report, count(f) AS facts ORDER BY report LIMIT 10",
   )
