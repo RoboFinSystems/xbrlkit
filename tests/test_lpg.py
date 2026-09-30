@@ -898,9 +898,36 @@ class TestMerge:
 
   def test_an_id_with_two_meanings_is_refused(self, model):
     one, two = to_graph_tables(model), to_graph_tables(_next_year(model))
-    two.nodes["Entity"][0] = {**two.nodes["Entity"][0], "name": "Someone else"}
-    with pytest.raises(ValueError, match="Entity .* different name"):
+    two.nodes["Unit"][0] = {**two.nodes["Unit"][0], "measure": "iso4217:EUR"}
+    with pytest.raises(ValueError, match="Unit .* different measure"):
       merge_graph_tables([one, two])
+
+  def test_an_entity_is_described_as_of_the_newest_filing(self, model):
+    """A filer's category, name or exchange can change between filings; the
+    stack keeps the newest filing's description whatever the stacking order,
+    and each filing's own value stays in its dei facts."""
+    older = to_graph_tables(model)
+    later = model.model_copy(
+      update={
+        "filing": model.filing.model_copy(
+          update={
+            "accession": "0000066740-26-000009",
+            "report_uri": NEXT_REPORT_URI,
+            "filing_date": date(2026, 2, 4),
+          }
+        ),
+        "entity": model.entity.model_copy(update={"category": "Non-accelerated Filer"}),
+      }
+    )
+    newer = to_graph_tables(later)
+    filer = older.nodes["Entity"][0]["identifier"]
+    assert newer.nodes["Entity"][0]["identifier"] == filer
+    for parts in ([older, newer], [newer, older]):
+      merged = merge_graph_tables(parts)
+      kept = [r for r in merged.nodes["Entity"] if r["identifier"] == filer]
+      assert len(kept) == 1 and kept[0]["category"] == "Non-accelerated Filer"
+      assert merged.counts()["ENTITY_HAS_REPORT"] == 2
+    assert older.nodes["Entity"][0]["category"] == "Large accelerated filer"
 
   def test_an_element_role_one_filing_shows_is_kept(self, model):
     """A read-back model marks a table a hypercube only where its own filing
