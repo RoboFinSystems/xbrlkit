@@ -83,18 +83,18 @@ class TestEftsHit:
     search for the company returns a hit whose filer is an individual."""
     hit = EftsHit.from_hit(
       {
-        "_id": "0001522767-26-000170:wk-form4.xml",
+        "_id": "0001234567-26-000170:wk-form4.xml",
         "_source": {
-          "ciks": [1866577, 1522767],
-          "display_names": ["Shaw Timothy  (CIK 0001866577)", "MARIMED INC."],
+          "ciks": [7654321, 1234567],
+          "display_names": ["Doe Jane  (CIK 0007654321)", "ACME CORP"],
           "form": "4",
           "file_date": "2026-09-01",
         },
       }
     )
-    assert hit.party_ciks == ("0001866577", "0001522767")
-    assert hit.parties == ("Shaw Timothy  (CIK 0001866577)", "MARIMED INC.")
-    assert hit.cik == "0001866577"  # the one that addresses the filing
+    assert hit.party_ciks == ("0007654321", "0001234567")
+    assert hit.parties == ("Doe Jane  (CIK 0007654321)", "ACME CORP")
+    assert hit.cik == "0007654321"  # the one that addresses the filing
 
 
 class TestBuildParams:

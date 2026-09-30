@@ -270,7 +270,7 @@ def _restore_sec_identity(model: XbrlModel, sec_base_url: str) -> None:
   report, its facts and its dimensions the way an EDGAR load does. The
   extension namespace is the filer's own schema, which the graph's structures
   are named under; EDGAR names the primary document after that schema's prefix
-  (``mrmd-20251231.htm`` for the ``mrmd:`` concepts), so it is the namespace of
+  (``acme-20241231.htm`` for the ``acme:`` concepts), so it is the namespace of
   the concepts under that prefix. Fill-empty, never overwrite.
   """
   filing = model.filing

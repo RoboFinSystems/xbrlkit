@@ -1971,22 +1971,22 @@ class TestSearchFilings:
     from xbrlkit.edgar import EftsHit
 
     form4 = EftsHit(
-      cik="0001866577",
-      accession="0001522767-26-000170",
+      cik="0007654321",
+      accession="0001234567-26-000170",
       form="4",
       file_number=None,
       filing_date="2026-09-01",
-      primary_document="Shaw Timothy",
+      primary_document="Doe Jane",
       file_url=None,
-      party_ciks=("0001866577", "0001522767"),
-      parties=("Shaw Timothy", "MARIMED INC."),
+      party_ciks=("0007654321", "0001234567"),
+      parties=("Doe Jane", "ACME CORP"),
     )
     self._stub(monkeypatch, total=1, hits=0, rows=[form4])
 
-    out = tools.search_filings(ciks=["1522767"], forms=["4"])
+    out = tools.search_filings(ciks=["1234567"], forms=["4"])
     row = out["filings"][0]
-    assert row["parties"] == ["Shaw Timothy", "MARIMED INC."]
-    assert row["matched_cik"] == ["0001522767"]
+    assert row["parties"] == ["Doe Jane", "ACME CORP"]
+    assert row["matched_cik"] == ["0001234567"]
     assert "ownership form" in out["parties_note"]
 
   def test_a_single_party_hit_stays_quiet(self, monkeypatch):
