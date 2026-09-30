@@ -1,10 +1,10 @@
-"""Read-only Cypher over a property graph xbrlkit wrote: a ``.lbug`` database or
+"""Read-only Cypher over a property graph xbrlkit wrote: a ``.lbdb`` database or
 an icebug-disk tree, holding one filing or several stacked.
 
 Needs LadybugDB (the ``lpg`` extra). The query runs in a spawned worker with a
 wall-clock limit: the engine evaluates in-process and cannot be interrupted, a
 pattern with a cross product can run for a long time, and a forked child does
-not come cleanly out of the MCP server's event loop. A ``.lbug`` is opened
+not come cleanly out of the MCP server's event loop. A database is opened
 read-only; a tree is mounted into an in-memory database from its
 ``schema.cypher``, so nothing is ever written next to either.
 
@@ -13,7 +13,7 @@ Two refusals before anything runs:
 - **Writes.** A query must start as a read and name no write, DDL or load clause.
 - **Untyped relationships on a tree.** On icebug-disk tables LadybugDB returns
   wrong rows for a relationship pattern with no type, silently
-  (LadybugDB/ladybug#1066), so a tree only takes typed ones. A ``.lbug`` has no
+  (LadybugDB/ladybug#1066), so a tree only takes typed ones. A database has no
   such defect and takes both.
 """
 
@@ -48,13 +48,13 @@ class CypherError(ValueError):
 
 def graph_kind(path: Path) -> str:
   """``"icebug"`` for a tree (a directory with a ``schema.cypher``), ``"lbug"``
-  for a database file."""
+  for a LadybugDB database file, whatever its extension."""
   path = Path(path)
   if path.is_dir() and (path / "schema.cypher").is_file():
     return "icebug"
   if path.is_file():
     return "lbug"
-  raise CypherError(f"{path} is neither a .lbug database nor an icebug-disk tree")
+  raise CypherError(f"{path} is neither a LadybugDB database nor an icebug-disk tree")
 
 
 def check_query(query: str, kind: str) -> None:

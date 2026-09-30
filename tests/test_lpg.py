@@ -631,7 +631,7 @@ class TestParquetAndDatabase:
   def test_build_and_query_a_database(self, model, tmp_path: Path):
     lbug = pytest.importorskip("ladybug")
     tables = to_graph_tables(model)
-    path = build_lbug(tables, tmp_path / "filing.lbug")
+    path = build_lbug(tables, tmp_path / "filing.lbdb")
     assert path.exists()
     db = lbug.Database(str(path), read_only=True)
     conn = lbug.Connection(db)
@@ -659,7 +659,7 @@ class TestParquetAndDatabase:
   def test_rebuild_replaces_an_existing_database(self, model, tmp_path: Path):
     pytest.importorskip("ladybug")
     tables = to_graph_tables(model)
-    path = tmp_path / "filing.lbug"
+    path = tmp_path / "filing.lbdb"
     build_lbug(tables, path)
     build_lbug(GraphTables(), path)
     lbug = __import__("ladybug")
@@ -745,7 +745,7 @@ class TestIcebug:
   def test_columns_are_written_in_their_declared_type(self, model, tmp_path: Path):
     """No COPY casts a tree on its way in, so a STRING column holds strings —
     ``Association.root`` included, which the parquet projection writes as
-    booleans and a ``.lbug`` stores as ``"True"`` / ``"False"``."""
+    booleans and a ``.lbdb`` stores as ``"True"`` / ``"False"``."""
     write_icebug(to_graph_tables(model), tmp_path / "tree")
     association = _read(tmp_path / "tree" / "nodes_Association.parquet")
     assert str(association.schema.field("root").type) == "string"
@@ -797,12 +797,12 @@ class TestIcebug:
     self, model, tmp_path: Path, monkeypatch
   ):
     """Every table, read through Cypher from a tree mounted in place, matches
-    the same table in a ``.lbug`` built from the same rows — from another
+    the same table in a ``.lbdb`` built from the same rows — from another
     working directory, since the storage path is absolute. Typed patterns only:
     untyped ones are wrong on icebug-disk tables (LadybugDB/ladybug#1066)."""
     lbug = pytest.importorskip("ladybug")
     tables = to_graph_tables(model)
-    built = build_lbug(tables, tmp_path / "filing.lbug")
+    built = build_lbug(tables, tmp_path / "filing.lbdb")
     write_icebug(tables, tmp_path / "tree")
     (tmp_path / "elsewhere").mkdir()
     monkeypatch.chdir(tmp_path / "elsewhere")
@@ -913,7 +913,7 @@ class TestMerge:
       ["0000066740-25-000006", 24575000000.0],
       ["0000066740-26-000009", 24000000000.0],
     ]
-    db = lbug.Database(str(build_lbug(merged, tmp_path / "stack.lbug")), read_only=True)
+    db = lbug.Database(str(build_lbug(merged, tmp_path / "stack.lbdb")), read_only=True)
     conn = lbug.Connection(db)
     try:
       assert conn.execute(REVENUE_BY_REPORT).get_all() == expected

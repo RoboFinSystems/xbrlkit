@@ -167,7 +167,7 @@ resolves the package without it, and `serve` stops with a message naming it —
 and **`@latest`**, without which `uvx` keeps reusing the environment it built
 the first time and never sees a new release. The `mcp` extra alone serves every
 tool but `run_cypher`; add `lpg` for the graph tools — `--from
-"xbrlkit[mcp,lpg]@latest"` — which also lets `export_filing` write `.lbug` and
+"xbrlkit[mcp,lpg]@latest"` — which also lets `export_filing` write `.lbdb` and
 icebug-disk graphs.
 
 Clients that launch a server themselves run the same command over stdio:

@@ -3,7 +3,7 @@
     xbrlkit build --cik 320193 --accno 0000320193-23-000106  # -> output/<accno>.holon.jsonld
     xbrlkit build --cik 320193 --accno … --format clawdog    # -> output/<accno>.clawdog.jsonld
     xbrlkit build --cik 320193 --accno … --format tavi       # -> output/<accno>.tavi.json
-    xbrlkit build --cik 320193 --accno … --format lpg        # -> output/<accno>.lbug
+    xbrlkit build --cik 320193 --accno … --format lpg        # -> output/<accno>.lbdb
     xbrlkit build --cik 320193 --accno … --format icebug     # -> output/<accno>.icebug/
     xbrlkit fetch --ticker NVDA --form 10-K --n 1            # -> output/
     xbrlkit view NVDA                                        # -> the browser
@@ -65,7 +65,7 @@ SUFFIXES = {
   "holon": ".holon.jsonld",
   "tavi": ".tavi.json",
   "oim": ".oim.json",
-  "lpg": ".lbug",
+  "lpg": ".lbdb",
   "icebug": ".icebug",
 }
 # "both" predates the OIM projection and is kept as an alias for the two it

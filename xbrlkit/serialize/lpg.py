@@ -9,7 +9,7 @@ order, and the same ids. Every id is a UUID5 of ``kind:content`` against the
 platform's namespace, with report-scoped ids (the report, its facts, its
 dimensions, its structures) folded on the filing's EDGAR URL, so a filing
 projected here and a filing ingested by the platform are the same rows —
-which is what lets a single-filing ``.lbug`` stand in for the shared graph.
+which is what lets a single-filing ``.lbdb`` stand in for the shared graph.
 
 Three things differ from the platform's pipeline by design, all of them
 enrichment rather than projection: text-block values stay inline (the
@@ -726,7 +726,7 @@ def build_lbug(tables: GraphTables, path: Path) -> Path:
     import ladybug as lbug
   except ImportError as exc:  # pragma: no cover - depends on the extra
     raise ImportError(
-      "building a .lbug needs the ladybug package: pip install 'xbrlkit[lpg]'"
+      "building a LadybugDB database needs the ladybug package: pip install 'xbrlkit[lpg]'"
     ) from exc
 
   path = Path(path)
@@ -853,7 +853,7 @@ def write_icebug(
 def _declared_column(values: list[Any], type_: str) -> Any:
   """A column in its declared type. A tree is read in place, with no ``COPY``
   to cast it on the way in, so ``Association.root``'s booleans are written as
-  the strings a ``.lbug`` stores for them."""
+  the strings a ``.lbdb`` stores for them."""
   if type_ == STRING:
     values = [str(v) if isinstance(v, bool) else v for v in values]
   return _column(values, type_)
