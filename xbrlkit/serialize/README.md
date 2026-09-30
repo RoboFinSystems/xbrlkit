@@ -138,6 +138,34 @@ open: write relationship patterns with a type (`-[:FACT_HAS_ELEMENT]->`, never
 pattern that changes direction and then filters a later node can fail
 ([#1068](https://github.com/LadybugDB/ladybug/issues/1068)).
 
+### Stacking filings
+
+`merge_graph_tables` puts several filings into one graph before either
+container is written. The ids are content-addressed, so what two filings share —
+the entity, periods, units, labels, references — arrives with the same id and is
+kept once, while the report and its facts, dimensions and structures stay apart;
+a node id that arrives twice with different properties is an error, never a
+silent pick. A container cannot be appended to instead: a tree's rows are
+positional, and `COPY` into an existing `.lbug` stops at the first shared id.
+
+```python
+from xbrlkit.serialize import merge_graph_tables
+
+stack = merge_graph_tables(to_graph_tables(m) for m in (fy2024, fy2025))
+write_icebug(stack, Path("out/mmm-stack.icebug"))
+```
+
+Two things to know when reading a stack. An element's id carries its taxonomy
+year (`us-gaap/2024`, `us-gaap/2025`), so the same concept in two years is two
+`Element` nodes: match across years on `Element.qname`. And two reports can hold
+different values for one period — a restatement, or a recast comparative — so
+scope a value to its report (`(r:Report)-[:REPORT_HAS_FACT]->(f)`) rather than
+reading a period alone.
+
+`xbrlkit.cypher.run_cypher` runs one read-only query over either container, in a
+worker process with a time limit, and refuses untyped relationship patterns on
+a tree (#1066 above).
+
 What the platform adds *after* projection is not in the file: text blocks stay
 inline in `Fact.value`, and the enrichment columns and tables
 (`canonical_concept`, `canonical_type`, `FactSet`, `Classification`) are empty.
