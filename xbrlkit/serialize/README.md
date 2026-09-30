@@ -225,9 +225,10 @@ namespace, so the projection works from what it does carry:
 - The **report URI** and **extension namespace** are restored by `serve` when it
   loads a published filing; a model read from a file keeps what the file held.
 
-Measured on MariMed's and Netflix's latest 10-Ks against the Arelle parse: the
-report, periods, units, labels and dimensions have the same ids; the fact count
-is equal; every presentation and calculation association has the same id. What
+Measured on two published 10-Ks, a small-cap's and a large-cap's, against the
+Arelle parse: the report, periods, units, labels and dimensions have the same
+ids; the fact count is equal; every presentation and calculation association
+has the same id. What
 still differs is what the TAVI does not hold — elements no fact or network
 mentions, concept references, and the definition arcs a hypercube cannot
 express.
