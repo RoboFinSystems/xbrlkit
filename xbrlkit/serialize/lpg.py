@@ -599,24 +599,34 @@ def merge_graph_tables(parts: Iterable[GraphTables]) -> GraphTables:
   units, labels, references — arrives with the same id and is kept once, while
   report-scoped rows (the report, its facts, dimensions and structures) stay
   apart. An edge is kept once per identical row. A node id that arrives twice
-  with different properties is an error rather than a silent pick.
+  with different properties is an error rather than a silent pick — except an
+  element's dimensional role (hypercube, axis, domain member), which a model
+  read back from TAVI infers from how its own filing uses the concept: there, a
+  role any filing shows is kept.
   """
   parts = list(parts)
   merged = GraphTables()
   for spec in NODE_TABLES:
-    seen: dict[Any, Row] = {}
+    rows = merged.nodes[spec.name]
+    seen: dict[Any, int] = {}
     for part in parts:
       for row in part.nodes.get(spec.name) or []:
         key = row[spec.primary_key]
-        kept = seen.get(key)
-        if kept is None:
-          seen[key] = row
-          merged.nodes[spec.name].append(row)
-        elif not _same_row(kept, row):
-          differing = sorted(k for k in row if not _same_value(row[k], kept.get(k)))
-          raise ValueError(
-            f"{spec.name} {key} arrives twice with different {', '.join(differing)}"
-          )
+        at = seen.get(key)
+        if at is None:
+          seen[key] = len(rows)
+          rows.append(row)
+          continue
+        kept = rows[at]
+        if _same_row(kept, row):
+          continue
+        differing = sorted(k for k in row if not _same_value(row[k], kept.get(k)))
+        if spec.name == "Element" and set(differing) <= _ELEMENT_ROLE_FLAGS:
+          rows[at] = {**kept, **{k: bool(kept[k] or row[k]) for k in differing}}
+          continue
+        raise ValueError(
+          f"{spec.name} {key} arrives twice with different {', '.join(differing)}"
+        )
   for spec in REL_TABLES:
     edges: set[tuple[Any, ...]] = set()
     for part in parts:
@@ -626,6 +636,11 @@ def merge_graph_tables(parts: Iterable[GraphTables]) -> GraphTables:
           edges.add(edge)
           merged.relationships[spec.name].append(row)
   return merged
+
+
+_ELEMENT_ROLE_FLAGS = frozenset(
+  {"is_hypercube_item", "is_dimension_item", "is_domain_member"}
+)
 
 
 def _same_value(a: Any, b: Any) -> bool:

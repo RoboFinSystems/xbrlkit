@@ -902,6 +902,28 @@ class TestMerge:
     with pytest.raises(ValueError, match="Entity .* different name"):
       merge_graph_tables([one, two])
 
+  def test_an_element_role_one_filing_shows_is_kept(self, model):
+    """A read-back model marks a table a hypercube only where its own filing
+    presents it as one, so two filings can disagree on the same element."""
+    one, two = to_graph_tables(model), to_graph_tables(_next_year(model))
+    qname = "us-gaap:IncomeStatementAbstract"
+    for tables, flag in ((one, True), (two, False)):
+      row = next(r for r in tables.nodes["Element"] if r["qname"] == qname)
+      row["is_hypercube_item"] = flag
+    for parts in ([one, two], [two, one]):
+      merged = merge_graph_tables(parts)
+      kept = [r for r in merged.nodes["Element"] if r["qname"] == qname]
+      assert len(kept) == 1 and kept[0]["is_hypercube_item"] is True
+    untouched = next(r for r in two.nodes["Element"] if r["qname"] == qname)
+    assert untouched["is_hypercube_item"] is False  # the inputs are not rewritten
+
+  def test_any_other_element_difference_is_still_refused(self, model):
+    one, two = to_graph_tables(model), to_graph_tables(_next_year(model))
+    row = next(r for r in two.nodes["Element"] if r["qname"] == "us-gaap:Revenues")
+    row["is_numeric"] = not row["is_numeric"]
+    with pytest.raises(ValueError, match="Element .* different is_numeric"):
+      merge_graph_tables([one, two])
+
   def test_a_stack_reads_both_reports_from_either_container(
     self, model, tmp_path: Path
   ):
