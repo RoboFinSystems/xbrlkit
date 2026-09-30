@@ -8,6 +8,15 @@ not come cleanly out of the MCP server's event loop. A database is opened
 read-only; a tree is mounted into an in-memory database from its
 ``schema.cypher``, so nothing is ever written next to either.
 
+A spawned worker imports the calling script again before it runs, so a script
+that calls :func:`run_cypher` at module level needs the usual guard, or the
+worker stops with multiprocessing's "bootstrapping phase" error::
+
+    if __name__ == "__main__":
+        print(run_cypher(Path("out/mmm-stack.icebug"), "MATCH (r:Report) RETURN count(r)"))
+
+A notebook, a REPL or a function imported from a module needs nothing.
+
 Two refusals before anything runs:
 
 - **Writes.** A query must start as a read and name no write, DDL or load clause.

@@ -166,6 +166,22 @@ reading a period alone.
 worker process with a time limit, and refuses untyped relationship patterns on
 a tree (#1066 above).
 
+The worker is spawned, and a spawned worker imports the calling script again, so
+call it from a script under the `__main__` guard:
+
+```python
+from pathlib import Path
+from xbrlkit.cypher import run_cypher
+
+if __name__ == "__main__":
+  out = run_cypher(
+    Path("out/mmm-stack.icebug"),
+    "MATCH (r:Report)-[:REPORT_HAS_FACT]->(f:Fact) "
+    "RETURN r.accession_number AS report, count(f) AS facts ORDER BY report LIMIT 10",
+  )
+  print(out["rows"])
+```
+
 What the platform adds *after* projection is not in the file: text blocks stay
 inline in `Fact.value`, and the enrichment columns and tables
 (`canonical_concept`, `canonical_type`, `FactSet`, `Classification`) are empty.
