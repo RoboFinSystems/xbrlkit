@@ -274,7 +274,7 @@ def test_the_newest_filing_decides_never_an_older_one_with_a_holon(
   filing, not the older filing that happens to be published."""
   from types import SimpleNamespace
 
-  sentinel = SimpleNamespace(id="0000000000-23-000009")
+  sentinel = SimpleNamespace(id="0000000000-23-000009", read_from={})
   calls: list[tuple[str, str]] = []
 
   def fake_edgar(self, cik, accession, source):
@@ -300,6 +300,7 @@ def test_the_newest_filing_decides_never_an_older_one_with_a_holon(
   try:
     assert session._published_by_ticker("OLDE", "10-K") is None
     assert session.load("OLDE") is sentinel
+    assert sentinel.read_from == {"kind": "edgar"}
     assert calls == [("0000000042", "0000000000-23-000009")]
   finally:
     session.close()
@@ -411,6 +412,10 @@ def test_a_ticker_loads_the_published_tavi_first(
   try:
     loaded = session.load("ACME")
     assert loaded.source_kind == "tavi"
+    assert loaded.read_from["kind"] == "published"
+    assert loaded.read_from["url"].endswith("tavi.json")
+    assert "not the filing as filed" in loaded.read_from["note"]
+    assert tools.load_receipt(loaded)["read_from"] == loaded.read_from
     assert loaded.has_document is True
     assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
     block = next(
@@ -432,6 +437,7 @@ def test_an_unreachable_tavi_falls_back_to_the_holon(
   try:
     loaded = session.load("ACME")
     assert loaded.source_kind == "holon"
+    assert loaded.read_from["url"].endswith("holon.jsonld")  # the one it read
     assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
   finally:
     session.close()

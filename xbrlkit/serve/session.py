@@ -156,6 +156,11 @@ class LoadedFiling:
   # for, and the reader who asked to see the report asked to see that one.
   source_document: str | None = None
   source_kind: str | None = None
+  # Where the model was read from: EDGAR, a file, a URL, filings.xbrl.org, or
+  # the RoboSystems CDN, whose published TAVI is RoboSystems' parse of the
+  # filing rather than the filing itself. Every answer about the filing
+  # rests on it, so describe_filing and the load receipt say it.
+  read_from: dict[str, str] = field(default_factory=dict)
   # Set when the source was a taxonomy published on its own — a package with
   # schemas and linkbases and no report — and so holds concepts and networks
   # but no facts.
@@ -401,6 +406,8 @@ class FilingSession:
     entry_point = (entry_point or "").strip() or None
     with self._lock:
       loaded = self._load(source, entry_point)
+      if not loaded.read_from:
+        loaded.read_from = _read_from(source)
       wanted = filing_id or loaded.id
       loaded.id = self._unique_id(wanted)
       self._filings[loaded.id] = loaded
@@ -1067,17 +1074,28 @@ class FilingSession:
       except (requests.RequestException, SourceError) as exc:
         logger.warning("published document unavailable for %s: %s", source, exc)
     loaded: LoadedFiling | None = None
+    read_url = ""
     for position, url in enumerate(urls):
       try:
         path = self._fetch(url, into=into)
         logger.info("loading %s from %s", source, Path(url.split("?", 1)[0]).name)
         loaded = self._load_json(path, source, document=document)
+        read_url = url
         break
       except (requests.RequestException, SourceError) as exc:
         if position == len(urls) - 1:
           raise
         logger.warning("%s unavailable for %s (%s); trying the next", url, source, exc)
     assert loaded is not None
+    loaded.read_from = {
+      "kind": "published",
+      "url": read_url,
+      "note": (
+        "RoboSystems' parse of this filing, published by its SEC pipeline — not "
+        "the filing as filed. Start the server with XBRLKIT_ARTIFACTS_URL set "
+        "empty, or with --pure, to parse it from EDGAR."
+      ),
+    }
     _enrich_filer(
       loaded, self._filer_metadata(loaded.model.entity.cik, ticker=published.ticker)
     )
@@ -1879,6 +1897,18 @@ def _local_id(path: Path, model: XbrlModel) -> str:
     return Path(model.filing.primary_document).stem
   # A JSON report names itself; the file's stem may be an object-store key.
   return model.filing.accession or Path(stem).stem
+
+
+def _read_from(source: str) -> dict[str, str]:
+  """Where a load that did not go through the CDN read its filing from."""
+  if source.startswith(("http://", "https://")):
+    return {"kind": "url", "url": source}
+  path = Path(source).expanduser()
+  if _is_local(path):
+    return {"kind": "file", "path": str(path.resolve())}
+  if _LEI_RE.match(source) or _FXO_RE.match(source):
+    return {"kind": "filings.xbrl.org"}
+  return {"kind": "edgar"}
 
 
 def _is_local(path: Path) -> bool:

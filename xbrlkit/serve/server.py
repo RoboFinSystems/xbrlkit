@@ -38,6 +38,10 @@ from xbrlkit.view import DEFAULT_VIEWER, ViewerHost
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_PATH = "/mcp"
+# Where exports go without --out-dir: one folder per user, the same whichever
+# client launched the server and from wherever — Claude Desktop starts a stdio
+# server in `/`, Claude Code in the project that is open.
+DEFAULT_EXPORT_DIR = Path("~/xbrlkit/output")
 MAX_RESULT_CHARS = 60_000
 
 # The representations `--as` will serve. Only `model` is in this release; the
@@ -215,7 +219,8 @@ def build_server(
 ) -> Any:
   """The ``MCPServer`` with every tool registered against ``session``.
 
-  ``out_dir`` is the only place ``export_filing`` writes. ``with_document``
+  ``out_dir`` is the only place ``export_filing`` writes; ``~/xbrlkit/output``
+  when it is not given. ``with_document``
   defaults to the profile's own default: on for the product profile, off
   under ``pure``. ``viewer`` is the page ``view_filing`` links to, and the
   only origin allowed to read what it serves. ``graph_tools`` registers
@@ -228,7 +233,7 @@ def build_server(
   if graph_tools is None:
     graph_tools = importlib.util.find_spec("ladybug") is not None
   whole = (not pure) if with_document is None else bool(with_document)
-  export_dir = Path(out_dir) if out_dir is not None else Path("output")
+  export_dir = Path(out_dir or DEFAULT_EXPORT_DIR).expanduser().resolve()
   # Started on the first view_filing call and left running: the browser
   # fetches the document after the tool has already returned.
   viewers = ViewerHost(viewer)
@@ -841,8 +846,8 @@ def build_server(
   @server.tool(
     name="export_filing",
     description=(
-      "Write the loaded filing as one of xbrlkit's projections into the "
-      "server's output directory and return the path: `clawdog` (ClawDog "
+      f"Write the loaded filing as one of xbrlkit's projections into {export_dir} "
+      "(the server's --out-dir) and return the path: `clawdog` (ClawDog "
       "JSON-LD), `holon` (RDF / JSON-LD, opens in the RoboSystems holon "
       "viewer), `tavi` (the Project TAVI compiled model, JSON), `oim` "
       "(xBRL-JSON), `lpg` (the property graph as a LadybugDB database, the "
@@ -989,11 +994,13 @@ def serve(
     session, out_dir, pure=pure, with_document=with_document, viewer=viewer
   )
   identity = session.config.identity()
+  exports = Path(out_dir or DEFAULT_EXPORT_DIR).expanduser().resolve()
   if transport == "stdio":
     # stdout is the protocol here, so the notice goes to stderr and says only
     # the part a client cannot already know: the client did the connecting.
     for line in identity_lines(identity):
       print(line, file=sys.stderr)
+    print(f"exports: {exports}", file=sys.stderr)
     server.run("stdio")
     return
   if host not in ("127.0.0.1", "localhost", "::1"):
@@ -1003,4 +1010,5 @@ def serve(
       file=sys.stderr,
     )
   print(startup_banner(f"http://{host}:{port}{path}", identity), file=sys.stderr)
+  print(f"exports: {exports}", file=sys.stderr)
   server.run("streamable-http", host=host, port=port, streamable_http_path=path)
