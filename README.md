@@ -14,7 +14,7 @@ get the model back.
   filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
   XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
-                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbug, icebug-disk)
+                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbdb, icebug-disk)
 
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 
@@ -70,7 +70,7 @@ that is the change that turns a kit into a junk drawer.
 
 `model.py` is the waist itself, `schema/` declares the property graph's tables,
 `query.py` runs SPARQL over a built holon, `cypher.py` runs read-only Cypher over
-a built `.lbug` or icebug-disk tree, and `view.py` is the loopback server
+a built `.lbdb` or icebug-disk tree, and `view.py` is the loopback server
 behind `xbrlkit view` and the `view_filing` tool.
 
 ## Install
@@ -119,7 +119,7 @@ needs it — a local file, a JSON report and filings.xbrl.org all load without.
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
 # The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
-# the property graph (lpg: a .lbug, needs the lpg extra; icebug: a directory
+# the property graph (lpg: a .lbdb, needs the lpg extra; icebug: a directory
 # any LadybugDB queries in place), or every one of them
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format icebug

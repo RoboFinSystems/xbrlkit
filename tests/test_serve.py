@@ -921,7 +921,7 @@ def test_export_graph_stacks_filings(
   second = _next_year(loaded)
   out = tools.export_graph([loaded, second, loaded], fmt, tmp_path)
   assert out["filings"] == ["acme", "acme-2025"]  # a repeat is stacked once
-  assert out["graph"] == ("ACME-stack.lbug" if fmt == "lpg" else "ACME-stack.icebug")
+  assert out["graph"] == ("ACME-stack.lbdb" if fmt == "lpg" else "ACME-stack.icebug")
   assert out["counts"]["reports"] == 2
   single = tools.export_graph([loaded], fmt, tmp_path)["counts"]
   assert out["counts"]["periods"] == single["periods"]
@@ -935,6 +935,18 @@ def test_export_graph_refuses_a_document_format(
 ) -> None:
   with pytest.raises(tools.ToolError, match="one document per filing"):
     tools.export_graph([loaded, _next_year(loaded)], "holon", tmp_path)
+
+
+def test_a_graph_an_earlier_release_named_lbug_is_still_read(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  pytest.importorskip("ladybug")
+  written = Path(tools.export_filing(loaded, "lpg", tmp_path)["path"])
+  assert written.name == "acme.lbdb"
+  written.rename(tmp_path / "acme-old.lbug")
+  assert [p.name for p in tools.list_graphs(tmp_path)] == ["acme-old.lbug"]
+  out = tools.run_cypher(tmp_path, STACKED_REVENUE, graph="acme-old.lbug")
+  assert out["graph"] == "acme-old.lbug" and len(out["rows"]) == 1
 
 
 def test_run_cypher_reads_the_exported_graphs(
@@ -952,16 +964,16 @@ def test_run_cypher_reads_the_exported_graphs(
   ]
   tools.export_filing(loaded, "lpg", tmp_path)
   newest = tools.run_cypher(tmp_path, STACKED_REVENUE)
-  assert newest["graph"] == "acme.lbug" and len(newest["rows"]) == 1
+  assert newest["graph"] == "acme.lbdb" and len(newest["rows"]) == 1
   by_name = tools.run_cypher(tmp_path, STACKED_REVENUE, graph="ACME-stack")
   assert by_name["graph"] == "ACME-stack.icebug"
   with pytest.raises(tools.ToolError, match="no graph 'nope'"):
     tools.run_cypher(tmp_path, STACKED_REVENUE, graph="nope")
   tools.export_graph([loaded, _next_year(loaded)], "lpg", tmp_path)
-  for name in ("ACME-stack.icebug", "ACME-stack.lbug"):  # one stem, two graphs
+  for name in ("ACME-stack.icebug", "ACME-stack.lbdb"):  # one stem, two graphs
     assert tools.run_cypher(tmp_path, STACKED_REVENUE, graph=name)["graph"] == name
   assert tools.run_cypher(tmp_path, STACKED_REVENUE, graph="ACME-stack")["graph"] == (
-    "ACME-stack.lbug"  # the newest of the two
+    "ACME-stack.lbdb"  # the newest of the two
   )
   with pytest.raises(tools.ToolError, match="1066"):
     tools.run_cypher(

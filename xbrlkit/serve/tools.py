@@ -109,7 +109,7 @@ EXPORT_FORMATS = {
   "holon": "holon.jsonld",
   "tavi": "tavi.json",
   "oim": "oim.json",
-  "lpg": "lbug",
+  "lpg": "lbdb",
   "icebug": "icebug",
   "model": "model.json",
 }
@@ -2431,12 +2431,14 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
 
 
 GRAPH_FORMATS = ("lpg", "icebug")
+# What a LadybugDB database export is named, and what earlier releases named it.
+LBDB_SUFFIXES = (".lbdb", ".lbug")
 
 
 def export_graph(
   filings: list[LoadedFiling], format: str, out_dir: Path, name: str | None = None
 ) -> dict[str, Any]:
-  """Stack several loaded filings into one property graph: a ``.lbug`` (``lpg``)
+  """Stack several loaded filings into one property graph: a ``.lbdb`` (``lpg``)
   or an icebug-disk tree. What they share is stored once and every fact stays
   on its own report, so a query across them reads one graph."""
   fmt = (format or "").strip().lower()
@@ -2505,15 +2507,16 @@ def _graph_extra(fmt: str) -> str:
 
 
 def list_graphs(out_dir: Path) -> list[Path]:
-  """The property graphs in ``out_dir``, newest first: ``.lbug`` databases and
-  icebug-disk trees."""
+  """The property graphs in ``out_dir``, newest first: LadybugDB databases
+  (``.lbdb``, or ``.lbug`` as earlier releases named them) and icebug-disk
+  trees."""
   out_dir = Path(out_dir)
   if not out_dir.is_dir():
     return []
   found = [
     p
     for p in out_dir.iterdir()
-    if (p.is_file() and p.suffix == ".lbug")
+    if (p.is_file() and p.suffix in LBDB_SUFFIXES)
     or (p.is_dir() and (p / "schema.cypher").is_file())
   ]
   return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
@@ -2536,7 +2539,7 @@ def run_cypher(
     )
   if graph:
     wanted = graph.strip()
-    # The full name first: a .lbug and a tree can share a stem.
+    # The full name first: a database and a tree can share a stem.
     hit = next((p for p in graphs if p.name == wanted), None) or next(
       (p for p in graphs if p.stem == wanted), None
     )

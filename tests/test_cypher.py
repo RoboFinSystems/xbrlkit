@@ -25,7 +25,7 @@ def graphs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
   root = tmp_path_factory.mktemp("graphs")
   tables = to_graph_tables(_model())
   return {
-    "lbug": build_lbug(tables, root / "acme.lbug"),
+    "lbug": build_lbug(tables, root / "acme.lbdb"),
     "icebug": write_icebug(tables, root / "acme.icebug"),
   }
 
@@ -125,4 +125,4 @@ class TestRunCypher:
     before = graphs["lbug"].stat().st_mtime_ns
     run_cypher(graphs["lbug"], REVENUE)
     assert graphs["lbug"].stat().st_mtime_ns == before
-    assert not graphs["lbug"].with_name("acme.lbug.wal").exists()
+    assert not graphs["lbug"].with_name("acme.lbdb.wal").exists()
