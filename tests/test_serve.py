@@ -957,8 +957,16 @@ def test_run_cypher_reads_the_exported_graphs(
   assert by_name["graph"] == "ACME-stack.icebug"
   with pytest.raises(tools.ToolError, match="no graph 'nope'"):
     tools.run_cypher(tmp_path, STACKED_REVENUE, graph="nope")
+  tools.export_graph([loaded, _next_year(loaded)], "lpg", tmp_path)
+  for name in ("ACME-stack.icebug", "ACME-stack.lbug"):  # one stem, two graphs
+    assert tools.run_cypher(tmp_path, STACKED_REVENUE, graph=name)["graph"] == name
+  assert tools.run_cypher(tmp_path, STACKED_REVENUE, graph="ACME-stack")["graph"] == (
+    "ACME-stack.lbug"  # the newest of the two
+  )
   with pytest.raises(tools.ToolError, match="1066"):
-    tools.run_cypher(tmp_path, "MATCH ()-[r]->() RETURN count(r)", graph="ACME-stack")
+    tools.run_cypher(
+      tmp_path, "MATCH ()-[r]->() RETURN count(r)", graph="ACME-stack.icebug"
+    )
 
 
 def test_view_filing_serves_it_for_the_viewer(loaded: LoadedFiling) -> None:

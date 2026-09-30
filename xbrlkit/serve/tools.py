@@ -2536,13 +2536,9 @@ def run_cypher(
     )
   if graph:
     wanted = graph.strip()
-    hit = next(
-      (
-        p
-        for p in graphs
-        if wanted in (p.name, p.stem, f"{p.stem}.lbug", f"{p.stem}.icebug")
-      ),
-      None,
+    # The full name first: a .lbug and a tree can share a stem.
+    hit = next((p for p in graphs if p.name == wanted), None) or next(
+      (p for p in graphs if p.stem == wanted), None
     )
     if hit is None:
       raise ToolError(f"no graph {graph!r} in the output directory; graphs: {names}")
