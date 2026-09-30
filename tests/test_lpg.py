@@ -927,3 +927,54 @@ class TestMerge:
     finally:
       conn.close()
       db.close()
+
+
+def _read_back(model: XbrlModel) -> XbrlModel:
+  """The model as it comes back from its TAVI, with the two identity fields the
+  serve session restores for a published filing put back."""
+  from xbrlkit.deserialize import from_tavi_json
+  from xbrlkit.serialize import to_tavi
+
+  back = from_tavi_json(to_tavi(model))
+  back.filing.report_uri = model.filing.report_uri
+  back.filing.extension_namespace = model.filing.extension_namespace
+  return back
+
+
+@pytest.mark.unit
+class TestReadBackModels:
+  def test_duplicates_collapse_without_a_parser_hash(self, model):
+    unhashed = [f.model_copy(update={"source_hash": None}) for f in model.facts]
+    revenue = next(f for f in unhashed if f.concept_qname == "us-gaap:Revenues")
+    twice = revenue.model_copy(update={"id": "f-again", "decimals": "-3"})
+    tables = to_graph_tables(model.model_copy(update={"facts": [*unhashed, twice]}))
+    assert len(tables.nodes["Fact"]) == len(to_graph_tables(model).nodes["Fact"])
+
+  def test_role_ids_are_derived_only_when_the_model_has_none(self, model):
+    parsed = {r["uri"] for r in to_graph_tables(model).nodes["Structure"]}
+    assert f"{MMM}#NoRoleType" not in parsed  # an Arelle network with no id
+    stripped = model.model_copy(
+      update={
+        "networks": [n.model_copy(update={"role_id": None}) for n in model.networks]
+      }
+    )
+    derived = {r["uri"] for r in to_graph_tables(stripped).nodes["Structure"]}
+    assert derived == parsed | {f"{MMM}#NoRoleType"}
+
+  def test_a_tavi_round_trip_keeps_the_graph_s_identity(self, model):
+    parsed, back = to_graph_tables(model), to_graph_tables(_read_back(model))
+    for table in ("Report", "Period", "Unit", "Dimension", "Structure"):
+      assert {r["identifier"] for r in parsed.nodes[table]} <= {
+        r["identifier"] for r in back.nodes[table]
+      }, table
+    for kind in ("Presentation", "Calculation"):
+      ids = [
+        {
+          r["identifier"]
+          for r in t.nodes["Association"]
+          if r["association_type"] == kind
+        }
+        for t in (parsed, back)
+      ]
+      assert ids[0] and ids[0] <= ids[1], kind
+    assert len(back.nodes["Fact"]) == len(parsed.nodes["Fact"])

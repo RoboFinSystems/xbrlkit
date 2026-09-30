@@ -173,3 +173,27 @@ The projection is checked row for row against the platform's own processor on
 the 26-filing corpus; the two explained differences are association ids (random
 on the platform, derived from the arc here) and exact duplicate arcs inside
 Arelle's aggregate `XBRL-dimensions` network, which the derived ids collapse.
+
+### From a model read back from TAVI or a holon
+
+That identity holds for a model parsed by Arelle. A model read back from its
+TAVI or its holon — what `xbrlkit serve` loads for a published SEC filing — does
+not carry Arelle's fact hash, the networks' role ids or the filer's schema
+namespace, so the projection works from what it does carry:
+
+- **Facts** without a hash are told apart by what Arelle's hash covers (the
+  concept, language, value or nil, entity, period, dimensions and unit), so a
+  value the filer tagged twice is still one fact. Their ids are the model's own,
+  not the platform's.
+- **Structures** in a model with no role ids at all take the role URI's last
+  segment, which is the role id for all but a handful of roles (the SEC's `ecd`
+  taxonomy misspells two).
+- The **report URI** and **extension namespace** are restored by `serve` when it
+  loads a published filing; a model read from a file keeps what the file held.
+
+Measured on MariMed's and Netflix's latest 10-Ks against the Arelle parse: the
+report, periods, units, labels and dimensions have the same ids; the fact count
+is equal; every presentation and calculation association has the same id. What
+still differs is what the TAVI does not hold — elements no fact or network
+mentions, concept references, and the definition arcs a hypercube cannot
+express.
