@@ -20,7 +20,7 @@ get the model back.
 
                    holon, TAVI ──▶ xbrlkit view ──▶ the report, rendered in a browser
 
-                   any of the above ──▶ xbrlkit serve ──▶ MCP client (18 shaped tools)
+                   any of the above ──▶ xbrlkit serve ──▶ MCP client (18 shaped tools, + Cypher with [lpg])
 ```
 
 Three ways in — the SEC, everyone else through
@@ -41,7 +41,9 @@ ChatGPT or any MCP client through eighteen shaped tools, which makes reading a
 filing a conversation instead of a script: ask for a statement, the concepts
 behind a phrase, what foots to a subtotal, a segment breakdown, an exhibit, or
 a regex across the prose. Nothing is indexed and no database sits behind it —
-every answer is read from the filing in memory, on your machine.
+every answer is read from the filing in memory, on your machine. With the `lpg`
+extra it also writes several filings as one property graph — a company's years,
+or its peers — and answers read-only Cypher over it.
 **[What you can ask it →](#what-you-can-ask-it)**
 
 Arelle stays the parser — nobody should reimplement DTS resolution. What it
@@ -64,10 +66,11 @@ that is the change that turns a kit into a junk drawer.
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
-| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | eighteen shaped tools over a filing in memory |
+| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | eighteen shaped tools over a filing in memory; Cypher over exported graphs with `[lpg]` |
 
 `model.py` is the waist itself, `schema/` declares the property graph's tables,
-`query.py` runs SPARQL over a built holon, and `view.py` is the loopback server
+`query.py` runs SPARQL over a built holon, `cypher.py` runs read-only Cypher over
+a built `.lbug` or icebug-disk tree, and `view.py` is the loopback server
 behind `xbrlkit view` and the `view_filing` tool.
 
 ## Install
@@ -78,8 +81,9 @@ pip install xbrlkit
 
 Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `cache`, `serve`) and the
 library. Three optional extras: `xbrlkit[lpg]` for the property graph as a
-LadybugDB database (pyarrow, LadybugDB), `xbrlkit[icebug]` for the same graph as
-an icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for the MCP server.
+LadybugDB database and for querying it (pyarrow, LadybugDB), `xbrlkit[icebug]`
+for the same graph as an icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for
+the MCP server. Install `xbrlkit[mcp,lpg]` for the server's graph tools.
 
 From a source checkout:
 
@@ -185,6 +189,10 @@ SEC_GOV_USER_AGENT="Your Name you@example.com" xbrlkit serve
 # or without installing anything
 SEC_GOV_USER_AGENT="Your Name you@example.com" \
   uvx --from "xbrlkit[mcp]@latest" xbrlkit serve
+
+# with the graph tools: stacked lpg / icebug exports and run_cypher
+SEC_GOV_USER_AGENT="Your Name you@example.com" \
+  uvx --from "xbrlkit[mcp,lpg]@latest" xbrlkit serve
 ```
 
 ```json
@@ -213,8 +221,8 @@ And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all
 
 Load a filing from the chat — a ticker, an EDGAR `cik:accession`, a `lei:` for
 ESEF and the national regimes, a local package, or a holon or TAVI by path or
-URL. A ticker or `cik:accession` loads the filing's published holon first when
-the RoboSystems CDN has one, falling back to EDGAR. Then:
+URL. A ticker or `cik:accession` loads the filing's published TAVI model (or
+its holon) first when the RoboSystems CDN has one, falling back to EDGAR. Then:
 
 - **Pull a statement as a table.** The income statement, balance sheet, cash
   flow or equity statement — or any disclosure network — as rows in the filer's
@@ -243,11 +251,16 @@ the RoboSystems CDN has one, falling back to EDGAR. Then:
 - **Find filings worth reading.** EDGAR full-text search across the corpus by
   phrase, form, date and filer, where every hit carries the id that loads it.
 - **Export or render it.** Write the filing as holon, TAVI, xBRL-JSON, ClawDog,
-  a LadybugDB graph, or the parse itself; or open it as a rendered report in the
-  browser and hand back the link.
+  a LadybugDB graph or icebug-disk tree, or the parse itself; or open it as a
+  rendered report in the browser and hand back the link.
+- **Stack filings and query across them** (with the `lpg` extra). Export several
+  loaded filings as one graph — a company's years, or peers — and run read-only
+  Cypher over it with `run_cypher`: revenue by report and period, or a figure
+  that one year's comparative restates.
 
 No graph and no database sits behind any of it: every answer about a filing is
-read from that filing. The one outward call is `search_filings`, which asks
+read from that filing, and the only graph `run_cypher` reads is one you asked
+`export_filing` to write. The one outward call is `search_filings`, which asks
 EDGAR's own full-text index which filings to go and read. Full detail,
 including the tool table and the `--pure` profile, in
 [`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
