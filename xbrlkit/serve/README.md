@@ -62,13 +62,14 @@ The tools are the shapes a reader needs, not a query language.
 | `documents`, `read_document` | what else was filed — exhibits, an 8-K's press release, a 13F's holdings table — each with its URL and whether it reads natively; and reading one |
 | `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
 | `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset. A pattern that matches more than came back also says where the matches fall, by section, busiest first, and how many further sections hold the rest; one that matches nothing counts its own words separately, so a phrase the filer words differently is a step rather than a dead end |
-| `export_filing` | the filing as ClawDog, holon, TAVI, xBRL-JSON, a LadybugDB file, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` |
+| `export_filing` | the filing as ClawDog, holon, TAVI, xBRL-JSON, a LadybugDB file, an icebug-disk tree, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir`. With `filings`, the two graph formats stack several loaded filings into one graph — a company's years, or peers — keeping what they share once and every fact on its own report |
+| `run_cypher` | one read-only Cypher query over a graph `export_filing` wrote, single or stacked, with a 60-second limit and at most 200 rows. **Listed only when LadybugDB is installed** (`xbrlkit[lpg]`): without it there is no graph to query |
 | `view_filing` | the filing rendered as a report in the browser: it is serialized, served from an unguessable path on loopback (readable only by the viewer's origin, for as long as this server runs), and the link comes back to hand to the user |
 | `search_filings` | which filings across EDGAR match a phrase, form, date range or filer — the discovery step before `load_filing`, since every hit carries the `cik:accession` that loads it. Returns a page and the total matched; EDGAR's full-text index begins in 2001 |
 | `list_filings`, `load_filing`, `unload_filing` | the session |
 
 The same functions are importable without MCP (`xbrlkit.serve.tools`) for tests
-and notebooks.
+and notebooks, and the Cypher runner on its own as `xbrlkit.cypher`.
 
 ## Three kinds of filing
 
@@ -164,7 +165,10 @@ uvx --from "xbrlkit[mcp]@latest" xbrlkit serve   # pin instead: --from "xbrlkit[
 Two things in the `--from` matter: the **`[mcp]` extra** — `uvx xbrlkit` alone
 resolves the package without it, and `serve` stops with a message naming it —
 and **`@latest`**, without which `uvx` keeps reusing the environment it built
-the first time and never sees a new release.
+the first time and never sees a new release. The `mcp` extra alone serves every
+tool but `run_cypher`; add `lpg` for the graph tools — `--from
+"xbrlkit[mcp,lpg]@latest"` — which also lets `export_filing` write `.lbug` and
+icebug-disk graphs.
 
 Clients that launch a server themselves run the same command over stdio:
 

@@ -57,7 +57,8 @@ async def test_a_tool_count_in_the_description_is_the_servers(tmp_path: Path) ->
 
   session = FilingSession()
   try:
-    async with Client(build_server(session, tmp_path)) as client:
+    # The registry installs `xbrlkit[mcp]` alone, which serves no graph tools.
+    async with Client(build_server(session, tmp_path, graph_tools=False)) as client:
       tools = (await client.list_tools()).tools
   finally:
     session.close()

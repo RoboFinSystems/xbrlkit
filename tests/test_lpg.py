@@ -32,6 +32,7 @@ from xbrlkit.serialize.lpg import (
   build_lbug,
   copy_statement,
   graph_id,
+  merge_graph_tables,
   parse_structure_definition,
   to_graph_tables,
   write_icebug,
@@ -838,6 +839,91 @@ class TestIcebug:
         "(e:Element {qname: 'us-gaap:Revenues'}), (f)-[:FACT_HAS_PERIOD]->(p:Period) "
         "RETURN r.form, e.qname, p.end_date, f.numeric_value"
       ).get_all() == [["10-K", "us-gaap:Revenues", "2024-12-31", 24575000000.0]]
+    finally:
+      conn.close()
+      db.close()
+
+
+NEXT_REPORT_URI = (
+  "https://www.sec.gov/Archives/edgar/data/66740/000006674026000009/mmm-20251231.htm"
+)
+
+
+def _next_year(model: XbrlModel) -> XbrlModel:
+  """The same filer's next report: a new accession, one fact restated."""
+  facts = [
+    f.model_copy(
+      update={
+        "numeric_value": 24000000000.0,
+        "raw_value": "24000000000",
+        "value_str": "24000000000",
+      }
+    )
+    if f.concept_qname == "us-gaap:Revenues"
+    else f
+    for f in model.facts
+  ]
+  filing = model.filing.model_copy(
+    update={"accession": "0000066740-26-000009", "report_uri": NEXT_REPORT_URI}
+  )
+  return model.model_copy(update={"filing": filing, "facts": facts})
+
+
+REVENUE_BY_REPORT = (
+  "MATCH (r:Report)-[:REPORT_HAS_FACT]->(f:Fact {has_dimensions: false})-[:FACT_HAS_ELEMENT]->"
+  "(e:Element {qname: 'us-gaap:Revenues'}) RETURN r.accession_number, f.numeric_value "
+  "ORDER BY r.accession_number"
+)
+
+
+@pytest.mark.unit
+class TestMerge:
+  def test_shared_rows_are_kept_once_and_reports_stay_apart(self, model):
+    one, two = to_graph_tables(model), to_graph_tables(_next_year(model))
+    merged = merge_graph_tables([one, two])
+    counts = merged.counts()
+    assert counts["Entity"] == one.counts()["Entity"]
+    assert counts["Report"] == 2
+    assert counts["Fact"] == one.counts()["Fact"] + two.counts()["Fact"]
+    assert counts["Period"] == one.counts()["Period"]
+    assert counts["Element"] == one.counts()["Element"]
+    assert counts["ENTITY_HAS_REPORT"] == 2
+    assert counts["ELEMENT_HAS_LABEL"] == one.counts()["ELEMENT_HAS_LABEL"]
+
+  def test_stacking_a_filing_on_itself_changes_nothing(self, model):
+    tables = to_graph_tables(model)
+    merged = merge_graph_tables([tables, to_graph_tables(model)])
+    assert merged.nodes == tables.nodes
+    assert merged.relationships == tables.relationships
+
+  def test_an_id_with_two_meanings_is_refused(self, model):
+    one, two = to_graph_tables(model), to_graph_tables(_next_year(model))
+    two.nodes["Entity"][0] = {**two.nodes["Entity"][0], "name": "Someone else"}
+    with pytest.raises(ValueError, match="Entity .* different name"):
+      merge_graph_tables([one, two])
+
+  def test_a_stack_reads_both_reports_from_either_container(
+    self, model, tmp_path: Path
+  ):
+    lbug = pytest.importorskip("ladybug")
+    merged = merge_graph_tables(
+      [to_graph_tables(model), to_graph_tables(_next_year(model))]
+    )
+    expected = [
+      ["0000066740-25-000006", 24575000000.0],
+      ["0000066740-26-000009", 24000000000.0],
+    ]
+    db = lbug.Database(str(build_lbug(merged, tmp_path / "stack.lbug")), read_only=True)
+    conn = lbug.Connection(db)
+    try:
+      assert conn.execute(REVENUE_BY_REPORT).get_all() == expected
+    finally:
+      conn.close()
+      db.close()
+    write_icebug(merged, tmp_path / "stack.icebug")
+    db, conn = _mount(lbug, tmp_path / "stack.icebug" / "schema.cypher")
+    try:
+      assert conn.execute(REVENUE_BY_REPORT).get_all() == expected
     finally:
       conn.close()
       db.close()

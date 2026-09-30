@@ -5,7 +5,8 @@ compiled model, and :func:`to_oim` the xBRL-JSON (OIM) report — the only one
 with a reference implementation to check against. :func:`to_graph_tables` is
 the property-graph projection (the RoboSystems ``sec`` graph's tables), with
 :func:`write_parquet`, :func:`build_lbug` and :func:`write_icebug` to land it as
-parquet, as a single-filing LadybugDB database, or as an icebug-disk tree.
+parquet, as a LadybugDB database, or as an icebug-disk tree, and
+:func:`merge_graph_tables` to stack several filings into one graph first.
 :func:`build_holon_graph` exposes the flat RDF graph the holon partitions (for
 SPARQL / SHACL). :func:`classify_network` is the legacy four-primary heuristic,
 retained for callers that want it — the holon itself emits no semantic block
@@ -23,7 +24,14 @@ if TYPE_CHECKING:
   from .clawdog import to_clawdog, to_clawdog_report
   from .graph import build_holon_graph
   from .holon import to_holon
-  from .lpg import GraphTables, build_lbug, to_graph_tables, write_icebug, write_parquet
+  from .lpg import (
+    GraphTables,
+    build_lbug,
+    merge_graph_tables,
+    to_graph_tables,
+    write_icebug,
+    write_parquet,
+  )
   from .oim import to_oim, to_oim_document
   from .tavi import GapReport as TaviGapReport
   from .tavi import to_tavi, to_tavi_report
@@ -43,6 +51,7 @@ _LAZY: dict[str, tuple[str, str]] = {
   "to_holon": (".holon", "to_holon"),
   "GraphTables": (".lpg", "GraphTables"),
   "build_lbug": (".lpg", "build_lbug"),
+  "merge_graph_tables": (".lpg", "merge_graph_tables"),
   "to_graph_tables": (".lpg", "to_graph_tables"),
   "write_icebug": (".lpg", "write_icebug"),
   "write_parquet": (".lpg", "write_parquet"),
@@ -73,6 +82,7 @@ __all__ = (
   "build_holon_graph",
   "build_lbug",
   "classify_network",
+  "merge_graph_tables",
   "root_qname",
   "to_clawdog",
   "to_clawdog_report",

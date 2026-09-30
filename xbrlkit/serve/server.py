@@ -20,6 +20,7 @@ Two switches shape what the tools return:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -151,6 +152,24 @@ the balance sheet by its name), periods carry dates and no buckets, and there \
 is no Item map. Everything you read is what the filer tagged or wrote.
 """
 
+GRAPH_NOTE = """
+GRAPH
+- export_filing with format lpg or icebug writes the filing as a property \
+graph; pass `filings` (a list of loaded filing ids) to stack several into one — \
+a company's years, or peers. What they share (the entity, periods, units, \
+labels) is stored once and every fact stays on its own report.
+- run_cypher runs one read-only Cypher query over a graph you exported, the \
+newest by default. `CALL show_tables() RETURN *` and \
+`CALL table_info('Fact') RETURN *` give the schema. A fact reaches its concept \
+through FACT_HAS_ELEMENT (Element.qname), its period through FACT_HAS_PERIOD, \
+its unit through FACT_HAS_UNIT and its report through (Report)-[:REPORT_HAS_FACT]->; \
+Fact.has_dimensions false is the consolidated total. Element ids carry the \
+taxonomy year, so match a concept across years on Element.qname. Two reports \
+can carry different values for one period (a restatement, a recast \
+comparative): return the report's accession_number beside the value. Name the \
+type of every relationship and end with a LIMIT.
+"""
+
 ReadLength = Annotated[
   int, Field(description="Characters to read (max 8000).", ge=1, le=8000)
 ]
@@ -188,16 +207,22 @@ def build_server(
   pure: bool = False,
   with_document: bool | None = None,
   viewer: str = DEFAULT_VIEWER,
+  graph_tools: bool | None = None,
 ) -> Any:
   """The ``MCPServer`` with every tool registered against ``session``.
 
   ``out_dir`` is the only place ``export_filing`` writes. ``with_document``
   defaults to the profile's own default: on for the product profile, off
   under ``pure``. ``viewer`` is the page ``view_filing`` links to, and the
-  only origin allowed to read what it serves.
+  only origin allowed to read what it serves. ``graph_tools`` registers
+  ``run_cypher`` over the graphs ``export_filing`` writes; by default it is on
+  exactly when LadybugDB is installed (the ``lpg`` extra), so a server without
+  it lists no tool it cannot run.
   """
   from mcp.server import MCPServer
 
+  if graph_tools is None:
+    graph_tools = importlib.util.find_spec("ladybug") is not None
   whole = (not pure) if with_document is None else bool(with_document)
   export_dir = Path(out_dir) if out_dir is not None else Path("output")
   # Started on the first view_filing call and left running: the browser
@@ -206,7 +231,9 @@ def build_server(
   server = MCPServer(
     name="xbrlkit",
     title="xbrlkit",
-    instructions=INSTRUCTIONS + (PURE_NOTE if pure else ""),
+    instructions=INSTRUCTIONS
+    + (GRAPH_NOTE if graph_tools else "")
+    + (PURE_NOTE if pure else ""),
     version=__version__,
   )
 
@@ -814,10 +841,13 @@ def build_server(
       "server's output directory and return the path: `clawdog` (ClawDog "
       "JSON-LD), `holon` (RDF / JSON-LD, opens in the RoboSystems holon "
       "viewer), `tavi` (the Project TAVI compiled model, JSON), `oim` "
-      "(xBRL-JSON), `lpg` (a single-filing LadybugDB graph; needs the lpg "
-      "extra), `icebug` (the same graph as an icebug-disk directory any "
-      "LadybugDB queries in place; needs pyarrow), or `model` (the parse itself "
-      "as JSON — load_filing reloads it without Arelle)."
+      "(xBRL-JSON), `lpg` (a LadybugDB graph; needs the lpg extra), `icebug` "
+      "(the same graph as an icebug-disk directory any LadybugDB queries in "
+      "place; needs pyarrow), or `model` (the parse itself as JSON — "
+      "load_filing reloads it without Arelle). For `lpg` and `icebug`, "
+      "`filings` stacks several loaded filings into one graph: what they share "
+      "(the entity, periods, units, labels) is stored once and every fact stays "
+      "on its own report." + (" run_cypher queries the result." if graph_tools else "")
     ),
     structured_output=False,
   )
@@ -827,7 +857,31 @@ def build_server(
       Field(description="The projection to write."),
     ],
     filing: Filing = None,
+    filings: Annotated[
+      list[str] | None,
+      Field(
+        description=(
+          "Several loaded filings' ids (tickers or accessions also work) to "
+          "stack into one graph; lpg and icebug only. Replaces `filing`."
+        )
+      ),
+    ] = None,
+    name: Annotated[
+      str | None,
+      Field(
+        description=(
+          "The stacked graph's file name, without extension; defaults to "
+          "`<ticker>-stack`."
+        )
+      ),
+    ] = None,
   ) -> str:
+    if filings:
+      return run(
+        lambda: tools.export_graph(
+          [session.get(f) for f in filings], format, export_dir, name
+        )
+      )
     return run(lambda: tools.export_filing(session.get(filing), format, export_dir))
 
   @server.tool(
@@ -849,6 +903,30 @@ def build_server(
     filing: Filing = None,
   ) -> str:
     return run(lambda: tools.view_filing(session.get(filing), format, viewers))
+
+  if graph_tools:
+
+    @server.tool(
+      name="run_cypher",
+      description=(
+        "Run one read-only Cypher query over a property graph export_filing "
+        "wrote (format lpg or icebug, one filing or several stacked) and return "
+        "the rows, at most 200. `graph` names it (the `graph` export_filing "
+        "returned); omit it for the newest. Start with `CALL show_tables() "
+        "RETURN *` for the tables. Name the type of every relationship — "
+        "-[:FACT_HAS_ELEMENT]-> — and end with a LIMIT; a query runs for 60 s "
+        "at most."
+      ),
+      structured_output=False,
+    )
+    def run_cypher(
+      query: Annotated[str, Field(description="A read-only Cypher query.")],
+      graph: Annotated[
+        str | None,
+        Field(description="The graph to query; the newest export when omitted."),
+      ] = None,
+    ) -> str:
+      return run(lambda: tools.run_cypher(export_dir, query, graph))
 
   return server
 

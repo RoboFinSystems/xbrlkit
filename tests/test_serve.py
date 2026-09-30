@@ -832,6 +832,83 @@ def test_export_filing_writes_an_icebug_tree(
   assert "format = 'icebug-disk'" in (path / "schema.cypher").read_text()
 
 
+def _next_year(loaded: LoadedFiling) -> LoadedFiling:
+  """The same filer's next report: a new accession, its revenue restated."""
+  model = loaded.model
+  facts = [
+    f.model_copy(update={"numeric_value": 1_100_000.0, "value_str": "1100000"})
+    if f.id == "f1b"
+    else f
+    for f in model.facts
+  ]
+  filing = model.filing.model_copy(update={"accession": "0000000000-26-000002"})
+  next_model = model.model_copy(update={"filing": filing, "facts": facts})
+  return LoadedFiling(
+    id="acme-2025",
+    source="memory",
+    model=next_model,
+    text=loaded.text,
+    sections=loaded.sections,
+  )
+
+
+STACKED_REVENUE = (
+  "MATCH (r:Report)-[:REPORT_HAS_FACT]->(f:Fact {has_dimensions: false})"
+  "-[:FACT_HAS_ELEMENT]->(e:Element {qname: 'us-gaap:Revenues'}), "
+  "(f)-[:FACT_HAS_PERIOD]->(p:Period {end_date: '2024-12-31'}) "
+  "RETURN r.accession_number AS report, max(f.numeric_value) AS revenue "
+  "ORDER BY report LIMIT 10"
+)
+
+
+@pytest.mark.parametrize("fmt", ["lpg", "icebug"])
+def test_export_graph_stacks_filings(
+  loaded: LoadedFiling, tmp_path: Path, fmt: str
+) -> None:
+  pytest.importorskip("ladybug" if fmt == "lpg" else "pyarrow")
+  second = _next_year(loaded)
+  out = tools.export_graph([loaded, second, loaded], fmt, tmp_path)
+  assert out["filings"] == ["acme", "acme-2025"]  # a repeat is stacked once
+  assert out["graph"] == ("ACME-stack.lbug" if fmt == "lpg" else "ACME-stack.icebug")
+  assert out["counts"]["reports"] == 2
+  single = tools.export_graph([loaded], fmt, tmp_path)["counts"]
+  assert out["counts"]["periods"] == single["periods"]
+  assert out["counts"]["facts"] == 2 * single["facts"]
+  named = tools.export_graph([loaded, second], fmt, tmp_path, name="acme years")
+  assert Path(named["path"]).name.startswith("acme-years.")
+
+
+def test_export_graph_refuses_a_document_format(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  with pytest.raises(tools.ToolError, match="one document per filing"):
+    tools.export_graph([loaded, _next_year(loaded)], "holon", tmp_path)
+
+
+def test_run_cypher_reads_the_exported_graphs(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  pytest.importorskip("ladybug")
+  with pytest.raises(tools.ToolError, match="export one first"):
+    tools.run_cypher(tmp_path, STACKED_REVENUE)
+  tools.export_graph([loaded, _next_year(loaded)], "icebug", tmp_path)
+  out = tools.run_cypher(tmp_path, STACKED_REVENUE)
+  assert out["graph"] == "ACME-stack.icebug"
+  assert out["rows"] == [
+    {"report": "0000000000-25-000001", "revenue": 1_000_450.0},
+    {"report": "0000000000-26-000002", "revenue": 1_100_000.0},
+  ]
+  tools.export_filing(loaded, "lpg", tmp_path)
+  newest = tools.run_cypher(tmp_path, STACKED_REVENUE)
+  assert newest["graph"] == "acme.lbug" and len(newest["rows"]) == 1
+  by_name = tools.run_cypher(tmp_path, STACKED_REVENUE, graph="ACME-stack")
+  assert by_name["graph"] == "ACME-stack.icebug"
+  with pytest.raises(tools.ToolError, match="no graph 'nope'"):
+    tools.run_cypher(tmp_path, STACKED_REVENUE, graph="nope")
+  with pytest.raises(tools.ToolError, match="1066"):
+    tools.run_cypher(tmp_path, "MATCH ()-[r]->() RETURN count(r)", graph="ACME-stack")
+
+
 def test_view_filing_serves_it_for_the_viewer(loaded: LoadedFiling) -> None:
   from xbrlkit.view import DEFAULT_VIEWER, ViewerHost
 
@@ -1550,7 +1627,8 @@ async def test_server_lists_and_calls_tools(
 
   from xbrlkit.serve import build_server
 
-  server = build_server(session, tmp_path)
+  # The surface without the lpg extra, which is what `xbrlkit[mcp]` installs.
+  server = build_server(session, tmp_path, graph_tools=False)
   async with Client(server) as client:
     listed = await client.list_tools()
     names = {t.name for t in listed.tools}
@@ -1591,6 +1669,50 @@ async def test_server_lists_and_calls_tools(
     assert json.loads(dropped.content[0].text) == {"unloaded": "acme", "loaded": []}
     empty = await client.call_tool("list_filings", {})
     assert json.loads(empty.content[0].text)["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_tools_stack_and_query_over_mcp(
+  session: FilingSession, loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  pytest.importorskip("ladybug")
+  from mcp.client import Client
+
+  from xbrlkit.serve import build_server
+
+  second = _next_year(loaded)
+  session._filings[second.id] = second
+  server = build_server(session, tmp_path, graph_tools=True)
+  async with Client(server) as client:
+    names = {t.name for t in (await client.list_tools()).tools}
+    assert "run_cypher" in names
+    exported = await client.call_tool(
+      "export_filing", {"format": "icebug", "filings": ["acme", "acme-2025"]}
+    )
+    graph = json.loads(exported.content[0].text)["graph"]
+    answered = await client.call_tool(
+      "run_cypher", {"query": STACKED_REVENUE, "graph": graph}
+    )
+    rows = json.loads(answered.content[0].text)["rows"]
+    assert [r["revenue"] for r in rows] == [1_000_450.0, 1_100_000.0]
+    refused = await client.call_tool(
+      "export_filing", {"format": "tavi", "filings": ["acme", "acme-2025"]}
+    )
+    assert "one document per filing" in json.loads(refused.content[0].text)["error"]
+
+
+@pytest.mark.asyncio
+async def test_graph_tools_follow_the_lpg_extra(
+  session: FilingSession, tmp_path: Path
+) -> None:
+  from mcp.client import Client
+
+  from xbrlkit.serve import build_server
+
+  for enabled in (True, False):
+    async with Client(build_server(session, tmp_path, graph_tools=enabled)) as client:
+      names = {t.name for t in (await client.list_tools()).tools}
+    assert ("run_cypher" in names) is enabled
 
 
 @pytest.mark.asyncio

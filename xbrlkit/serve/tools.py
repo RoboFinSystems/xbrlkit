@@ -2430,6 +2430,132 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
   }
 
 
+GRAPH_FORMATS = ("lpg", "icebug")
+
+
+def export_graph(
+  filings: list[LoadedFiling], format: str, out_dir: Path, name: str | None = None
+) -> dict[str, Any]:
+  """Stack several loaded filings into one property graph: a ``.lbug`` (``lpg``)
+  or an icebug-disk tree. What they share is stored once and every fact stays
+  on its own report, so a query across them reads one graph."""
+  fmt = (format or "").strip().lower()
+  if fmt not in GRAPH_FORMATS:
+    raise ToolError(
+      f"only the graph formats {list(GRAPH_FORMATS)} stack several filings; "
+      f"{format!r} is one document per filing — export each on its own"
+    )
+  unique = list({lf.id: lf for lf in filings}.values())
+  if not unique:
+    raise ToolError("pass at least one loaded filing")
+  try:
+    from xbrlkit.serialize import (
+      build_lbug,
+      merge_graph_tables,
+      to_graph_tables,
+      write_icebug,
+    )
+
+    tables = merge_graph_tables(to_graph_tables(lf.model) for lf in unique)
+  except ImportError as exc:  # pragma: no cover - depends on the extra
+    raise ToolError(_graph_extra(fmt)) from exc
+  except ValueError as exc:
+    raise ToolError(f"these filings do not stack: {exc}") from exc
+  out_dir = Path(out_dir)
+  out_dir.mkdir(parents=True, exist_ok=True)
+  stem = re.sub(r"[^A-Za-z0-9._-]+", "-", name or _stack_name(unique)).strip("-.")
+  if not stem:
+    raise ToolError(f"{name!r} is not a usable name")
+  target = out_dir / f"{stem}.{EXPORT_FORMATS[fmt]}"
+  try:
+    if fmt == "icebug":
+      write_icebug(tables, target)
+    else:
+      build_lbug(tables, target)
+  except ImportError as exc:  # pragma: no cover - depends on the extra
+    raise ToolError(_graph_extra(fmt)) from exc
+  counts = tables.counts()
+  return {
+    "format": fmt,
+    "path": str(target),
+    "graph": target.name,
+    "filings": [lf.id for lf in unique],
+    "counts": {
+      "reports": counts.get("Report", 0),
+      "facts": counts.get("Fact", 0),
+      "elements": counts.get("Element", 0),
+      "periods": counts.get("Period", 0),
+    },
+  }
+
+
+def _stack_name(filings: list[LoadedFiling]) -> str:
+  names = {lf.model.entity.ticker or lf.model.entity.cik or "" for lf in filings}
+  if len(filings) == 1:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", filings[0].id) or filings[0].accession
+  if len(names) == 1 and "" not in names:
+    return f"{names.pop()}-stack"
+  return f"stack-{len(filings)}-filings"
+
+
+def _graph_extra(fmt: str) -> str:
+  if fmt == "icebug":
+    return "the icebug format needs `pip install 'xbrlkit[icebug]'`"
+  return "the lpg format needs `pip install 'xbrlkit[lpg]'`"
+
+
+def list_graphs(out_dir: Path) -> list[Path]:
+  """The property graphs in ``out_dir``, newest first: ``.lbug`` databases and
+  icebug-disk trees."""
+  out_dir = Path(out_dir)
+  if not out_dir.is_dir():
+    return []
+  found = [
+    p
+    for p in out_dir.iterdir()
+    if (p.is_file() and p.suffix == ".lbug")
+    or (p.is_dir() and (p / "schema.cypher").is_file())
+  ]
+  return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def run_cypher(
+  out_dir: Path, query: str, graph: str | None = None, max_rows: int | None = None
+) -> dict[str, Any]:
+  """One read-only Cypher query over a graph ``export_filing`` wrote into
+  ``out_dir`` — the newest one when ``graph`` is omitted."""
+  from xbrlkit.cypher import DEFAULT_MAX_ROWS, CypherError
+  from xbrlkit.cypher import run_cypher as run
+
+  graphs = list_graphs(out_dir)
+  names = [p.name for p in graphs]
+  if not graphs:
+    raise ToolError(
+      "no graph to query: export one first with export_filing (format lpg or "
+      "icebug; pass `filings` to stack several)"
+    )
+  if graph:
+    wanted = graph.strip()
+    hit = next(
+      (
+        p
+        for p in graphs
+        if wanted in (p.name, p.stem, f"{p.stem}.lbug", f"{p.stem}.icebug")
+      ),
+      None,
+    )
+    if hit is None:
+      raise ToolError(f"no graph {graph!r} in the output directory; graphs: {names}")
+  else:
+    hit = graphs[0]
+  rows = max(1, min(int(max_rows or DEFAULT_MAX_ROWS), DEFAULT_MAX_ROWS))
+  try:
+    result = run(hit, query, max_rows=rows)
+  except CypherError as exc:
+    raise ToolError(str(exc)) from exc
+  return {"graph": hit.name, **result}
+
+
 VIEW_FORMATS = ("holon", "tavi")
 
 

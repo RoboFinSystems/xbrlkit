@@ -1,6 +1,6 @@
 """Project a neutral ``XbrlModel`` into the XBRL property graph — node and
-relationship tables, parquet files, a single-filing LadybugDB database, and an
-icebug-disk tree any LadybugDB queries in place.
+relationship tables, parquet files, a LadybugDB database, and an icebug-disk
+tree any LadybugDB queries in place, holding one filing or several stacked.
 
 This is the projection the RoboSystems platform builds its shared ``sec``
 graph from, expressed as a function of the model instead of a walk over
@@ -25,9 +25,11 @@ is byte-identical.
 
 from __future__ import annotations
 
+import math
 import shutil
 import tempfile
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePath
@@ -577,6 +579,58 @@ def to_graph_tables(model: XbrlModel) -> GraphTables:
   return _Projection(model).run()
 
 
+def merge_graph_tables(parts: Iterable[GraphTables]) -> GraphTables:
+  """Stack several filings' tables into one graph.
+
+  Ids are content-addressed, so what two filings share — the entity, periods,
+  units, labels, references — arrives with the same id and is kept once, while
+  report-scoped rows (the report, its facts, dimensions and structures) stay
+  apart. An edge is kept once per identical row. A node id that arrives twice
+  with different properties is an error rather than a silent pick.
+  """
+  parts = list(parts)
+  merged = GraphTables()
+  for spec in NODE_TABLES:
+    seen: dict[Any, Row] = {}
+    for part in parts:
+      for row in part.nodes.get(spec.name) or []:
+        key = row[spec.primary_key]
+        kept = seen.get(key)
+        if kept is None:
+          seen[key] = row
+          merged.nodes[spec.name].append(row)
+        elif not _same_row(kept, row):
+          differing = sorted(k for k in row if not _same_value(row[k], kept.get(k)))
+          raise ValueError(
+            f"{spec.name} {key} arrives twice with different {', '.join(differing)}"
+          )
+  for spec in REL_TABLES:
+    edges: set[tuple[Any, ...]] = set()
+    for part in parts:
+      for row in part.relationships.get(spec.name) or []:
+        edge = tuple(_hashable(row.get(k)) for k in spec.columns)
+        if edge not in edges:
+          edges.add(edge)
+          merged.relationships[spec.name].append(row)
+  return merged
+
+
+def _same_value(a: Any, b: Any) -> bool:
+  if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+    return True
+  return a == b
+
+
+def _same_row(a: Row, b: Row) -> bool:
+  return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
+
+
+def _hashable(value: Any) -> Any:
+  if isinstance(value, float) and math.isnan(value):
+    return "NaN"
+  return value
+
+
 # ---- parquet ----------------------------------------------------------------
 
 
@@ -853,6 +907,7 @@ __all__ = (
   "XBRL_GRAPH_PROCESSOR_VERSION",
   "build_lbug",
   "graph_id",
+  "merge_graph_tables",
   "parse_structure_definition",
   "to_graph_tables",
   "write_icebug",
