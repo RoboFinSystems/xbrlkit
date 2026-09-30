@@ -257,6 +257,38 @@ def _enrich_filer(loaded: LoadedFiling, fields: Mapping[str, Any]) -> None:
     entity.legal_name = entity.name
 
 
+def _restore_sec_identity(model: XbrlModel, sec_base_url: str) -> None:
+  """Fill the two things a published TAVI or holon does not carry and the
+  property graph keys on, from what it does.
+
+  The report URI is the primary document's EDGAR Archives URL, which scopes the
+  report, its facts and its dimensions the way an EDGAR load does. The
+  extension namespace is the filer's own schema, which the graph's structures
+  are named under; EDGAR names the primary document after that schema's prefix
+  (``mrmd-20251231.htm`` for the ``mrmd:`` concepts), so it is the namespace of
+  the concepts under that prefix. Fill-empty, never overwrite.
+  """
+  filing = model.filing
+  name = filing.primary_document or filing.document_name
+  if not name:
+    return
+  if not filing.report_uri and filing.cik and filing.accession:
+    from xbrlkit.edgar.download import primary_document_url
+
+    filing.report_uri = primary_document_url(
+      sec_base_url, filing.cik, filing.accession, name
+    )
+  if not filing.extension_namespace:
+    prefix = name.split("-", 1)[0].lower()
+    namespaces = {
+      concept.namespace
+      for qname, concept in model.concepts.items()
+      if concept.namespace and qname.partition(":")[0].lower() == prefix
+    }
+    if len(namespaces) == 1:
+      filing.extension_namespace = namespaces.pop()
+
+
 @dataclass
 class PublishedFiling:
   """A filing as the public data CDN lists it: the representations to load
@@ -1049,6 +1081,7 @@ class FilingSession:
     _enrich_filer(
       loaded, self._filer_metadata(loaded.model.entity.cik, ticker=published.ticker)
     )
+    _restore_sec_identity(loaded.model, self.config.sec_base_url)
     return loaded
 
   def _inline_external_text(self, model: XbrlModel) -> int:

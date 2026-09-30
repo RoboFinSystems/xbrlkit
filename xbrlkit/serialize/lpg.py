@@ -140,6 +140,7 @@ class _Projection:
     self._units: set[str] = set()
     self._dimensions: dict[tuple[str, str, str], str] = {}
     self._facts: set[str] = set()
+    self._fact_contents: set[tuple[Any, ...]] = set()
     self._labels: set[str] = set()
     self._references: set[str] = set()
     self._associations: set[str] = set()
@@ -319,14 +320,18 @@ class _Projection:
     namespace = self.model.filing.extension_namespace
     if not namespace:
       return
+    # A model read back from TAVI or a holon carries no role ids at all; the role
+    # URI's last segment is the id for nearly every role. An Arelle parse keeps
+    # skipping the networks it gave no id.
+    derived = not any(network.role_id for network in self.model.networks)
     by_role: dict[str, list[Network]] = {}
     for network in self.model.networks:
-      if not network.role_id or not network.arcs:
+      if not network.arcs or not (network.role_id or (derived and network.role_uri)):
         continue
       by_role.setdefault(network.role_uri, []).append(network)
 
     for role_uri, networks in by_role.items():
-      role_id = networks[0].role_id
+      role_id = networks[0].role_id or role_uri.rstrip("/").rsplit("/", 1)[-1]
       structure_uri = f"{namespace}#{role_id}"
       structure_id = graph_id(
         "structure", f"structure:{self.accession}#{structure_uri}"
@@ -390,6 +395,14 @@ class _Projection:
   # ---- facts ----------------------------------------------------------------
 
   def _fact(self, fact: XbrlFact) -> None:
+    if fact.source_hash is None:
+      # No parser hash (a model read back from TAVI or a holon): a duplicate is
+      # recognised by what Arelle's hash covers instead, so a value the filer
+      # tagged twice is still one fact.
+      content = _fact_content(fact)
+      if content in self._fact_contents:
+        return
+      self._fact_contents.add(content)
     fact_uri = f"{self.report_uri}#fact-{fact.source_hash or fact.id}"
     fact_id = graph_id("fact", fact_uri)
     if fact_id in self._facts:
@@ -857,6 +870,24 @@ def _write_icebug_file(table: Any, path: Path) -> None:
 
 
 # ---- helpers ------------------------------------------------------------------
+
+
+def _fact_content(fact: XbrlFact) -> tuple[Any, ...]:
+  """What Arelle's fact hash covers: the concept, the language, the value (or
+  nil), the context — entity, period, dimensions — and the unit."""
+  dims = tuple(
+    sorted((d.axis_qname, d.member_qname or "", d.typed_value or "") for d in fact.dims)
+  )
+  return (
+    fact.concept_qname,
+    (fact.language or "").lower(),
+    True if fact.is_nil else (fact.value_str or ""),
+    fact.entity_scheme,
+    fact.entity_identifier,
+    fact.period_id,
+    dims,
+    fact.unit_id,
+  )
 
 
 def _normalize_cik(raw: str | None) -> str:

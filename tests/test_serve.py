@@ -35,7 +35,7 @@ from xbrlkit.model import (
 )
 from xbrlkit.serve import FilingSession, LoadedFiling, SourceError, build_text
 from xbrlkit.serve import tools
-from xbrlkit.serve.session import _find_load_target, _locate
+from xbrlkit.serve.session import _find_load_target, _locate, _restore_sec_identity
 
 US_GAAP = "http://fasb.org/us-gaap/2024-01-31"
 IS_ROLE = "http://acme.example/role/StatementOfIncome"
@@ -801,6 +801,58 @@ def test_locate_skips_a_contents_list_that_is_not_drawn_as_a_table() -> None:
     f"{heading}\n{body}"
   )
   assert _locate(text, f"{heading}\n\n{body}") == text.rindex(heading)
+
+
+# -- a published filing's identity ---------------------------------------------
+
+
+def _published(model: XbrlModel) -> XbrlModel:
+  """``model`` as a published TAVI reads back: no report URI, no extension
+  namespace, the primary document known only by name."""
+  filing = model.filing.model_copy(
+    update={
+      "report_uri": None,
+      "extension_namespace": None,
+      "primary_document": None,
+      "document_name": "acme-20241231.htm",
+    }
+  )
+  acme = Concept(
+    qname="acme:WidgetRevenue",
+    name="WidgetRevenue",
+    namespace="http://acme.example/20241231",
+  )
+  return model.model_copy(
+    update={"filing": filing, "concepts": {**model.concepts, acme.qname: acme}}
+  )
+
+
+def test_a_published_filing_gets_back_what_the_graph_keys_on() -> None:
+  model = _published(_model())
+  _restore_sec_identity(model, "https://www.sec.gov")
+  assert model.filing.report_uri == (
+    "https://www.sec.gov/Archives/edgar/data/1234567/000000000025000001/acme-20241231.htm"
+  )
+  assert model.filing.extension_namespace == "http://acme.example/20241231"
+
+
+def test_restoring_the_identity_fills_only_what_is_empty() -> None:
+  model = _published(_model())
+  model.filing.report_uri = "https://example.test/own.htm"
+  model.filing.extension_namespace = "http://example.test/own"
+  _restore_sec_identity(model, "https://www.sec.gov")
+  assert model.filing.report_uri == "https://example.test/own.htm"
+  assert model.filing.extension_namespace == "http://example.test/own"
+
+
+def test_an_ambiguous_prefix_leaves_the_namespace_unset() -> None:
+  model = _published(_model())
+  other = Concept(
+    qname="ACME:Other", name="Other", namespace="http://www.acme.example/other"
+  )
+  model.concepts[other.qname] = other
+  _restore_sec_identity(model, "https://www.sec.gov")
+  assert model.filing.extension_namespace is None
 
 
 # -- export ---------------------------------------------------------------------
