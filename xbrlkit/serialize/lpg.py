@@ -599,28 +599,37 @@ def merge_graph_tables(parts: Iterable[GraphTables]) -> GraphTables:
   units, labels, references — arrives with the same id and is kept once, while
   report-scoped rows (the report, its facts, dimensions and structures) stay
   apart. An edge is kept once per identical row. A node id that arrives twice
-  with different properties is an error rather than a silent pick — except an
-  element's dimensional role (hypercube, axis, domain member), which a model
-  read back from TAVI infers from how its own filing uses the concept: there, a
-  role any filing shows is kept.
+  with different properties is an error rather than a silent pick, with two
+  exceptions. An entity is described as of the newest filing in the stack: its
+  filer category, name or exchange can change between filings, and each
+  filing's own value stays in its ``dei`` facts. And an element's dimensional
+  role (hypercube, axis, domain member), which a model read back from TAVI
+  infers from how its own filing uses the concept, is kept if any filing shows
+  it.
   """
   parts = list(parts)
+  recency = [(_newest_report(part), i) for i, part in enumerate(parts)]
   merged = GraphTables()
   for spec in NODE_TABLES:
     rows = merged.nodes[spec.name]
-    seen: dict[Any, int] = {}
-    for part in parts:
+    seen: dict[Any, tuple[int, tuple[Any, ...]]] = {}
+    for part, rank in zip(parts, recency, strict=True):
       for row in part.nodes.get(spec.name) or []:
         key = row[spec.primary_key]
-        at = seen.get(key)
-        if at is None:
-          seen[key] = len(rows)
+        if key not in seen:
+          seen[key] = (len(rows), rank)
           rows.append(row)
           continue
+        at, kept_rank = seen[key]
         kept = rows[at]
         if _same_row(kept, row):
           continue
         differing = sorted(k for k in row if not _same_value(row[k], kept.get(k)))
+        if spec.name == "Entity":
+          if rank > kept_rank:
+            rows[at] = row
+            seen[key] = (at, rank)
+          continue
         if spec.name == "Element" and set(differing) <= _ELEMENT_ROLE_FLAGS:
           rows[at] = {**kept, **{k: bool(kept[k] or row[k]) for k in differing}}
           continue
@@ -636,6 +645,16 @@ def merge_graph_tables(parts: Iterable[GraphTables]) -> GraphTables:
           edges.add(edge)
           merged.relationships[spec.name].append(row)
   return merged
+
+
+def _newest_report(part: GraphTables) -> tuple[str, str]:
+  """A part's newest report, by filing date and then period end, as sortable
+  ISO strings; a part with no dated report sorts first."""
+  reports = part.nodes.get("Report") or []
+  return max(
+    ((r.get("filing_date") or "", r.get("report_date") or "") for r in reports),
+    default=("", ""),
+  )
 
 
 _ELEMENT_ROLE_FLAGS = frozenset(

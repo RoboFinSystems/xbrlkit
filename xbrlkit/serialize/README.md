@@ -160,10 +160,12 @@ container is written. The ids are content-addressed, so what two filings share â
 the entity, periods, units, labels, references â€” arrives with the same id and is
 kept once, while the report and its facts, dimensions and structures stay apart;
 a node id that arrives twice with different properties is an error, never a
-silent pick. One exception: an element's dimensional role (hypercube, axis,
-domain member). A model read back from TAVI marks it only where its own filing
-uses the concept that way, so two filings can disagree, and the role any filing
-shows is kept. A container cannot be appended to instead: a tree's rows are
+silent pick. Two exceptions. An entity is described as of the newest filing in
+the stack: a filer's category, name or exchange can change between filings, and
+each filing's own value stays in its `dei` facts. And an element's dimensional
+role (hypercube, axis, domain member): a model read back from TAVI marks it only
+where its own filing uses the concept that way, so two filings can disagree, and
+the role any filing shows is kept. A container cannot be appended to instead: a tree's rows are
 positional, and `COPY` into an existing `.lbdb` stops at the first shared id.
 
 ```python
