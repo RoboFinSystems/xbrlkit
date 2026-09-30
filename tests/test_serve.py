@@ -872,6 +872,27 @@ def test_export_filing_writes_projection(
     tools.export_filing(loaded, "pdf", tmp_path)
 
 
+def test_an_unwritable_export_folder_says_to_set_out_dir(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  (tmp_path / "a-file").write_text("")
+  with pytest.raises(tools.ToolError, match="--out-dir"):
+    tools.export_filing(loaded, "holon", tmp_path / "a-file" / "exports")
+
+
+def test_a_file_load_says_where_it_was_read_from(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  written = Path(tools.export_filing(loaded, "model", tmp_path)["path"])
+  session = FilingSession()
+  try:
+    again = session.load(str(written))
+    assert again.read_from == {"kind": "file", "path": str(written.resolve())}
+    assert tools.describe_filing(again)["read_from"]["kind"] == "file"
+  finally:
+    session.close()
+
+
 def test_export_filing_writes_an_icebug_tree(
   loaded: LoadedFiling, tmp_path: Path
 ) -> None:
@@ -1662,6 +1683,19 @@ def test_serve_parser_profile_flags() -> None:
   assert (args.pure, args.with_document) == (False, False)
 
 
+def test_pure_parses_from_edgar_unless_the_source_is_chosen(monkeypatch) -> None:
+  from xbrlkit.cli import _serve_config, build_parser
+
+  monkeypatch.delenv("XBRLKIT_ARTIFACTS_URL", raising=False)
+  product = _serve_config(build_parser().parse_args(["serve"]))
+  assert product.artifacts_base_url == "https://public.robosystems.ai"
+  pure = _serve_config(build_parser().parse_args(["serve", "--pure"]))
+  assert pure.artifacts_base_url == ""
+  monkeypatch.setenv("XBRLKIT_ARTIFACTS_URL", "https://cdn.example")
+  chosen = _serve_config(build_parser().parse_args(["serve", "--pure"]))
+  assert chosen.artifacts_base_url == "https://cdn.example"
+
+
 def test_serve_without_the_extra_names_it(monkeypatch, capsys) -> None:
   import sys
 
@@ -1771,6 +1805,25 @@ async def test_graph_tools_stack_and_query_over_mcp(
       "export_filing", {"format": "tavi", "filings": ["acme", "acme-2025"]}
     )
     assert "one document per filing" in json.loads(refused.content[0].text)["error"]
+
+
+@pytest.mark.asyncio
+async def test_exports_default_to_a_folder_in_home(
+  session: FilingSession, tmp_path: Path, monkeypatch
+) -> None:
+  from mcp.client import Client
+
+  from xbrlkit.serve import build_server
+
+  monkeypatch.setenv("HOME", str(tmp_path))
+  monkeypatch.chdir("/")  # as Claude Desktop starts a stdio server
+  async with Client(build_server(session)) as client:
+    listed = {t.name: t for t in (await client.list_tools()).tools}
+    home = tmp_path.resolve() / "xbrlkit" / "output"
+    assert str(home) in (listed["export_filing"].description or "")
+    exported = await client.call_tool("export_filing", {"format": "tavi"})
+    path = Path(json.loads(exported.content[0].text)["path"])
+  assert path.is_absolute() and path.parent == home and path.is_file()
 
 
 @pytest.mark.asyncio

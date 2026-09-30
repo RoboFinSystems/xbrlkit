@@ -31,10 +31,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import tempfile
 import threading
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -219,6 +221,16 @@ def _config_from_args(args: argparse.Namespace) -> Config:
   return Config()
 
 
+def _serve_config(args: argparse.Namespace) -> Config:
+  """The server's settings. Under ``--pure`` a filing is parsed from EDGAR, not
+  read from RoboSystems' published parse of it, unless XBRLKIT_ARTIFACTS_URL
+  is set, which chooses the source either way."""
+  config = _config_from_args(args)
+  if args.pure and "XBRLKIT_ARTIFACTS_URL" not in os.environ:
+    return replace(config, artifacts_base_url="")
+  return config
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
   config = _config_from_args(args)
   client = EdgarClient(config=config)
@@ -364,7 +376,17 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     file=sys.stderr,
   )
 
-  session = FilingSession(config=_config_from_args(args))
+  config = _serve_config(args)
+  print(
+    "filings load from "
+    + (
+      f"{config.artifacts_base_url} first, then EDGAR"
+      if config.artifacts_base_url
+      else "EDGAR"
+    ),
+    file=sys.stderr,
+  )
+  session = FilingSession(config=config)
   for source in args.sources:
     print(f"loading {source} …", file=sys.stderr)
     loaded = session.load(source)
@@ -381,7 +403,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
       host=args.host,
       port=args.port,
       transport=args.transport,
-      out_dir=Path(args.out_dir),
+      out_dir=Path(args.out_dir) if args.out_dir else None,
       path=args.path,
       pure=args.pure,
       with_document=with_document,
@@ -619,8 +641,11 @@ def build_parser() -> argparse.ArgumentParser:
   )
   s.add_argument(
     "--out-dir",
-    default=str(DEFAULT_OUTPUT_DIR),
-    help="Where export_filing writes (default: output/).",
+    default=None,
+    help=(
+      "Where export_filing writes (default: ~/xbrlkit/output). Set it for a "
+      "client that launches the server itself: Claude Desktop starts it in /."
+    ),
   )
   s.add_argument(
     "--as",

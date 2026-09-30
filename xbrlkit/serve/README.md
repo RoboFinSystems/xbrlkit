@@ -35,6 +35,29 @@ The two indexes behind the first three are [`edgar/`](../edgar/README.md) and
 fetch. Several filings load at once, each under an id; `unload_filing` drops
 one.
 
+### A ticker or `cik:accession` reads RoboSystems' parse first
+
+For an SEC filing named by ticker or `cik:accession`, the server first looks
+for it on the RoboSystems public data CDN (`https://public.robosystems.ai`),
+where the RoboSystems SEC pipeline publishes each filing it has processed as a
+TAVI model and a holon. That loads in about a second; parsing the filing from
+EDGAR with Arelle takes 30 to 60. When the CDN has no copy, it parses from
+EDGAR.
+
+The published copy is **RoboSystems' parse of the filing, not the filing as
+filed**. It lacks what TAVI does not carry — Arelle's fact hashes (so fact ids
+differ from an EDGAR parse), concept references, and the definition arcs a
+hypercube cannot express — and it is as current as the xbrlkit that processed
+it. So the answer says which one you have: `load_filing` and `describe_filing`
+return `read_from`, `{"kind": "published", "url": …}` for a CDN copy, or
+`edgar`, `file`, `url` or `filings.xbrl.org` otherwise.
+
+To read the filing itself, parse it from EDGAR:
+
+- `--pure` does so by default (see below).
+- `XBRLKIT_ARTIFACTS_URL=""` turns the CDN off in either profile; set it to
+  another URL to read published copies from there.
+
 A zip or directory with no report in it is a taxonomy, and loads from an
 entry point: the first one its `META-INF/taxonomyPackage.xml` lists
 (FASB's US GAAP package lists `entire/us-gaap-entryPoint-all` first), or —
@@ -62,7 +85,7 @@ The tools are the shapes a reader needs, not a query language.
 | `documents`, `read_document` | what else was filed — exhibits, an 8-K's press release, a 13F's holdings table — each with its URL and whether it reads natively; and reading one |
 | `records` | an XML filing's own tables — a Form 4's transactions and holdings, a 13F's positions — as rows, with the header fields beside them |
 | `search_text`, `read_text` | regex search over the readable text — the whole primary document, or the tagged text blocks alone — and paging from an offset. A pattern that matches more than came back also says where the matches fall, by section, busiest first, and how many further sections hold the rest; one that matches nothing counts its own words separately, so a phrase the filer words differently is a step rather than a dead end |
-| `export_filing` | the filing as ClawDog, holon, TAVI, xBRL-JSON, a LadybugDB database (the graph to query), an experimental icebug-disk tree, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir`. With `filings`, the two graph formats stack several loaded filings into one graph — a company's years, or peers — keeping what they share once and every fact on its own report |
+| `export_filing` | the filing as ClawDog, holon, TAVI, xBRL-JSON, a LadybugDB database (the graph to query), an experimental icebug-disk tree, or `model` (the parse itself, reloadable without Arelle), written under `--out-dir` (`~/xbrlkit/output` by default). With `filings`, the two graph formats stack several loaded filings into one graph — a company's years, or peers — keeping what they share once and every fact on its own report |
 | `run_cypher` | one read-only Cypher query over a graph `export_filing` wrote, single or stacked, with a 60-second limit and at most 200 rows. **Listed only when LadybugDB is installed** (`xbrlkit[lpg]`): without it there is no graph to query |
 | `view_filing` | the filing rendered as a report in the browser: it is serialized, served from an unguessable path on loopback (readable only by the viewer's origin, for as long as this server runs), and the link comes back to hand to the user |
 | `search_filings` | which filings across EDGAR match a phrase, form, date range or filer — the discovery step before `load_filing`, since every hit carries the `cik:accession` that loads it. Returns a page and the total matched; EDGAR's full-text index begins in 2001 |
@@ -126,7 +149,8 @@ which is untagged in the 10-Q too.
 `--pure` is a faithful reading of the filing and nothing more: no statement
 kinds (networks are listed by the filer's own names), no detected Items, no
 period buckets, the Filing Ladder's read cap — the profile a benchmark rung
-runs under.
+runs under. It parses a ticker or `cik:accession` from EDGAR rather than
+reading RoboSystems' published parse, unless `XBRLKIT_ARTIFACTS_URL` is set.
 
 `--with-document` / `--without-document` choose whether the text tools read the
 whole primary document or only the tagged text blocks; the product profile
@@ -191,6 +215,20 @@ claude mcp add xbrlkit -e SEC_GOV_USER_AGENT="Your Name your@email.example" \
 
 `SEC_GOV_USER_AGENT` is needed for anything EDGAR has to fetch (a ticker, a
 `cik:accession`); a local file needs none.
+
+**Where exports go.** A client that launches the server also picks its working
+directory: Claude Desktop starts it in `/`, which is not writable, and Claude
+Code starts it in whatever project is open. So `export_filing` writes to
+`~/xbrlkit/output` unless `--out-dir` names another folder:
+
+```json
+"args": ["--from", "xbrlkit[mcp,lpg]@latest", "xbrlkit", "serve", "--transport", "stdio",
+         "--out-dir", "/Users/you/xbrlkit-exports"]
+```
+
+The server prints the folder when it starts, every export returns its absolute
+path, and a folder it cannot write comes back as an error that says to set
+`--out-dir`.
 
 ## Security
 

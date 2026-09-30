@@ -87,8 +87,10 @@ class Config:
   # data CDN, which writes every processed SEC filing as a holon, a TAVI model
   # and the document as filed, under ``{year}/{cik}/{accession}/``, with a
   # per-filer catalog under ``companies/``. A ticker or ``cik:accession`` loads
-  # the published holon when there is one, in under a second, and falls back
-  # to EDGAR and Arelle when there is not. Empty disables the lookup.
+  # the published TAVI (or holon) when there is one, in about a second, and
+  # falls back to EDGAR and Arelle when there is not. The published copy is
+  # RoboSystems' parse of the filing; empty disables the lookup, and
+  # ``serve --pure`` disables it unless this is set.
   artifacts_base_url: str = field(
     default_factory=lambda: os.environ.get(
       "XBRLKIT_ARTIFACTS_URL", "https://public.robosystems.ai"

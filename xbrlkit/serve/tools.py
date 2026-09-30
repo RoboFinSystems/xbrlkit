@@ -489,7 +489,7 @@ def list_filings(session: FilingSession) -> dict[str, Any]:
   return {"filings": rows, "count": len(rows)}
 
 
-LOAD_RECEIPT_KEYS = ("profile", "taxonomy", "filing", "entity", "counts")
+LOAD_RECEIPT_KEYS = ("profile", "read_from", "taxonomy", "filing", "entity", "counts")
 
 
 def load_receipt(
@@ -630,6 +630,7 @@ def describe_filing(
       "text": "primary document" if whole and lf.has_document else "tagged text blocks",
       "xbrl": lf.has_xbrl,
     },
+    **({"read_from": lf.read_from} if lf.read_from else {}),
     **({"taxonomy": _describe_taxonomy(lf.taxonomy)} if lf.taxonomy else {}),
     "filing": {
       "id": lf.id,
@@ -2365,12 +2366,29 @@ def read_text(
   return out
 
 
+def _export_dir(out_dir: Path) -> Path:
+  """The export folder, created, as an absolute path — or a correctable error.
+
+  A client that launches the server over stdio picks its working directory:
+  Claude Desktop starts it in ``/``, so a relative folder is unwritable there.
+  """
+  out_dir = Path(out_dir).expanduser().resolve()
+  try:
+    out_dir.mkdir(parents=True, exist_ok=True)
+  except OSError as exc:
+    raise ToolError(
+      f"cannot write exports to {out_dir} ({exc.strerror or exc}). Restart the "
+      "server with --out-dir set to a folder you can write, e.g. "
+      "--out-dir ~/xbrlkit/output."
+    ) from exc
+  return out_dir
+
+
 def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any]:
   fmt = (format or "").strip().lower()
   if fmt not in EXPORT_FORMATS:
     raise ToolError(f"format must be one of {sorted(EXPORT_FORMATS)}, not {format!r}")
-  out_dir = Path(out_dir)
-  out_dir.mkdir(parents=True, exist_ok=True)
+  out_dir = _export_dir(out_dir)
   stem = re.sub(r"[^A-Za-z0-9._-]+", "-", lf.id) or lf.accession
   target = out_dir / f"{stem}.{EXPORT_FORMATS[fmt]}"
   written: list[Path] = [target]
@@ -2463,8 +2481,7 @@ def export_graph(
     raise ToolError(_graph_extra(fmt)) from exc
   except ValueError as exc:
     raise ToolError(f"these filings do not stack: {exc}") from exc
-  out_dir = Path(out_dir)
-  out_dir.mkdir(parents=True, exist_ok=True)
+  out_dir = _export_dir(out_dir)
   stem = re.sub(r"[^A-Za-z0-9._-]+", "-", name or _stack_name(unique)).strip("-.")
   if not stem:
     raise ToolError(f"{name!r} is not a usable name")
