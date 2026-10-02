@@ -87,7 +87,7 @@ class Config:
   # data CDN, which writes every processed SEC filing as a holon, a TAVI model
   # and the document as filed, under ``{year}/{cik}/{accession}/``, with a
   # per-filer catalog under ``companies/``. A ticker or ``cik:accession`` loads
-  # the published TAVI (or holon) when there is one, in about a second, and
+  # the published holon (or TAVI) when there is one, in a few seconds, and
   # falls back to EDGAR and Arelle when there is not. The published copy is
   # RoboSystems' parse of the filing; empty disables the lookup, and
   # ``serve --pure`` disables it unless this is set.
