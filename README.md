@@ -221,8 +221,8 @@ And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all
 
 Load a filing from the chat — a ticker, an EDGAR `cik:accession`, a `lei:` for
 ESEF and the national regimes, a local package, or a holon or TAVI by path or
-URL. A ticker or `cik:accession` loads the filing's published TAVI model (or
-its holon) first when the RoboSystems CDN has one, falling back to EDGAR. That
+URL. A ticker or `cik:accession` loads the filing's published holon (or its
+TAVI model) first when the RoboSystems CDN has one, falling back to EDGAR. That
 copy is RoboSystems' parse of the filing, not the filing as filed, and the
 answer's `read_from` says which one you have; `--pure` or
 `XBRLKIT_ARTIFACTS_URL=""` parses it from EDGAR instead. Exports go to

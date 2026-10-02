@@ -45,10 +45,10 @@ EDGAR with Arelle takes 30 to 60. When the CDN has no copy, it parses from
 EDGAR.
 
 The published copy is **RoboSystems' parse of the filing, not the filing as
-filed**. It lacks what TAVI does not carry — Arelle's fact hashes (so fact ids
-differ from an EDGAR parse), concept references, and the definition arcs a
-hypercube cannot express — and it is as current as the xbrlkit that processed
-it. So the answer says which one you have: `load_filing` and `describe_filing`
+filed**. The server reads the holon, the complete report, and falls back to the
+TAVI model. Either lacks Arelle's fact hashes (so fact ids differ from an EDGAR
+parse) and concept references; the TAVI fallback also drops the definition arcs
+a hypercube cannot express. It is as current as the xbrlkit that processed it. So the answer says which one you have: `load_filing` and `describe_filing`
 return `read_from`, `{"kind": "published", "url": …}` for a CDN copy, or
 `edgar`, `file`, `url` or `filings.xbrl.org` otherwise.
 
