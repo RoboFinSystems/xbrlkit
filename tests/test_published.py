@@ -380,19 +380,28 @@ def test_a_manifest_without_a_model_is_not_a_published_filing() -> None:
   )
   assert only_tavi == PublishedFiling(accession="acc", tavi_url="http://x/f/tavi.json")
   assert only_tavi.model_urls == ["http://x/f/tavi.json"]
+  both = _published_from(
+    "acc",
+    [{"kind": "tavi", "name": "tavi.json"}, {"kind": "holon", "name": "holon.jsonld"}],
+    "http://x/f/",
+  )
+  assert both is not None
+  assert both.model_urls == ["http://x/f/holon.jsonld", "http://x/f/tavi.json"]
 
 
-def _publish_tavi(tmp_path: Path, base: str, *, reachable: bool = True) -> None:
-  """List a TAVI model in the ACME catalog ahead of the holon; write the file
-  only when it should be reachable. The TAVI carries its text block inline."""
+def _publish_tavi(tmp_path: Path, base: str, *, holon_reachable: bool = True) -> None:
+  """List a TAVI model in the ACME catalog ahead of the holon, so the load
+  order is the reader's choice and not the catalog's; remove the holon when it
+  should be unreachable. The TAVI carries its text block inline."""
   folder = f"{base}/2024/{CIK}/{ACCESSION}"
   root = tmp_path / "2024" / CIK / ACCESSION
-  if reachable:
-    model = _model_with_text()
-    for fact in model.facts:
-      if fact.value_str == "__FRAGMENT_URL__":
-        fact.value_str = FRAGMENT
-    (root / "tavi.json").write_text(to_tavi(model))
+  model = _model_with_text()
+  for fact in model.facts:
+    if fact.value_str == "__FRAGMENT_URL__":
+      fact.value_str = FRAGMENT
+  (root / "tavi.json").write_text(to_tavi(model))
+  if not holon_reachable:
+    (root / "holon.jsonld").unlink()
   catalog_path = tmp_path / "companies" / "acme.json"
   catalog = json.loads(catalog_path.read_text())
   newest = catalog["filings"][0]
@@ -403,42 +412,46 @@ def _publish_tavi(tmp_path: Path, base: str, *, reachable: bool = True) -> None:
   catalog_path.write_text(json.dumps(catalog))
 
 
+def _text_block(loaded) -> str | None:
+  return next(
+    f
+    for f in loaded.model.facts
+    if f.concept_qname == "us-gaap:LesseeOperatingLeasesTextBlock"
+  ).value_str
+
+
 @pytest.mark.unit
-def test_a_ticker_loads_the_published_tavi_first(
+def test_a_ticker_loads_the_published_holon_ahead_of_the_tavi(
   cdn: str, tmp_path: Path, no_edgar
 ) -> None:
   _publish_tavi(tmp_path, cdn)
   session = _session(cdn)
   try:
     loaded = session.load("ACME")
-    assert loaded.source_kind == "tavi"
+    assert loaded.source_kind == "holon"
     assert loaded.read_from["kind"] == "published"
-    assert loaded.read_from["url"].endswith("tavi.json")
+    assert loaded.read_from["url"].endswith("holon.jsonld")
     assert "not the filing as filed" in loaded.read_from["note"]
     assert tools.load_receipt(loaded)["read_from"] == loaded.read_from
     assert loaded.has_document is True
     assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
-    block = next(
-      f
-      for f in loaded.model.facts
-      if f.concept_qname == "us-gaap:LesseeOperatingLeasesTextBlock"
-    )
-    assert block.value_str == FRAGMENT
+    assert _text_block(loaded) == FRAGMENT
   finally:
     session.close()
 
 
 @pytest.mark.unit
-def test_an_unreachable_tavi_falls_back_to_the_holon(
+def test_an_unreachable_holon_falls_back_to_the_tavi(
   cdn: str, tmp_path: Path, no_edgar
 ) -> None:
-  _publish_tavi(tmp_path, cdn, reachable=False)
+  _publish_tavi(tmp_path, cdn, holon_reachable=False)
   session = _session(cdn)
   try:
     loaded = session.load("ACME")
-    assert loaded.source_kind == "holon"
-    assert loaded.read_from["url"].endswith("holon.jsonld")  # the one it read
+    assert loaded.source_kind == "tavi"
+    assert loaded.read_from["url"].endswith("tavi.json")  # the one it read
     assert tools.fact_grid(loaded, ["us-gaap:Assets"])["rows"][0]["value"] == 1000.0
+    assert _text_block(loaded) == FRAGMENT
   finally:
     session.close()
 

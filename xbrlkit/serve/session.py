@@ -297,7 +297,7 @@ def _restore_sec_identity(model: XbrlModel, sec_base_url: str) -> None:
 @dataclass
 class PublishedFiling:
   """A filing as the public data CDN lists it: the representations to load
-  (the TAVI model first, the holon beside it), the document as filed when it
+  (the holon first, the TAVI model beside it), the document as filed when it
   was published too, and the filer's ticker — the key the catalog holds that
   filer's identity under."""
 
@@ -309,8 +309,8 @@ class PublishedFiling:
 
   @property
   def model_urls(self) -> list[str]:
-    """The representations to try, in order: the TAVI model, then the holon."""
-    return [url for url in (self.tavi_url, self.holon_url) if url]
+    """The representations to try, in order: the holon, then the TAVI model."""
+    return [url for url in (self.holon_url, self.tavi_url) if url]
 
 
 def _published_from(
@@ -1060,11 +1060,11 @@ class FilingSession:
     }
 
   def _load_published(self, published: PublishedFiling, source: str) -> LoadedFiling:
-    """The filing from its published TAVI model (or its holon when there is no
-    TAVI, or it cannot be read), with the document as filed beside it when the
-    CDN has that too — the same shape an EDGAR load gives, in a fraction of the
-    time and with no Arelle. The TAVI carries its text blocks inline, so there
-    are no fragments to fetch after it."""
+    """The filing from its published holon — the complete report — or its TAVI
+    model when there is no holon, or it cannot be read, with the document as
+    filed beside it when the CDN has that too — the same shape an EDGAR load
+    gives, in a fraction of the time and with no Arelle. The holon's large text
+    blocks are fragments, fetched on load; the TAVI carries its text inline."""
     urls = published.model_urls
     into = self._tmp / (published.accession or Path(urls[0].split("?", 1)[0]).stem)
     document: Path | None = None
