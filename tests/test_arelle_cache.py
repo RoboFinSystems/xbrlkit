@@ -369,7 +369,7 @@ class TestLoadModel:
     assert "missing.xsd" in str(excinfo.value)
 
   def test_a_taxonomy_on_a_host_that_has_gone_does_not_refuse_the_load(
-    self, tmp_path: Path
+    self, tmp_path: Path, caplog: pytest.LogCaptureFixture
   ) -> None:
     """Every Danish ESEF report cites the Danish Business Authority's taxonomy
     beside its own, and that host answers 404. The load comes back without it,
@@ -381,6 +381,7 @@ class TestLoadModel:
     mx = load_model(instance, tmp_path / "cache", offline=True)
     try:
       assert arelle_load.load_state(mx.modelManager.cntlr).unresolved == [gone]
+      assert gone in caplog.text
     finally:
       arelle_load.close(mx.modelManager.cntlr)
 

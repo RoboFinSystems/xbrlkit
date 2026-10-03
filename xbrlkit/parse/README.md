@@ -50,6 +50,11 @@ layout, spaces its fetches per host, waits out a `Retry-After` on a 429 or 503,
 and — when a document still cannot be resolved — raises `DtsResolutionError`
 naming the URLs rather than returning a filing that parses with holes.
 
+The one exception is a host known to be gone (`GONE_TAXONOMY_HOSTS`: the Danish
+Business Authority's, which every Danish ESEF report cites beside its own
+taxonomy). The filing loads without that taxonomy's concepts, a warning says
+so, and the URL stays on `load_state(cntlr).unresolved` for the caller to report.
+
 Warm the cache once, or ship it:
 
 ```bash

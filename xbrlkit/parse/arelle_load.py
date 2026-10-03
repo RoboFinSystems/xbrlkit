@@ -185,6 +185,13 @@ def load_model(
     unresolved = list(state.unresolved)
     close(cntlr)
     raise DtsResolutionError(str(source), unresolved)
+  if state.unresolved:
+    logger.warning(
+      "loaded %s without %d taxonomy document(s) on a host that has gone: %s",
+      source,
+      len(state.unresolved),
+      ", ".join(state.unresolved),
+    )
   return mx
 
 

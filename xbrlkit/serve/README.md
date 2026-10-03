@@ -52,6 +52,10 @@ a hypercube cannot express. It is as current as the xbrlkit that processed it. S
 return `read_from`, `{"kind": "published", "url": …}` for a CDN copy, or
 `edgar`, `file`, `url` or `filings.xbrl.org` otherwise.
 
+A filing loaded without a taxonomy whose host has gone — every Danish ESEF
+report cites one — says that too: `missing_taxonomy` names the documents and
+counts the facts that are in the report and not in the model.
+
 To read the filing itself, parse it from EDGAR:
 
 - `--pure` does so by default (see below).
