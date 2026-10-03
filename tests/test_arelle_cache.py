@@ -355,6 +355,102 @@ INSTANCE = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
+ACME_URL = "http://acme.example/tax/acme.xsd"
+
+ACME_SCHEMA = """<?xml version="1.0" encoding="utf-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:xbrli="http://www.xbrl.org/2003/instance"
+           targetNamespace="http://acme.example/tax" elementFormDefault="qualified">
+  <xs:import namespace="http://www.xbrl.org/2003/instance"
+             schemaLocation="http://www.xbrl.org/2003/xbrl-instance-2003-12-31.xsd"/>
+  <xs:element name="{concept}" id="acme_{concept}" type="xbrli:monetaryItemType"
+              substitutionGroup="xbrli:item" xbrli:periodType="instant" nillable="true"/>
+</xs:schema>
+"""
+
+ACME_REPORT = """<?xml version="1.0" encoding="utf-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:link="http://www.xbrl.org/2003/linkbase"
+            xmlns:xlink="http://www.w3.org/1999/xlink"
+            xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+            xmlns:acme="http://acme.example/tax">
+  <link:schemaRef xlink:type="simple" xlink:href="http://acme.example/tax/acme.xsd"/>
+  <xbrli:context id="c">
+    <xbrli:entity>
+      <xbrli:identifier scheme="http://standards.iso.org/iso/17442">00000000000000000000</xbrli:identifier>
+    </xbrli:entity>
+    <xbrli:period><xbrli:instant>2025-12-31</xbrli:instant></xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="u"><xbrli:measure>iso4217:EUR</xbrli:measure></xbrli:unit>
+  <acme:{concept} contextRef="c" unitRef="u" decimals="0">100</acme:{concept}>
+</xbrli:xbrl>
+"""
+
+
+def _acme_package(root: Path, name: str, concept: str) -> tuple[Path, Path]:
+  """A taxonomy package whose catalog maps ``ACME_URL`` to its own schema,
+  which declares one ``concept``, and a report tagged with it. Returns the
+  report and the manifest that registers the package."""
+  package = root / name
+  for folder in ("META-INF", "tax", "reports"):
+    (package / folder).mkdir(parents=True)
+  manifest = package / "META-INF" / "taxonomyPackage.xml"
+  manifest.write_text(
+    "<tp:taxonomyPackage xml:lang='en' "
+    "xmlns:tp='http://xbrl.org/2016/taxonomy-package'>"
+    f"<tp:identifier>http://acme.example/{name}</tp:identifier>"
+    f"<tp:name>{name}</tp:name><tp:description>{name}</tp:description>"
+    "<tp:version>1</tp:version></tp:taxonomyPackage>"
+  )
+  (package / "META-INF" / "catalog.xml").write_text(
+    "<catalog xmlns='urn:oasis:names:tc:entity:xmlns:xml:catalog'>"
+    "<rewriteURI uriStartString='http://acme.example/tax/' rewritePrefix='../tax/'/>"
+    "</catalog>"
+  )
+  (package / "tax" / "acme.xsd").write_text(ACME_SCHEMA.format(concept=concept))
+  report = package / "reports" / "report.xml"
+  report.write_text(ACME_REPORT.format(concept=concept))
+  return report, manifest
+
+
+def _defined_facts(report: Path, cache: Path, packages: list[Path]) -> list[str]:
+  """The facts of ``report`` that found their concept, loaded offline."""
+  mx = load_model(report, cache, offline=True, packages=packages)
+  try:
+    return [f.qname.localName for f in mx.facts if f.concept is not None]
+  finally:
+    arelle_load.close(mx.modelManager.cntlr)
+
+
+class TestPackagesAreRegisteredPerLoad:
+  """Arelle keeps registered packages for the life of the process; a load
+  must resolve through its own and no earlier load's."""
+
+  def test_a_report_without_a_package_does_not_read_an_earlier_one(
+    self, tmp_path: Path
+  ) -> None:
+    report, manifest = _acme_package(tmp_path, "first", "Revenue")
+    assert _defined_facts(report, tmp_path / "cache", [manifest]) == ["Revenue"]
+
+    alone = tmp_path / "alone.xml"
+    alone.write_text(ACME_REPORT.format(concept="Revenue"))
+    with pytest.raises(DtsResolutionError) as excinfo:
+      load_model(alone, tmp_path / "cache", offline=True)
+    assert excinfo.value.unresolved == [ACME_URL]
+
+  def test_a_package_read_again_is_not_read_through_a_later_one(
+    self, tmp_path: Path
+  ) -> None:
+    """Two packages that map the same URL to different schemas."""
+    first, first_manifest = _acme_package(tmp_path, "first", "Revenue")
+    second, second_manifest = _acme_package(tmp_path, "second", "Assets")
+    cache = tmp_path / "cache"
+
+    assert _defined_facts(first, cache, [first_manifest]) == ["Revenue"]
+    assert _defined_facts(second, cache, [second_manifest]) == ["Assets"]
+    assert _defined_facts(first, cache, [first_manifest]) == ["Revenue"]
+
+
 class TestLoadModel:
   def test_offline_with_a_cold_cache_refuses_the_partial_dts(
     self, tmp_path: Path
