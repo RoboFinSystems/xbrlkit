@@ -1391,21 +1391,22 @@ def test_an_unresolved_taxonomy_is_named_rather_than_called_not_xbrl(
     session.close()
 
 
-def test_a_load_says_which_taxonomy_it_went_without(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _arelle_returns(
+  monkeypatch: pytest.MonkeyPatch,
+  model: XbrlModel,
+  tagged: dict[str, bool],
+  unresolved: list[str],
 ) -> None:
-  """A filing loaded without a taxonomy whose host has gone reports it: the
-  documents that did not resolve and the facts tagged against them, which are
-  in the report and not in the model."""
+  """Stand in for Arelle: ``model`` is what the parse yields, ``tagged`` the
+  inline facts of the report by name and whether a concept was found for each,
+  ``unresolved`` the taxonomy documents that did not arrive."""
   from types import SimpleNamespace
 
   from xbrlkit import parse
   from xbrlkit.parse import LoadState
   from xbrlkit.serve import session as session_module
 
-  gone = "http://archprod.service.eogs.dk/taxonomy/20241001/entry.xsd"
-
-  def tagged(name: str, defined: bool = False) -> SimpleNamespace:
+  def fact(name: str, defined: bool) -> SimpleNamespace:
     return SimpleNamespace(
       concept=object() if defined else None,
       get=lambda key: name if key == "name" else None,
@@ -1415,27 +1416,37 @@ def test_a_load_says_which_taxonomy_it_went_without(
   # is still an element of the inline document.
   report_html = SimpleNamespace(
     modelDocument=SimpleNamespace(ixNStag="{ix}"),
-    iterdescendants=lambda *tags: iter(
-      [
-        tagged("gsd:NameOfSubmittingEnterprise"),
-        tagged("gsd:InformationOnTypeOfSubmittedReport"),
-        tagged("cmn:TypeOfAuditorAssistance"),
-        tagged("ifrs-full:Assets", defined=True),
-      ]
-    ),
+    iterdescendants=lambda *tags: iter([fact(n, d) for n, d in tagged.items()]),
   )
   mx = SimpleNamespace(
     modelManager=SimpleNamespace(cntlr=object()),
     ixdsHtmlElements=[report_html],
     undefinedFacts=[],
   )
+  state = LoadState(unresolved=list(unresolved))
   monkeypatch.setattr(parse, "load_model", lambda source, **kwargs: mx)
-  monkeypatch.setattr(parse, "load_state", lambda cntlr: LoadState(unresolved=[gone]))
-  monkeypatch.setattr(parse, "to_xbrl_model", lambda mx, filing, entity=None: _model())
+  monkeypatch.setattr(parse, "load_state", lambda cntlr: state)
+  monkeypatch.setattr(parse, "to_xbrl_model", lambda mx, filing, entity=None: model)
   monkeypatch.setattr(parse, "close", lambda cntlr: None)
   monkeypatch.setattr(
     session_module, "_filing_meta_from_instance", lambda *a: _model().filing
   )
+
+
+def test_a_load_says_which_taxonomy_it_went_without(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A filing loaded without a taxonomy whose host has gone reports it: the
+  documents that did not resolve and the facts tagged against them, which are
+  in the report and not in the model."""
+  gone = "http://archprod.service.eogs.dk/taxonomy/20241001/entry.xsd"
+  tagged = {
+    "gsd:NameOfSubmittingEnterprise": False,
+    "gsd:InformationOnTypeOfSubmittedReport": False,
+    "cmn:TypeOfAuditorAssistance": False,
+    "ifrs-full:Assets": True,
+  }
+  _arelle_returns(monkeypatch, _model(), tagged, unresolved=[gone])
   report = tmp_path / "acme-2025-12-31.xhtml"
   report.write_text("<html/>")
   session = FilingSession()
@@ -1450,10 +1461,85 @@ def test_a_load_says_which_taxonomy_it_went_without(
     assert receipt["missing_taxonomy"]["documents"] == [gone]
 
     # A filing that resolved everything says nothing about it.
-    monkeypatch.setattr(parse, "load_state", lambda cntlr: LoadState())
+    _arelle_returns(monkeypatch, _model(), {"ifrs-full:Assets": True}, unresolved=[])
     whole = session.load(str(report))
     assert whole.missing_taxonomy is None
     assert "missing_taxonomy" not in tools.describe_filing(whole)
+  finally:
+    session.close()
+
+
+def test_a_tagged_report_with_no_taxonomy_is_refused_not_read_as_a_document(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A report whose every fact lost its concept — a package whose catalog does
+  not match its own layout — is not a document without XBRL, and is not
+  loaded as one."""
+  empty = XbrlModel(filing=_model().filing, entity=_model().entity)
+  tagged = {"ifrs-full:Assets": False, "ifrs-full:Revenue": False}
+  _arelle_returns(monkeypatch, empty, tagged, unresolved=[])
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html><body>Annual report</body></html>")
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError, match="2 facts and none has a concept") as excinfo:
+      session.load(str(report))
+    assert excinfo.type is SourceError
+  finally:
+    session.close()
+
+
+def _archive(path: Path, members: dict[str, str]) -> Path:
+  import zipfile
+
+  with zipfile.ZipFile(path, "w") as zf:
+    for name, content in members.items():
+      zf.writestr(name, content)
+  return path
+
+
+_REPORT = "<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'><ix:header/></html>"
+_MANIFEST = "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package'/>"
+
+
+@pytest.mark.parametrize(
+  "members",
+  [
+    # Zipped on Windows by a tool that wrote the separator as a backslash.
+    {
+      "acme-2020-12-31\\META-INF\\taxonomyPackage.xml": _MANIFEST,
+      "acme-2020-12-31\\reports\\acme-2020-12-31.xhtml": _REPORT,
+    },
+    # The package one directory deeper than a package sits.
+    {
+      "acme/acme-2020-12-31/META-INF/taxonomyPackage.xml": _MANIFEST,
+      "acme/acme-2020-12-31/reports/acme-2020-12-31.xhtml": _REPORT,
+    },
+  ],
+  ids=["backslash-separators", "nested-one-deeper"],
+)
+def test_a_package_arelle_cannot_register_as_an_archive_registers_from_its_manifest(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, members: dict[str, str]
+) -> None:
+  from xbrlkit.serve.session import _taxonomy_packages
+
+  parsed: list[tuple[Path, list[Path] | None]] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append((Path(target), packages))
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  session = FilingSession()
+  try:
+    session.load(str(_archive(tmp_path / "acme-2020-12-31.zip", members)))
+    target, packages = parsed[-1]
+    assert target.name == "acme-2020-12-31.xhtml"
+    assert target.parent.name == "reports"
+    # No archive is handed over, so the parse registers the unpacked manifest.
+    assert packages is None
+    manifest = target.parent.parent / "META-INF" / "taxonomyPackage.xml"
+    assert _taxonomy_packages(target) == [manifest]
   finally:
     session.close()
 

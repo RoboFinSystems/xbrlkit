@@ -505,8 +505,7 @@ class FilingSession:
         package_dir = path
       else:
         package_dir = Path(tempfile.mkdtemp(prefix="zip-", dir=self._tmp))
-        with ZipFile(path) as archive:
-          archive.extractall(package_dir)
+        _unpack(path, package_dir)
       report = None if entry_point else _find_load_target(package_dir)
       if report is None:
         # No report in the package: a taxonomy published on its own, which
@@ -522,9 +521,15 @@ class FilingSession:
     # Arelle registers a taxonomy package from its archive or its manifest, and
     # the two are not interchangeable: one Dutch package's manifest raises
     # inside Arelle where the same package as a zip registers cleanly. The
-    # archive is the better form whenever it is still to hand.
+    # archive is the better form whenever it is still to hand — and is one
+    # Arelle can read: an archive laid out any other way registers from the
+    # manifest in the unpacked tree instead.
     packages: list[Path] | None = None
-    if path.suffix.lower() in _PACKAGE_SUFFIXES and _taxonomy_packages(target):
+    if (
+      path.suffix.lower() in _PACKAGE_SUFFIXES
+      and _taxonomy_packages(target)
+      and _is_package_archive(path)
+    ):
       packages = [path]
     if target.suffix.lower() in _PLAIN_SUFFIXES:
       # Arelle cannot read plain text and never could: a filing from the 1990s
@@ -1214,6 +1219,15 @@ class FilingSession:
         model = to_xbrl_model(mx, filing, entity=entity)
       finally:
         close(mx.modelManager.cntlr)
+    if not model.facts and undefined:
+      # Tagged, and every tag lost its concept: not a document without XBRL.
+      cited = f" ({', '.join(unresolved[:3])})" if unresolved else ""
+      raise SourceError(
+        f"{Path(str(target)).name} tags {sum(undefined.values())} facts and none "
+        f"has a concept behind it: the taxonomy it references could not be read"
+        f"{cited}. A package whose catalog does not match its own layout is the "
+        "usual cause."
+      )
     if not model.facts and not model.concepts:
       # Arelle accepts any HTML as an empty document. That is not a failure —
       # an 8-K, a proxy, a Form 4 all read this way — but it is the caller's
@@ -1608,6 +1622,32 @@ _INLINE_NAMESPACES = (
   b"http://www.xbrl.org/2013/inlineXBRL",
   b"http://www.xbrl.org/2008/inlineXBRL",
 )
+
+
+def _unpack(archive: Path, into: Path) -> None:
+  """Unpack an archive, reading a backslash in a member name as the path
+  separator it was meant as.
+
+  Some first-year ESEF packages were zipped on Windows by tools that wrote
+  ``package\\reports\\report.xhtml`` as the name. Unpacked as written, that
+  is one file with backslashes in its name, in no directory at all, and the
+  package's catalog matches nothing.
+  """
+  with ZipFile(archive) as zf:
+    for member in zf.infolist():
+      member.filename = member.filename.replace("\\", "/")
+      zf.extract(member, into)
+
+
+_PACKAGE_MANIFEST_RE = re.compile(r"[^/\\]+/META-INF/taxonomyPackage\.xml")
+
+
+def _is_package_archive(archive: Path) -> bool:
+  """Whether an archive is laid out as a taxonomy package — one top-level
+  directory holding ``META-INF`` — which is the only layout Arelle registers
+  from the archive itself."""
+  with ZipFile(archive) as zf:
+    return any(_PACKAGE_MANIFEST_RE.fullmatch(name) for name in zf.namelist())
 
 
 def _undefined_facts(mx: Any) -> dict[str, int]:
