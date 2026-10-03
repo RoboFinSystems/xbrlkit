@@ -1292,6 +1292,105 @@ def test_entry_point_is_refused_where_there_is_no_package(tmp_path: Path) -> Non
     session.close()
 
 
+def _report_package(root: Path) -> Path:
+  """A report package the way an ESEF filer ships one: the report under
+  ``reports/``, the filer's own taxonomy in a directory named for their domain,
+  and a catalog mapping that domain into the package."""
+  pkg = root / "acme-2025-12-31"
+  (pkg / "META-INF").mkdir(parents=True)
+  (pkg / "META-INF" / "taxonomyPackage.xml").write_text(
+    "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package'/>"
+  )
+  (pkg / "META-INF" / "catalog.xml").write_text(
+    "<catalog xmlns='urn:oasis:names:tc:entity:xmlns:xml:catalog'>"
+    "<rewriteURI uriStartString='http://acme.example/' rewritePrefix='../acme.example/'/>"
+    "</catalog>"
+  )
+  (pkg / "acme.example").mkdir()
+  (pkg / "acme.example" / "acme-2025.xsd").write_text(f"<xs:schema {XS}/>")
+  (pkg / "reports").mkdir()
+  (pkg / "reports" / "acme-2025-12-31.xhtml").write_text(
+    "<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'><body><ix:header/></body></html>"
+  )
+  return root
+
+
+@pytest.mark.parametrize("suffix", [".zip", ".xbri", ".xbr"])
+def test_a_report_package_loads_from_the_report_inside_it(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+  """A report package is a zip under its own extension — ``.xbri`` is what the
+  newest ESEF filings arrive as — and loads as one."""
+  parsed: list[tuple[Path, list[Path] | None]] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append((Path(target), packages))
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  archive = _zip(_report_package(tmp_path / "tree"), tmp_path / f"acme-2025{suffix}")
+  session = FilingSession()
+  try:
+    session.load(str(archive))
+    target, packages = parsed[-1]
+    assert target.name == "acme-2025-12-31.xhtml"
+    # The archive is what Arelle registers, so the catalog inside it applies.
+    assert packages == [archive]
+  finally:
+    session.close()
+
+
+def test_a_report_package_loads_by_url(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  parsed: list[Path] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append(Path(target))
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  archive = _zip(_report_package(tmp_path / "tree"), tmp_path / "acme-2025.xbri")
+  session = FilingSession()
+
+  def fake_fetch(url: str, into: Path | None = None) -> Path:
+    assert into is not None
+    return Path(shutil.copy(archive, into / Path(url).name))
+
+  monkeypatch.setattr(session, "_fetch", fake_fetch)
+  try:
+    session.load("https://reports.example/acme/acme-2025.xbri")
+    assert parsed[-1].name == "acme-2025-12-31.xhtml"
+  finally:
+    session.close()
+
+
+def test_an_unresolved_taxonomy_is_named_rather_than_called_not_xbrl(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A report whose taxonomy could not be fetched is XBRL; the error names the
+  document that failed instead of saying the report is not one."""
+  from xbrlkit import parse
+  from xbrlkit.parse import DtsResolutionError
+
+  gone = "https://taxonomy.example/2025/entry-point.xsd"
+
+  def refuse(source, **kwargs):
+    raise DtsResolutionError(str(source), [gone])
+
+  monkeypatch.setattr(parse, "load_model", refuse)
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html/>")
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError) as excinfo:
+      session.load(str(report))
+    assert gone in str(excinfo.value)
+    assert "not an XBRL" not in str(excinfo.value)
+  finally:
+    session.close()
+
+
 # -- the pure profile and the document toggle -------------------------------------
 
 

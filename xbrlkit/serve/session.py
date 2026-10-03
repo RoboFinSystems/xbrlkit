@@ -55,6 +55,8 @@ _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
 _PLAIN_SUFFIXES = {".txt", ".md"}
 # A report serialized as JSON — read into the model here, never by Arelle.
 _JSON_SUFFIXES = {".json", ".jsonld"}
+# A report package is a zip under its own extension: .xbri inline, .xbr not.
+_PACKAGE_SUFFIXES = {".zip", ".xbri", ".xbr"}
 # The published folder is keyed by filing year, ten-digit CIK and accession; the
 # accession's middle segment is the year it was assigned.
 _ACCESSION_YEAR_RE = re.compile(r"^\d{10}-(\d{2})-\d{6}$")
@@ -476,7 +478,7 @@ class FilingSession:
   ) -> LoadedFiling:
     package_dir: Path | None = None
     taxonomy: TaxonomyEntry | None = None
-    is_package = path.is_dir() or path.suffix.lower() == ".zip"
+    is_package = path.is_dir() or path.suffix.lower() in _PACKAGE_SUFFIXES
     if entry_point and not is_package:
       raise SourceError(_ENTRY_POINT_NEEDS_A_PACKAGE.format(source=source))
     if path.is_file() and path.suffix.lower() in _JSON_SUFFIXES:
@@ -505,7 +507,7 @@ class FilingSession:
     # inside Arelle where the same package as a zip registers cleanly. The
     # archive is the better form whenever it is still to hand.
     packages: list[Path] | None = None
-    if path.suffix.lower() == ".zip" and _taxonomy_packages(target):
+    if path.suffix.lower() in _PACKAGE_SUFFIXES and _taxonomy_packages(target):
       packages = [path]
     if target.suffix.lower() in _PLAIN_SUFFIXES:
       # Arelle cannot read plain text and never could: a filing from the 1990s
@@ -594,7 +596,7 @@ class FilingSession:
     clean = Path(url.split("?", 1)[0])
     accession = clean.stem or url
     suffix = clean.suffix.lower()
-    if suffix == ".zip":
+    if suffix in _PACKAGE_SUFFIXES:
       # A package by URL is downloaded and loaded as a local one: the report
       # found inside it, or — for a taxonomy published on its own, which is
       # how FASB, XBRL US and the IFRS Foundation distribute theirs — an
@@ -1153,7 +1155,7 @@ class FilingSession:
     entity: EntityIdentity | None,
     packages: list[Path] | None = None,
   ) -> XbrlModel:
-    from xbrlkit.parse import close, load_model, to_xbrl_model
+    from xbrlkit.parse import DtsResolutionError, close, load_model, to_xbrl_model
 
     with _ARELLE_LOCK:
       try:
@@ -1165,6 +1167,16 @@ class FilingSession:
           packages=_taxonomy_packages(target) if packages is None else packages,
           config=self.config,
         )
+      except DtsResolutionError as exc:
+        # The report is XBRL; it is its taxonomy that did not arrive.
+        shown = ", ".join(exc.unresolved[:3])
+        more = len(exc.unresolved) - 3
+        raise SourceError(
+          f"{Path(str(target)).name} is XBRL, but {len(exc.unresolved)} taxonomy "
+          f"document(s) it depends on could not be fetched: {shown}"
+          f"{f' (+{more} more)' if more > 0 else ''}. The host has moved or gone, "
+          "the fetch was throttled, or this is an offline run with a cold cache."
+        ) from exc
       except RuntimeError as exc:
         raise SourceError(
           f"Arelle could not load {target}: not an XBRL or inline XBRL document "

@@ -24,7 +24,7 @@ chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
 | a ticker, with an optional form | `NVDA`, `NVDA 10-Q` |
 | an EDGAR `cik:accession` | `1045810:0001045810-26-000021` |
 | a **LEI**, or a filings.xbrl.org filing id | `lei:213800H2PQMIF3OVZY47` |
-| a local filing | an inline `.htm`, an instance `.xml`, a directory, a `.zip` package |
+| a local filing | an inline `.htm`, an instance `.xml`, a directory, a `.zip` or `.xbri` package |
 | a **taxonomy** published on its own, by path or URL | `us-gaap-2025.zip`, `https://xbrl.fasb.org/us-gaap/2026/us-gaap-2026.zip`, an unpacked taxonomy directory |
 | a **JSON report**, by path or URL | `.clawdog.jsonld`, `.tavi.json`, `.holon.jsonld`, or a `model.json` from `export_filing` |
 | a URL Arelle can load | any of the above on the web |
