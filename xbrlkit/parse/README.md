@@ -88,3 +88,7 @@ it references the filer's extension taxonomy at their own domain. Point at the
 those URLs resolve to the schema travelling beside the report. Register the
 *archive*, not its manifest: one Dutch package's manifest raises inside Arelle
 where the same package as a zip registers cleanly.
+
+A package is registered for the one load. Arelle keeps its registrations for
+the life of the process, so `load_model` clears them first: a later filing
+never resolves through an earlier filing's catalog.

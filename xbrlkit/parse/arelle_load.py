@@ -201,11 +201,17 @@ def _is_gone(url: str) -> bool:
 
 
 def _register_packages(cntlr: Any, packages: Sequence[str | Path]) -> None:
-  """Register taxonomy packages so their catalogs remap the URLs they own."""
-  if not packages:
-    return
+  """Register taxonomy packages so their catalogs remap the URLs they own.
+
+  Arelle keeps what it has registered for the life of the process, so it is
+  cleared first: a load resolves through its own packages and no earlier
+  load's.
+  """
   from arelle import PackageManager
 
+  PackageManager.reset()
+  if not packages:
+    return
   PackageManager.init(cntlr, loadPackagesConfig=False)
   added = False
   for package in packages:
