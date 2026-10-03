@@ -7,11 +7,11 @@ JSON:API, so one adapter reaches every country in it at once rather than one
 per national filing authority.
 
 What it is *not* is a complete picture of Europe. Germany has nothing in it —
-the Bundesanzeiger does not share — and two of the largest slices cannot be
-loaded even though they are indexed, because they are national-GAAP filings
-whose national taxonomy host has moved or gone: Ukraine's does not resolve at
-all and Denmark's entry point answers 404. The self-contained ESEF packages,
-which is most of the rest, load.
+the Bundesanzeiger does not share — and the largest slice cannot be loaded even
+though it is indexed: Ukraine's filings depend on a national taxonomy host that
+does not resolve at all. Denmark's cite a national taxonomy whose host answers
+404 beside the ESEF one, and load without the facts tagged against it. The
+self-contained ESEF packages, which is most of the rest, load.
 
 The identifier here is the **LEI**, not a ticker or a CIK, and a filing's own
 id is the index's ``fxo_id`` — entity, period, taxonomy, country and a

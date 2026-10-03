@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -124,6 +125,16 @@ class TaxonomyEntry:
 
 
 @dataclass
+class MissingTaxonomy:
+  """What a filing loaded without: the taxonomy documents its host no longer
+  serves, and the facts tagged against them, counted by prefix. Those facts
+  are in the report and not in the model."""
+
+  documents: list[str]
+  facts: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class LoadedFiling:
   """One filing the server holds: the model plus its readable text.
 
@@ -167,6 +178,9 @@ class LoadedFiling:
   # schemas and linkbases and no report — and so holds concepts and networks
   # but no facts.
   taxonomy: TaxonomyEntry | None = None
+  # Set when the filing cites a taxonomy whose host has gone and was loaded
+  # without it.
+  missing_taxonomy: MissingTaxonomy | None = None
 
   @property
   def has_xbrl(self) -> bool:
@@ -358,6 +372,8 @@ class FilingSession:
     self._filers: dict[str, dict[str, Any]] = {}
     self._tmp = Path(tempfile.mkdtemp(prefix="xbrlkit-serve-"))
     self._lock = threading.Lock()
+    # What the last parse went without, until _finish puts it on the filing.
+    self._missing: MissingTaxonomy | None = None
 
   # -- lookup ---------------------------------------------------------------
 
@@ -407,6 +423,7 @@ class FilingSession:
       raise SourceError("An empty source.")
     entry_point = (entry_point or "").strip() or None
     with self._lock:
+      self._missing = None
       loaded = self._load(source, entry_point)
       if not loaded.read_from:
         loaded.read_from = _read_from(source)
@@ -1155,8 +1172,15 @@ class FilingSession:
     entity: EntityIdentity | None,
     packages: list[Path] | None = None,
   ) -> XbrlModel:
-    from xbrlkit.parse import DtsResolutionError, close, load_model, to_xbrl_model
+    from xbrlkit.parse import (
+      DtsResolutionError,
+      close,
+      load_model,
+      load_state,
+      to_xbrl_model,
+    )
 
+    self._missing = None
     with _ARELLE_LOCK:
       try:
         mx = load_model(
@@ -1183,6 +1207,8 @@ class FilingSession:
           "it recognises (a TAVI, holon or OIM file needs its importer)."
         ) from exc
       try:
+        unresolved = list(load_state(mx.modelManager.cntlr).unresolved)
+        undefined = _undefined_facts(mx)
         if filing is None:
           filing = _filing_meta_from_instance(mx, target, accession)
         model = to_xbrl_model(mx, filing, entity=entity)
@@ -1196,6 +1222,8 @@ class FilingSession:
         f"{target} holds no XBRL facts or concepts: not an XBRL or inline XBRL "
         "document (a TAVI, holon or OIM file needs its importer)."
       )
+    if unresolved:
+      self._missing = MissingTaxonomy(unresolved, undefined)
     return _enrich_from_dei(model)
 
   def _finish(
@@ -1222,6 +1250,7 @@ class FilingSession:
     text, sections = (
       (read.text, read.sections) if read else (block_text, block_sections)
     )
+    missing, self._missing = self._missing, None
     return LoadedFiling(
       id=filing_id,
       source=source,
@@ -1236,6 +1265,7 @@ class FilingSession:
       block_sections=block_sections,
       has_document=read is not None,
       xml_document=read.xml_document if read else None,
+      missing_taxonomy=missing,
     )
 
 
@@ -1578,6 +1608,29 @@ _INLINE_NAMESPACES = (
   b"http://www.xbrl.org/2013/inlineXBRL",
   b"http://www.xbrl.org/2008/inlineXBRL",
 )
+
+
+def _undefined_facts(mx: Any) -> dict[str, int]:
+  """The facts Arelle read with no concept behind them, counted by prefix.
+
+  An inline fact without a concept is reported and left out of the model's
+  facts, so the inline documents are walked for them; an instance element
+  lands in ``undefinedFacts``.
+  """
+  undefined = list(getattr(mx, "undefinedFacts", ()))
+  for html in getattr(mx, "ixdsHtmlElements", ()):
+    ix = html.modelDocument.ixNStag
+    tags = (ix + "nonNumeric", ix + "nonFraction", ix + "fraction")
+    undefined += [f for f in html.iterdescendants(*tags) if f.concept is None]
+  return dict(Counter(_tag_prefix(f) for f in undefined).most_common())
+
+
+def _tag_prefix(fact: Any) -> str:
+  """The prefix a fact was tagged with: an inline fact names its concept, an
+  instance element is one."""
+  name = fact.get("name") or ""
+  prefix = name.partition(":")[0] if ":" in name else getattr(fact, "prefix", None)
+  return prefix or "(no prefix)"
 
 
 def _taxonomy_packages(target: Path | str) -> list[Path]:

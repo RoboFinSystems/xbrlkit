@@ -1391,6 +1391,73 @@ def test_an_unresolved_taxonomy_is_named_rather_than_called_not_xbrl(
     session.close()
 
 
+def test_a_load_says_which_taxonomy_it_went_without(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A filing loaded without a taxonomy whose host has gone reports it: the
+  documents that did not resolve and the facts tagged against them, which are
+  in the report and not in the model."""
+  from types import SimpleNamespace
+
+  from xbrlkit import parse
+  from xbrlkit.parse import LoadState
+  from xbrlkit.serve import session as session_module
+
+  gone = "http://archprod.service.eogs.dk/taxonomy/20241001/entry.xsd"
+
+  def tagged(name: str, defined: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+      concept=object() if defined else None,
+      get=lambda key: name if key == "name" else None,
+    )
+
+  # Arelle leaves an inline fact with no concept out of the model's facts; it
+  # is still an element of the inline document.
+  report_html = SimpleNamespace(
+    modelDocument=SimpleNamespace(ixNStag="{ix}"),
+    iterdescendants=lambda *tags: iter(
+      [
+        tagged("gsd:NameOfSubmittingEnterprise"),
+        tagged("gsd:InformationOnTypeOfSubmittedReport"),
+        tagged("cmn:TypeOfAuditorAssistance"),
+        tagged("ifrs-full:Assets", defined=True),
+      ]
+    ),
+  )
+  mx = SimpleNamespace(
+    modelManager=SimpleNamespace(cntlr=object()),
+    ixdsHtmlElements=[report_html],
+    undefinedFacts=[],
+  )
+  monkeypatch.setattr(parse, "load_model", lambda source, **kwargs: mx)
+  monkeypatch.setattr(parse, "load_state", lambda cntlr: LoadState(unresolved=[gone]))
+  monkeypatch.setattr(parse, "to_xbrl_model", lambda mx, filing, entity=None: _model())
+  monkeypatch.setattr(parse, "close", lambda cntlr: None)
+  monkeypatch.setattr(
+    session_module, "_filing_meta_from_instance", lambda *a: _model().filing
+  )
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html/>")
+  session = FilingSession()
+  try:
+    lf = session.load(str(report))
+    assert lf.missing_taxonomy is not None
+    assert lf.missing_taxonomy.documents == [gone]
+    assert lf.missing_taxonomy.facts == {"gsd": 2, "cmn": 1}
+    receipt = tools.load_receipt(lf)
+    assert receipt["missing_taxonomy"]["facts_not_loaded"] == 3
+    assert receipt["missing_taxonomy"]["by_prefix"] == {"gsd": 2, "cmn": 1}
+    assert receipt["missing_taxonomy"]["documents"] == [gone]
+
+    # A filing that resolved everything says nothing about it.
+    monkeypatch.setattr(parse, "load_state", lambda cntlr: LoadState())
+    whole = session.load(str(report))
+    assert whole.missing_taxonomy is None
+    assert "missing_taxonomy" not in tools.describe_filing(whole)
+  finally:
+    session.close()
+
+
 # -- the pure profile and the document toggle -------------------------------------
 
 
