@@ -271,12 +271,14 @@ including the tool table and the `--pure` profile, in
 
 ## Where it runs
 
-**RoboSystems.** The platform's SEC pipeline is built on this package: filings
-are parsed with `xbrlkit.parse` (its own Arelle controller, with
-`register_sec_transforms` and the cache policy from `configure_webcache`),
-projected with `to_holon`, `to_tavi_report` and the property-graph tables, the
-shared `sec` graph is declared from `xbrlkit.schema`, and the full-text index
-behind its document search is built from `xbrlkit.text`.
+**RoboSystems.** The
+[RoboSystems](https://github.com/RoboFinSystems/robosystems) platform's SEC
+pipeline is built on this package: filings are parsed with `xbrlkit.parse`
+(its own Arelle controller, with `register_sec_transforms` and the cache policy
+from `configure_webcache`), projected with `to_holon`, `to_tavi_report` and the
+property-graph tables, the shared `sec` graph is declared from
+`xbrlkit.schema`, and the full-text index behind its document search is built
+from `xbrlkit.text`.
 
 **Filing Ladder.** The
 [Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark —
