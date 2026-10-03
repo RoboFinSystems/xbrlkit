@@ -24,7 +24,7 @@ chat: *"load NVIDIA's latest 10-K"*, *"load `1045810:0001045810-26-000021`"*,
 | a ticker, with an optional form | `NVDA`, `NVDA 10-Q` |
 | an EDGAR `cik:accession` | `1045810:0001045810-26-000021` |
 | a **LEI**, or a filings.xbrl.org filing id | `lei:213800H2PQMIF3OVZY47` |
-| a local filing | an inline `.htm`, an instance `.xml`, a directory, a `.zip` package |
+| a local filing | an inline `.htm`, an instance `.xml`, a directory, a `.zip` or `.xbri` package |
 | a **taxonomy** published on its own, by path or URL | `us-gaap-2025.zip`, `https://xbrl.fasb.org/us-gaap/2026/us-gaap-2026.zip`, an unpacked taxonomy directory |
 | a **JSON report**, by path or URL | `.clawdog.jsonld`, `.tavi.json`, `.holon.jsonld`, or a `model.json` from `export_filing` |
 | a URL Arelle can load | any of the above on the web |
@@ -51,6 +51,10 @@ parse) and concept references; the TAVI fallback also drops the definition arcs
 a hypercube cannot express. It is as current as the xbrlkit that processed it. So the answer says which one you have: `load_filing` and `describe_filing`
 return `read_from`, `{"kind": "published", "url": …}` for a CDN copy, or
 `edgar`, `file`, `url` or `filings.xbrl.org` otherwise.
+
+A filing loaded without a taxonomy whose host has gone — every Danish ESEF
+report cites one — says that too: `missing_taxonomy` names the documents and
+counts the facts that are in the report and not in the model.
 
 To read the filing itself, parse it from EDGAR:
 

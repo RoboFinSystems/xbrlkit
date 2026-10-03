@@ -39,6 +39,7 @@ from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import (
   FilingSession,
   LoadedFiling,
+  MissingTaxonomy,
   SourceError,
   TaxonomyEntry,
   TextSection,
@@ -489,7 +490,15 @@ def list_filings(session: FilingSession) -> dict[str, Any]:
   return {"filings": rows, "count": len(rows)}
 
 
-LOAD_RECEIPT_KEYS = ("profile", "read_from", "taxonomy", "filing", "entity", "counts")
+LOAD_RECEIPT_KEYS = (
+  "profile",
+  "read_from",
+  "taxonomy",
+  "missing_taxonomy",
+  "filing",
+  "entity",
+  "counts",
+)
 
 
 def load_receipt(
@@ -632,6 +641,11 @@ def describe_filing(
     },
     **({"read_from": lf.read_from} if lf.read_from else {}),
     **({"taxonomy": _describe_taxonomy(lf.taxonomy)} if lf.taxonomy else {}),
+    **(
+      {"missing_taxonomy": _describe_missing(lf.missing_taxonomy)}
+      if lf.missing_taxonomy
+      else {}
+    ),
     "filing": {
       "id": lf.id,
       "source": lf.source,
@@ -706,6 +720,20 @@ def describe_filing(
       "note": "offsets index into the plain text that search_text and read_text read",
     },
     "next": _next_steps(lf),
+  }
+
+
+def _describe_missing(missing: MissingTaxonomy) -> dict[str, Any]:
+  """What the filing was loaded without, so no answer is read as the whole."""
+  return {
+    "documents": missing.documents,
+    "facts_not_loaded": sum(missing.facts.values()),
+    "by_prefix": missing.facts,
+    "note": (
+      "the filing also tags facts against a taxonomy its host no longer "
+      "serves; those facts are in the report and not in this model. Everything "
+      "tagged against the taxonomies that resolved is here."
+    ),
   }
 
 

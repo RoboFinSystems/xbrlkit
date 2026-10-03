@@ -1292,6 +1292,330 @@ def test_entry_point_is_refused_where_there_is_no_package(tmp_path: Path) -> Non
     session.close()
 
 
+def _report_package(root: Path) -> Path:
+  """A report package the way an ESEF filer ships one: the report under
+  ``reports/``, the filer's own taxonomy in a directory named for their domain,
+  and a catalog mapping that domain into the package."""
+  pkg = root / "acme-2025-12-31"
+  (pkg / "META-INF").mkdir(parents=True)
+  (pkg / "META-INF" / "taxonomyPackage.xml").write_text(
+    "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package'/>"
+  )
+  (pkg / "META-INF" / "catalog.xml").write_text(
+    "<catalog xmlns='urn:oasis:names:tc:entity:xmlns:xml:catalog'>"
+    "<rewriteURI uriStartString='http://acme.example/' rewritePrefix='../acme.example/'/>"
+    "</catalog>"
+  )
+  (pkg / "acme.example").mkdir()
+  (pkg / "acme.example" / "acme-2025.xsd").write_text(f"<xs:schema {XS}/>")
+  (pkg / "reports").mkdir()
+  (pkg / "reports" / "acme-2025-12-31.xhtml").write_text(
+    "<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'><body><ix:header/></body></html>"
+  )
+  return root
+
+
+@pytest.mark.parametrize("suffix", [".zip", ".xbri", ".xbr"])
+def test_a_report_package_loads_from_the_report_inside_it(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+  """A report package is a zip under its own extension — ``.xbri`` is what the
+  newest ESEF filings arrive as — and loads as one."""
+  parsed: list[tuple[Path, list[Path] | None]] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append((Path(target), packages))
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  archive = _zip(_report_package(tmp_path / "tree"), tmp_path / f"acme-2025{suffix}")
+  session = FilingSession()
+  try:
+    session.load(str(archive))
+    target, packages = parsed[-1]
+    assert target.name == "acme-2025-12-31.xhtml"
+    # The archive is what Arelle registers, so the catalog inside it applies.
+    assert packages == [archive]
+  finally:
+    session.close()
+
+
+def test_a_report_package_loads_by_url(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  parsed: list[Path] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append(Path(target))
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  archive = _zip(_report_package(tmp_path / "tree"), tmp_path / "acme-2025.xbri")
+  session = FilingSession()
+
+  def fake_fetch(url: str, into: Path | None = None) -> Path:
+    assert into is not None
+    return Path(shutil.copy(archive, into / Path(url).name))
+
+  monkeypatch.setattr(session, "_fetch", fake_fetch)
+  try:
+    session.load("https://reports.example/acme/acme-2025.xbri")
+    assert parsed[-1].name == "acme-2025-12-31.xhtml"
+  finally:
+    session.close()
+
+
+def test_an_unresolved_taxonomy_is_named_rather_than_called_not_xbrl(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A report whose taxonomy could not be fetched is XBRL; the error names the
+  document that failed instead of saying the report is not one."""
+  from xbrlkit import parse
+  from xbrlkit.parse import DtsResolutionError
+
+  gone = "https://taxonomy.example/2025/entry-point.xsd"
+
+  def refuse(source, **kwargs):
+    raise DtsResolutionError(str(source), [gone])
+
+  monkeypatch.setattr(parse, "load_model", refuse)
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html/>")
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError) as excinfo:
+      session.load(str(report))
+    assert gone in str(excinfo.value)
+    assert "not an XBRL" not in str(excinfo.value)
+  finally:
+    session.close()
+
+
+def _arelle_returns(
+  monkeypatch: pytest.MonkeyPatch,
+  model: XbrlModel,
+  tagged: dict[str, bool],
+  unresolved: list[str],
+) -> None:
+  """Stand in for Arelle: ``model`` is what the parse yields, ``tagged`` the
+  inline facts of the report by name and whether a concept was found for each,
+  ``unresolved`` the taxonomy documents that did not arrive."""
+  from types import SimpleNamespace
+
+  from xbrlkit import parse
+  from xbrlkit.parse import LoadState
+  from xbrlkit.serve import session as session_module
+
+  def fact(name: str, defined: bool) -> SimpleNamespace:
+    return SimpleNamespace(
+      concept=object() if defined else None,
+      get=lambda key: name if key == "name" else None,
+    )
+
+  # Arelle leaves an inline fact with no concept out of the model's facts; it
+  # is still an element of the inline document.
+  report_html = SimpleNamespace(
+    modelDocument=SimpleNamespace(ixNStag="{ix}"),
+    iterdescendants=lambda *tags: iter([fact(n, d) for n, d in tagged.items()]),
+  )
+  mx = SimpleNamespace(
+    modelManager=SimpleNamespace(cntlr=object()),
+    ixdsHtmlElements=[report_html],
+    undefinedFacts=[],
+  )
+  state = LoadState(unresolved=list(unresolved))
+  monkeypatch.setattr(parse, "load_model", lambda source, **kwargs: mx)
+  monkeypatch.setattr(parse, "load_state", lambda cntlr: state)
+  monkeypatch.setattr(parse, "to_xbrl_model", lambda mx, filing, entity=None: model)
+  monkeypatch.setattr(parse, "close", lambda cntlr: None)
+  monkeypatch.setattr(
+    session_module, "_filing_meta_from_instance", lambda *a: _model().filing
+  )
+
+
+def test_a_load_says_which_taxonomy_it_went_without(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A filing loaded without a taxonomy whose host has gone reports it: the
+  documents that did not resolve and the facts tagged against them, which are
+  in the report and not in the model."""
+  gone = "http://archprod.service.eogs.dk/taxonomy/20241001/entry.xsd"
+  tagged = {
+    "gsd:NameOfSubmittingEnterprise": False,
+    "gsd:InformationOnTypeOfSubmittedReport": False,
+    "cmn:TypeOfAuditorAssistance": False,
+    "ifrs-full:Assets": True,
+  }
+  _arelle_returns(monkeypatch, _model(), tagged, unresolved=[gone])
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html/>")
+  session = FilingSession()
+  try:
+    lf = session.load(str(report))
+    assert lf.missing_taxonomy is not None
+    assert lf.missing_taxonomy.documents == [gone]
+    assert lf.missing_taxonomy.facts == {"gsd": 2, "cmn": 1}
+    receipt = tools.load_receipt(lf)
+    assert receipt["missing_taxonomy"]["facts_not_loaded"] == 3
+    assert receipt["missing_taxonomy"]["by_prefix"] == {"gsd": 2, "cmn": 1}
+    assert receipt["missing_taxonomy"]["documents"] == [gone]
+
+    # A filing that resolved everything says nothing about it.
+    _arelle_returns(monkeypatch, _model(), {"ifrs-full:Assets": True}, unresolved=[])
+    whole = session.load(str(report))
+    assert whole.missing_taxonomy is None
+    assert "missing_taxonomy" not in tools.describe_filing(whole)
+  finally:
+    session.close()
+
+
+def test_a_package_whose_taxonomy_cannot_be_read_is_refused_not_read_as_a_document(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A report in a package, every fact of which lost its concept — a catalog
+  that does not match the package's own layout — is not a document without
+  XBRL, and is not loaded as one."""
+  empty = XbrlModel(filing=_model().filing, entity=_model().entity)
+  tagged = {"ifrs-full:Assets": False, "ifrs-full:Revenue": False}
+  _arelle_returns(monkeypatch, empty, tagged, unresolved=[])
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError, match="2 facts and none has a concept") as excinfo:
+      session.load(str(_report_package(tmp_path)))
+    assert excinfo.type is SourceError
+  finally:
+    session.close()
+
+
+def test_a_report_saved_without_its_schema_still_reads_as_a_document(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """An inline report saved on its own has tags and no taxonomy beside it. It
+  is no package, and it loads as the document it is."""
+  empty = XbrlModel(filing=_model().filing, entity=_model().entity)
+  _arelle_returns(monkeypatch, empty, {"dei:DocumentType": False}, unresolved=[])
+  report = tmp_path / "acme-8k.htm"
+  report.write_text("<html><body><p>Acme Corp. current report.</p></body></html>")
+  session = FilingSession()
+  try:
+    lf = session.load(str(report))
+    assert lf.has_xbrl is False
+    assert "current report" in lf.text
+  finally:
+    session.close()
+
+
+def test_what_one_load_went_without_is_not_carried_to_the_next(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A load that fails after its parse must not leave its missing taxonomy
+  for the next filing to pick up."""
+  gone = "http://archprod.service.eogs.dk/taxonomy/20241001/entry.xsd"
+  _arelle_returns(monkeypatch, _model(), {"gsd:Name": False}, unresolved=[gone])
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html/>")
+  saved = tmp_path / "model.json"
+  saved.write_text(_model().model_dump_json())
+  session = FilingSession()
+  finish = FilingSession._finish
+
+  def fail(self, *args, **kwargs):
+    raise SourceError("the load failed after its parse")
+
+  try:
+    monkeypatch.setattr(FilingSession, "_finish", fail)
+    with pytest.raises(SourceError, match="after its parse"):
+      session.load(str(report))
+    monkeypatch.setattr(FilingSession, "_finish", finish)
+    assert session.load(str(saved)).missing_taxonomy is None
+  finally:
+    session.close()
+
+
+def test_a_package_that_is_not_a_zip_is_a_source_error(tmp_path: Path) -> None:
+  bogus = tmp_path / "acme-2025.xbri"
+  bogus.write_text("not a zip")
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError, match="not a zip archive"):
+      session.load(str(bogus))
+  finally:
+    session.close()
+
+
+def test_a_directory_named_like_a_package_loads_as_a_directory(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  parsed: list[list[Path] | None] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append(packages)
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  session = FilingSession()
+  try:
+    session.load(str(_report_package(tmp_path / "acme-2025.xbri")))
+    assert parsed == [None]
+  finally:
+    session.close()
+
+
+def _archive(path: Path, members: dict[str, str]) -> Path:
+  import zipfile
+
+  with zipfile.ZipFile(path, "w") as zf:
+    for name, content in members.items():
+      zf.writestr(name, content)
+  return path
+
+
+_REPORT = "<html xmlns:ix='http://www.xbrl.org/2013/inlineXBRL'><ix:header/></html>"
+_MANIFEST = "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package'/>"
+
+
+@pytest.mark.parametrize(
+  "members",
+  [
+    # Zipped on Windows by a tool that wrote the separator as a backslash.
+    {
+      "acme-2020-12-31\\META-INF\\taxonomyPackage.xml": _MANIFEST,
+      "acme-2020-12-31\\reports\\acme-2020-12-31.xhtml": _REPORT,
+    },
+    # The package one directory deeper than a package sits.
+    {
+      "acme/acme-2020-12-31/META-INF/taxonomyPackage.xml": _MANIFEST,
+      "acme/acme-2020-12-31/reports/acme-2020-12-31.xhtml": _REPORT,
+    },
+  ],
+  ids=["backslash-separators", "nested-one-deeper"],
+)
+def test_an_archive_not_laid_out_as_a_package_registers_from_its_manifest(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, members: dict[str, str]
+) -> None:
+  from xbrlkit.serve.session import _taxonomy_packages
+
+  parsed: list[tuple[Path, list[Path] | None]] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append((Path(target), packages))
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  session = FilingSession()
+  try:
+    session.load(str(_archive(tmp_path / "acme-2020-12-31.zip", members)))
+    target, packages = parsed[-1]
+    assert target.name == "acme-2020-12-31.xhtml"
+    assert target.parent.name == "reports"
+    # No archive is handed over, so the parse registers the unpacked manifest.
+    assert packages is None
+    manifest = target.parent.parent / "META-INF" / "taxonomyPackage.xml"
+    assert _taxonomy_packages(target) == [manifest]
+  finally:
+    session.close()
+
+
 # -- the pure profile and the document toggle -------------------------------------
 
 

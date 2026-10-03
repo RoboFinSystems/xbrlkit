@@ -18,12 +18,13 @@ import shutil
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Literal
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import requests
 from xml.etree import ElementTree
@@ -55,6 +56,8 @@ _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
 _PLAIN_SUFFIXES = {".txt", ".md"}
 # A report serialized as JSON — read into the model here, never by Arelle.
 _JSON_SUFFIXES = {".json", ".jsonld"}
+# A report package is a zip under its own extension: .xbri inline, .xbr not.
+_PACKAGE_SUFFIXES = {".zip", ".xbri", ".xbr"}
 # The published folder is keyed by filing year, ten-digit CIK and accession; the
 # accession's middle segment is the year it was assigned.
 _ACCESSION_YEAR_RE = re.compile(r"^\d{10}-(\d{2})-\d{6}$")
@@ -122,6 +125,16 @@ class TaxonomyEntry:
 
 
 @dataclass
+class MissingTaxonomy:
+  """What a filing loaded without: the taxonomy documents its host no longer
+  serves, and the facts tagged against them, counted by prefix. Those facts
+  are in the report and not in the model."""
+
+  documents: list[str]
+  facts: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
 class LoadedFiling:
   """One filing the server holds: the model plus its readable text.
 
@@ -165,6 +178,9 @@ class LoadedFiling:
   # schemas and linkbases and no report — and so holds concepts and networks
   # but no facts.
   taxonomy: TaxonomyEntry | None = None
+  # Set when the filing cites a taxonomy whose host has gone and was loaded
+  # without it.
+  missing_taxonomy: MissingTaxonomy | None = None
 
   @property
   def has_xbrl(self) -> bool:
@@ -356,6 +372,8 @@ class FilingSession:
     self._filers: dict[str, dict[str, Any]] = {}
     self._tmp = Path(tempfile.mkdtemp(prefix="xbrlkit-serve-"))
     self._lock = threading.Lock()
+    # What the last parse went without, until _finish puts it on the filing.
+    self._missing: MissingTaxonomy | None = None
 
   # -- lookup ---------------------------------------------------------------
 
@@ -405,6 +423,7 @@ class FilingSession:
       raise SourceError("An empty source.")
     entry_point = (entry_point or "").strip() or None
     with self._lock:
+      self._missing = None
       loaded = self._load(source, entry_point)
       if not loaded.read_from:
         loaded.read_from = _read_from(source)
@@ -476,7 +495,7 @@ class FilingSession:
   ) -> LoadedFiling:
     package_dir: Path | None = None
     taxonomy: TaxonomyEntry | None = None
-    is_package = path.is_dir() or path.suffix.lower() == ".zip"
+    is_package = path.is_dir() or path.suffix.lower() in _PACKAGE_SUFFIXES
     if entry_point and not is_package:
       raise SourceError(_ENTRY_POINT_NEEDS_A_PACKAGE.format(source=source))
     if path.is_file() and path.suffix.lower() in _JSON_SUFFIXES:
@@ -486,8 +505,7 @@ class FilingSession:
         package_dir = path
       else:
         package_dir = Path(tempfile.mkdtemp(prefix="zip-", dir=self._tmp))
-        with ZipFile(path) as archive:
-          archive.extractall(package_dir)
+        _unpack(path, package_dir)
       report = None if entry_point else _find_load_target(package_dir)
       if report is None:
         # No report in the package: a taxonomy published on its own, which
@@ -503,9 +521,16 @@ class FilingSession:
     # Arelle registers a taxonomy package from its archive or its manifest, and
     # the two are not interchangeable: one Dutch package's manifest raises
     # inside Arelle where the same package as a zip registers cleanly. The
-    # archive is the better form whenever it is still to hand.
+    # archive is the better form whenever it is still to hand — and is one
+    # Arelle can read: an archive laid out any other way registers from the
+    # manifest in the unpacked tree instead.
     packages: list[Path] | None = None
-    if path.suffix.lower() == ".zip" and _taxonomy_packages(target):
+    if (
+      path.is_file()
+      and path.suffix.lower() in _PACKAGE_SUFFIXES
+      and _taxonomy_packages(target)
+      and _is_package_archive(path)
+    ):
       packages = [path]
     if target.suffix.lower() in _PLAIN_SUFFIXES:
       # Arelle cannot read plain text and never could: a filing from the 1990s
@@ -594,7 +619,7 @@ class FilingSession:
     clean = Path(url.split("?", 1)[0])
     accession = clean.stem or url
     suffix = clean.suffix.lower()
-    if suffix == ".zip":
+    if suffix in _PACKAGE_SUFFIXES:
       # A package by URL is downloaded and loaded as a local one: the report
       # found inside it, or — for a taxonomy published on its own, which is
       # how FASB, XBRL US and the IFRS Foundation distribute theirs — an
@@ -1153,8 +1178,17 @@ class FilingSession:
     entity: EntityIdentity | None,
     packages: list[Path] | None = None,
   ) -> XbrlModel:
-    from xbrlkit.parse import close, load_model, to_xbrl_model
+    from xbrlkit.parse import (
+      DtsResolutionError,
+      close,
+      load_model,
+      load_state,
+      to_xbrl_model,
+    )
 
+    self._missing = None
+    if packages is None:
+      packages = _taxonomy_packages(target)
     with _ARELLE_LOCK:
       try:
         mx = load_model(
@@ -1162,20 +1196,43 @@ class FilingSession:
           cache_dir=self.config.arelle_cache_dir,
           offline=self.config.arelle_offline,
           timeout=self.config.arelle_timeout,
-          packages=_taxonomy_packages(target) if packages is None else packages,
+          packages=packages,
           config=self.config,
         )
+      except DtsResolutionError as exc:
+        # The report is XBRL; it is its taxonomy that did not arrive.
+        shown = ", ".join(exc.unresolved[:3])
+        more = len(exc.unresolved) - 3
+        raise SourceError(
+          f"{Path(str(target)).name} is XBRL, but {len(exc.unresolved)} taxonomy "
+          f"document(s) it depends on could not be fetched: {shown}"
+          f"{f' (+{more} more)' if more > 0 else ''}. The host has moved or gone, "
+          "the fetch was throttled, or this is an offline run with a cold cache."
+        ) from exc
       except RuntimeError as exc:
         raise SourceError(
           f"Arelle could not load {target}: not an XBRL or inline XBRL document "
           "it recognises (a TAVI, holon or OIM file needs its importer)."
         ) from exc
       try:
+        unresolved = list(load_state(mx.modelManager.cntlr).unresolved)
+        undefined = _undefined_facts(mx)
         if filing is None:
           filing = _filing_meta_from_instance(mx, target, accession)
         model = to_xbrl_model(mx, filing, entity=entity)
       finally:
         close(mx.modelManager.cntlr)
+    if packages and not model.facts and undefined:
+      # A package carries its taxonomy; a report in one whose every tag lost
+      # its concept is a broken package, not a document without XBRL. (A report
+      # saved on its own, without its schema, still reads as a document.)
+      cited = f" ({', '.join(unresolved[:3])})" if unresolved else ""
+      raise SourceError(
+        f"{Path(str(target)).name} tags {sum(undefined.values())} facts and none "
+        f"has a concept behind it: the taxonomy in its package could not be read"
+        f"{cited}. A catalog that does not match the package's own layout is the "
+        "usual cause."
+      )
     if not model.facts and not model.concepts:
       # Arelle accepts any HTML as an empty document. That is not a failure —
       # an 8-K, a proxy, a Form 4 all read this way — but it is the caller's
@@ -1184,6 +1241,8 @@ class FilingSession:
         f"{target} holds no XBRL facts or concepts: not an XBRL or inline XBRL "
         "document (a TAVI, holon or OIM file needs its importer)."
       )
+    if unresolved:
+      self._missing = MissingTaxonomy(unresolved, undefined)
     return _enrich_from_dei(model)
 
   def _finish(
@@ -1210,6 +1269,7 @@ class FilingSession:
     text, sections = (
       (read.text, read.sections) if read else (block_text, block_sections)
     )
+    missing, self._missing = self._missing, None
     return LoadedFiling(
       id=filing_id,
       source=source,
@@ -1224,6 +1284,7 @@ class FilingSession:
       block_sections=block_sections,
       has_document=read is not None,
       xml_document=read.xml_document if read else None,
+      missing_taxonomy=missing,
     )
 
 
@@ -1566,6 +1627,58 @@ _INLINE_NAMESPACES = (
   b"http://www.xbrl.org/2013/inlineXBRL",
   b"http://www.xbrl.org/2008/inlineXBRL",
 )
+
+
+def _unpack(archive: Path, into: Path) -> None:
+  """Unpack an archive, reading a backslash in a member name as the path
+  separator it was meant as.
+
+  Some first-year ESEF packages were zipped on Windows by tools that wrote
+  ``package\\reports\\report.xhtml`` as the name. Unpacked as written, that
+  is one file with backslashes in its name, in no directory at all, and the
+  package's catalog matches nothing.
+  """
+  try:
+    with ZipFile(archive) as zf:
+      for member in zf.infolist():
+        member.filename = member.filename.replace("\\", "/")
+        zf.extract(member, into)
+  except BadZipFile as exc:
+    raise SourceError(f"{archive.name} is not a zip archive.") from exc
+
+
+_PACKAGE_MANIFEST_RE = re.compile(r"[^/\\]+/META-INF/taxonomyPackage\.xml")
+
+
+def _is_package_archive(archive: Path) -> bool:
+  """Whether an archive is laid out as a taxonomy package — one top-level
+  directory holding ``META-INF`` — which is the only layout Arelle registers
+  from the archive itself."""
+  with ZipFile(archive) as zf:
+    return any(_PACKAGE_MANIFEST_RE.fullmatch(name) for name in zf.namelist())
+
+
+def _undefined_facts(mx: Any) -> dict[str, int]:
+  """The facts Arelle read with no concept behind them, counted by prefix.
+
+  An inline fact without a concept is reported and left out of the model's
+  facts, so the inline documents are walked for them; an instance element
+  lands in ``undefinedFacts``.
+  """
+  undefined = list(getattr(mx, "undefinedFacts", ()))
+  for html in getattr(mx, "ixdsHtmlElements", ()):
+    ix = html.modelDocument.ixNStag
+    tags = (ix + "nonNumeric", ix + "nonFraction", ix + "fraction")
+    undefined += [f for f in html.iterdescendants(*tags) if f.concept is None]
+  return dict(Counter(_tag_prefix(f) for f in undefined).most_common())
+
+
+def _tag_prefix(fact: Any) -> str:
+  """The prefix a fact was tagged with: an inline fact names its concept, an
+  instance element is one."""
+  name = fact.get("name") or ""
+  prefix = name.partition(":")[0] if ":" in name else getattr(fact, "prefix", None)
+  return prefix or "(no prefix)"
 
 
 def _taxonomy_packages(target: Path | str) -> list[Path]:

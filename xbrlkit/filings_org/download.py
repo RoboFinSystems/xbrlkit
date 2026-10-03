@@ -1,9 +1,10 @@
 """Fetching one filing from filings.xbrl.org.
 
-A filing arrives one of two ways. Most are a **taxonomy package** — a zip
-carrying the report and the filer's own extension taxonomy, which is what makes
-them loadable without reaching the filer's domain. The rest are a bare report,
-and those resolve their taxonomy over the network or not at all.
+A filing arrives one of two ways. Most are a **taxonomy package** — a zip, or
+in the newest filings a report package (``.xbri``), carrying the report and the
+filer's own extension taxonomy, which is what makes them loadable without
+reaching the filer's domain. The rest are a bare report, and those resolve
+their taxonomy over the network or not at all.
 """
 
 from __future__ import annotations

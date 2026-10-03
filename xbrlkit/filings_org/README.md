@@ -36,16 +36,21 @@ name comes from the index and its scheme is **ISO 17442**. That is what comes
 back from `describe_filing`, and it is the honest answer rather than an empty
 `cik` field.
 
-## Two things worth knowing before planning against it
+## Worth knowing before planning against it
 
 **It is not all of Europe.** Germany files to the Bundesanzeiger, which does
 not share, and has nothing in the index.
 
 **Being indexed is not being loadable.** A self-contained ESEF package loads; a
-national-GAAP filing depends on its national taxonomy host, and some of those
-have moved or gone. Of one filing sampled from each of thirteen countries,
-eleven load — Denmark's taxonomy entry point answers 404 and Ukraine's host
-does not resolve at all, which between them is 46% of the index.
+filing that depends on a national taxonomy host loads only while that host
+serves it. Ukraine's does not resolve at all, and its filings — over a third of
+the index — cannot be loaded.
+
+**Denmark loads without its national tags.** Every Danish report cites the
+Danish Business Authority's taxonomy beside the ESEF one, and that host answers
+404. The report loads with everything tagged against the taxonomies that
+resolved — the IFRS statements — and the load receipt's `missing_taxonomy`
+names the documents that did not and counts the facts left in the report.
 
 **A period that has not ended is not the latest filing, it is a mistake.** One
 Finnish filer's entry reports a period ending in 2031, so `lei:` passes over

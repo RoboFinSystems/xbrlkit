@@ -77,6 +77,11 @@ SCHEMA_HOSTS: tuple[str, ...] = (
   "xbrl.ifrs.org",
 )
 
+# Hosts that no longer serve the taxonomy filings still cite. Every Danish ESEF
+# report references the Danish Business Authority's taxonomy beside its own,
+# and that host answers 404; a document there is gone, not a failed fetch.
+GONE_TAXONOMY_HOSTS: tuple[str, ...] = ("archprod.service.eogs.dk",)
+
 # Fetch policy. ``FETCH_PER_SEC`` is per host and per process; a corpus run
 # across worker processes multiplies it, which is still well under what the
 # taxonomy hosts serve without complaint when the cache is warm.
@@ -156,7 +161,10 @@ def load_model(
   resolution on a URL that was never meant to be fetched.
 
   Raises :class:`DtsResolutionError` if any DTS document could not be
-  resolved, and ``RuntimeError`` if Arelle produced no document at all.
+  resolved, and ``RuntimeError`` if Arelle produced no document at all. A
+  document on one of :data:`GONE_TAXONOMY_HOSTS` is the exception: the model
+  comes back without the concepts it declares, and the URL stays on
+  ``load_state(cntlr).unresolved`` for the caller to report.
 
   The controller stays open — its C-extension model is live and the caller
   owns it. Pass ``mx.modelManager.cntlr`` to :func:`close` when done.
@@ -173,11 +181,23 @@ def load_model(
     close(cntlr)
     raise RuntimeError(f"Arelle failed to load an XBRL document from: {source}")
   state = load_state(cntlr)
-  if state.unresolved:
+  if any(not _is_gone(url) for url in state.unresolved):
     unresolved = list(state.unresolved)
     close(cntlr)
     raise DtsResolutionError(str(source), unresolved)
+  if state.unresolved:
+    logger.warning(
+      "loaded %s without %d taxonomy document(s) on a host that has gone: %s",
+      source,
+      len(state.unresolved),
+      ", ".join(state.unresolved),
+    )
   return mx
+
+
+def _is_gone(url: str) -> bool:
+  """Whether ``url`` is on a host known to no longer serve its taxonomy."""
+  return (urlparse(url).hostname or "") in GONE_TAXONOMY_HOSTS
 
 
 def _register_packages(cntlr: Any, packages: Sequence[str | Path]) -> None:
