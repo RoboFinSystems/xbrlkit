@@ -1469,22 +1469,94 @@ def test_a_load_says_which_taxonomy_it_went_without(
     session.close()
 
 
-def test_a_tagged_report_with_no_taxonomy_is_refused_not_read_as_a_document(
+def test_a_package_whose_taxonomy_cannot_be_read_is_refused_not_read_as_a_document(
   tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-  """A report whose every fact lost its concept — a package whose catalog does
-  not match its own layout — is not a document without XBRL, and is not
-  loaded as one."""
+  """A report in a package, every fact of which lost its concept — a catalog
+  that does not match the package's own layout — is not a document without
+  XBRL, and is not loaded as one."""
   empty = XbrlModel(filing=_model().filing, entity=_model().entity)
   tagged = {"ifrs-full:Assets": False, "ifrs-full:Revenue": False}
   _arelle_returns(monkeypatch, empty, tagged, unresolved=[])
-  report = tmp_path / "acme-2025-12-31.xhtml"
-  report.write_text("<html><body>Annual report</body></html>")
   session = FilingSession()
   try:
     with pytest.raises(SourceError, match="2 facts and none has a concept") as excinfo:
-      session.load(str(report))
+      session.load(str(_report_package(tmp_path)))
     assert excinfo.type is SourceError
+  finally:
+    session.close()
+
+
+def test_a_report_saved_without_its_schema_still_reads_as_a_document(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """An inline report saved on its own has tags and no taxonomy beside it. It
+  is no package, and it loads as the document it is."""
+  empty = XbrlModel(filing=_model().filing, entity=_model().entity)
+  _arelle_returns(monkeypatch, empty, {"dei:DocumentType": False}, unresolved=[])
+  report = tmp_path / "acme-8k.htm"
+  report.write_text("<html><body><p>Acme Corp. current report.</p></body></html>")
+  session = FilingSession()
+  try:
+    lf = session.load(str(report))
+    assert lf.has_xbrl is False
+    assert "current report" in lf.text
+  finally:
+    session.close()
+
+
+def test_what_one_load_went_without_is_not_carried_to_the_next(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  """A load that fails after its parse must not leave its missing taxonomy
+  for the next filing to pick up."""
+  gone = "http://archprod.service.eogs.dk/taxonomy/20241001/entry.xsd"
+  _arelle_returns(monkeypatch, _model(), {"gsd:Name": False}, unresolved=[gone])
+  report = tmp_path / "acme-2025-12-31.xhtml"
+  report.write_text("<html/>")
+  saved = tmp_path / "model.json"
+  saved.write_text(_model().model_dump_json())
+  session = FilingSession()
+  finish = FilingSession._finish
+
+  def fail(self, *args, **kwargs):
+    raise SourceError("the load failed after its parse")
+
+  try:
+    monkeypatch.setattr(FilingSession, "_finish", fail)
+    with pytest.raises(SourceError, match="after its parse"):
+      session.load(str(report))
+    monkeypatch.setattr(FilingSession, "_finish", finish)
+    assert session.load(str(saved)).missing_taxonomy is None
+  finally:
+    session.close()
+
+
+def test_a_package_that_is_not_a_zip_is_a_source_error(tmp_path: Path) -> None:
+  bogus = tmp_path / "acme-2025.xbri"
+  bogus.write_text("not a zip")
+  session = FilingSession()
+  try:
+    with pytest.raises(SourceError, match="not a zip archive"):
+      session.load(str(bogus))
+  finally:
+    session.close()
+
+
+def test_a_directory_named_like_a_package_loads_as_a_directory(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  parsed: list[list[Path] | None] = []
+
+  def fake_parse(self, target, accession, filing, entity, packages=None):
+    parsed.append(packages)
+    return _model()
+
+  monkeypatch.setattr(FilingSession, "_parse", fake_parse)
+  session = FilingSession()
+  try:
+    session.load(str(_report_package(tmp_path / "acme-2025.xbri")))
+    assert parsed == [None]
   finally:
     session.close()
 
@@ -1518,7 +1590,7 @@ _MANIFEST = "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package
   ],
   ids=["backslash-separators", "nested-one-deeper"],
 )
-def test_a_package_arelle_cannot_register_as_an_archive_registers_from_its_manifest(
+def test_an_archive_not_laid_out_as_a_package_registers_from_its_manifest(
   tmp_path: Path, monkeypatch: pytest.MonkeyPatch, members: dict[str, str]
 ) -> None:
   from xbrlkit.serve.session import _taxonomy_packages

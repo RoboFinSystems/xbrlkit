@@ -381,7 +381,7 @@ class TestLoadModel:
     mx = load_model(instance, tmp_path / "cache", offline=True)
     try:
       assert arelle_load.load_state(mx.modelManager.cntlr).unresolved == [gone]
-      assert gone in caplog.text
+      assert "on a host that has gone" in caplog.text
     finally:
       arelle_load.close(mx.modelManager.cntlr)
 

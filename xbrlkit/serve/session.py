@@ -24,7 +24,7 @@ from datetime import date
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Literal
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import requests
 from xml.etree import ElementTree
@@ -526,7 +526,8 @@ class FilingSession:
     # manifest in the unpacked tree instead.
     packages: list[Path] | None = None
     if (
-      path.suffix.lower() in _PACKAGE_SUFFIXES
+      path.is_file()
+      and path.suffix.lower() in _PACKAGE_SUFFIXES
       and _taxonomy_packages(target)
       and _is_package_archive(path)
     ):
@@ -1186,6 +1187,8 @@ class FilingSession:
     )
 
     self._missing = None
+    if packages is None:
+      packages = _taxonomy_packages(target)
     with _ARELLE_LOCK:
       try:
         mx = load_model(
@@ -1193,7 +1196,7 @@ class FilingSession:
           cache_dir=self.config.arelle_cache_dir,
           offline=self.config.arelle_offline,
           timeout=self.config.arelle_timeout,
-          packages=_taxonomy_packages(target) if packages is None else packages,
+          packages=packages,
           config=self.config,
         )
       except DtsResolutionError as exc:
@@ -1219,13 +1222,15 @@ class FilingSession:
         model = to_xbrl_model(mx, filing, entity=entity)
       finally:
         close(mx.modelManager.cntlr)
-    if not model.facts and undefined:
-      # Tagged, and every tag lost its concept: not a document without XBRL.
+    if packages and not model.facts and undefined:
+      # A package carries its taxonomy; a report in one whose every tag lost
+      # its concept is a broken package, not a document without XBRL. (A report
+      # saved on its own, without its schema, still reads as a document.)
       cited = f" ({', '.join(unresolved[:3])})" if unresolved else ""
       raise SourceError(
         f"{Path(str(target)).name} tags {sum(undefined.values())} facts and none "
-        f"has a concept behind it: the taxonomy it references could not be read"
-        f"{cited}. A package whose catalog does not match its own layout is the "
+        f"has a concept behind it: the taxonomy in its package could not be read"
+        f"{cited}. A catalog that does not match the package's own layout is the "
         "usual cause."
       )
     if not model.facts and not model.concepts:
@@ -1633,10 +1638,13 @@ def _unpack(archive: Path, into: Path) -> None:
   is one file with backslashes in its name, in no directory at all, and the
   package's catalog matches nothing.
   """
-  with ZipFile(archive) as zf:
-    for member in zf.infolist():
-      member.filename = member.filename.replace("\\", "/")
-      zf.extract(member, into)
+  try:
+    with ZipFile(archive) as zf:
+      for member in zf.infolist():
+        member.filename = member.filename.replace("\\", "/")
+        zf.extract(member, into)
+  except BadZipFile as exc:
+    raise SourceError(f"{archive.name} is not a zip archive.") from exc
 
 
 _PACKAGE_MANIFEST_RE = re.compile(r"[^/\\]+/META-INF/taxonomyPackage\.xml")
