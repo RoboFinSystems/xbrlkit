@@ -1962,11 +1962,16 @@ def _identify_from_xml(
 _COVER_FORM_RE = re.compile(
   r"\bFORM\s+(10-K|10-Q|20-F|40-F|8-K|S-1|S-3|DEF\s*14A)\b", re.IGNORECASE
 )
+# A cover names its form within a few hundred characters. Past that, "Form
+# 10-K" is a citation — a press release's safe harbor pointing at the annual
+# report — and the document is not one.
+_COVER_CHARS = 2_000
 
 
 def _form_on_the_cover(html: str) -> str | None:
   """The form a document names on its cover, from the top of the document."""
-  m = _COVER_FORM_RE.search(_html_to_text(html[:400_000]))
+  text = _html_to_text(html[:400_000])[:_COVER_CHARS]
+  m = _COVER_FORM_RE.search(text)
   return re.sub(r"\s+", " ", m.group(1)).upper() if m else None
 
 

@@ -35,7 +35,12 @@ from xbrlkit.model import (
 )
 from xbrlkit.serve import FilingSession, LoadedFiling, SourceError, build_text
 from xbrlkit.serve import tools
-from xbrlkit.serve.session import _find_load_target, _locate, _restore_sec_identity
+from xbrlkit.serve.session import (
+  _find_load_target,
+  _form_on_the_cover,
+  _locate,
+  _restore_sec_identity,
+)
 
 US_GAAP = "http://fasb.org/us-gaap/2024-01-31"
 IS_ROLE = "http://acme.example/role/StatementOfIncome"
@@ -740,6 +745,21 @@ def test_locate_matches_across_renderings() -> None:
   assert _locate(text, block) == text.index("\nNOTE 19.") + 1
   assert _locate(text, "nothing here at all whatsoever") is None
   assert _locate(text, "NOTE 19. Commitments") is None  # too short to trust
+
+
+def test_form_on_the_cover_reads_only_the_cover() -> None:
+  cover = (
+    "<p>UNITED STATES SECURITIES AND EXCHANGE COMMISSION</p>"
+    "<p>Washington, D.C. 20549</p><p>FORM 8-K</p><p>CURRENT REPORT</p>"
+  )
+  assert _form_on_the_cover(cover) == "8-K"
+  # A press release cites the annual report in its safe harbor; it is not one.
+  release = (
+    "<p>Workiva Announces Second Quarter 2026 Financial Results</p>"
+    + "<p>Revenue grew.</p>" * 300
+    + "<p>See our annual report on Form 10-K for risk factors.</p>"
+  )
+  assert _form_on_the_cover(release) is None
 
 
 def test_locate_skips_a_contents_row_that_carries_the_whole_heading() -> None:
