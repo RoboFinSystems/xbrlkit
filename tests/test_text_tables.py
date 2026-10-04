@@ -77,6 +77,12 @@ class TestParseRows:
   def test_empty_table(self):
     assert _parse_rows("<table></table>") == []
 
+  def test_self_closing_cell_is_empty(self):
+    """Apple's filer writes spacers as ``<td colspan="3" />``; read as an open
+    tag one swallowed the next cell, and the row came up a column short."""
+    html = '<tr><td>Europe</td><td colspan="3" /><td>111,032</td><td/></tr>'
+    assert _parse_rows(html) == [[("Europe", 1), ("", 3), ("111,032", 1), ("", 1)]]
+
 
 @pytest.mark.unit
 class TestMergeCurrencyCells:
@@ -107,6 +113,70 @@ class TestMergeCurrencyCells:
     rows = [[("A", 1), ("B", 1), ("C", 1)]]
     result = _merge_currency_cells(rows)
     assert result == [["A", "B", "C"]]
+
+  def test_dollar_rows_stay_in_their_columns(self):
+    """A "$" merge used to drop the symbol's cell, so every value after it
+    moved one column left of the rows without one."""
+    rows = [
+      [
+        ("Income", 1),
+        ("$", 1),
+        ("11,670", 1),
+        ("", 1),
+        ("$", 1),
+        ("(22,146", 1),
+        (")", 1),
+      ],
+      [
+        ("Add back", 1),
+        ("", 1),
+        ("29,751", 1),
+        ("", 1),
+        ("", 1),
+        ("28,467", 1),
+        ("", 1),
+      ],
+    ]
+    result = _merge_currency_cells(rows)
+    assert result == [
+      ["Income", "$11,670", "$(22,146)"],
+      ["Add back", "29,751", "28,467"],
+    ]
+
+  def test_values_spanning_the_symbol_column_align(self):
+    """Workiva's layout: a value with no "$" spans the symbol and number
+    columns (colspan 2), as the period header spans all three, so both start
+    in the symbol's column while a "$" value sits one to the right."""
+    rows = [
+      [("", 1), ("2026", 3), ("", 1), ("2025", 3)],
+      [
+        ("Income", 1),
+        ("$", 1),
+        ("11,670", 1),
+        ("", 1),
+        ("", 1),
+        ("$", 1),
+        ("8,233", 1),
+        ("", 1),
+      ],
+      [("Add back", 1), ("29,751", 2), ("", 1), ("", 1), ("28,467", 2), ("", 1)],
+    ]
+    result = _merge_currency_cells(rows)
+    assert result == [
+      ["", "2026", "2025"],
+      ["Income", "$11,670", "$8,233"],
+      ["Add back", "29,751", "28,467"],
+    ]
+
+  def test_symbol_column_holding_values_is_kept(self):
+    """A column that holds a value in the same row as its neighbour is a
+    column in its own right, not a symbol's, and is not joined."""
+    rows = [
+      [("A", 1), ("$", 1), ("1", 1)],
+      [("B", 1), ("2", 1), ("3", 1)],
+    ]
+    result = _merge_currency_cells(rows)
+    assert result == [["A", "", "$1"], ["B", "2", "3"]]
 
 
 @pytest.mark.unit
