@@ -2586,6 +2586,63 @@ def test_an_8k_whose_exhibits_cannot_be_reached_loads_alone(
     session.close()
 
 
+def test_without_the_whole_text_an_8k_still_points_at_documents(
+  tmp_path: Path, monkeypatch: Any
+) -> None:
+  """Under pure, or reading the tagged text alone, the exhibits are not in the
+  text the tools search, so the note cannot send the caller there."""
+  path = tmp_path / "acme-8k.htm"
+  path.write_text(_EIGHT_K)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    lf.model.filing.items = ["2.02", "9.01"]
+    stub = _EightKExhibits()
+    monkeypatch.setattr(session, "other_documents", stub.other_documents)
+    monkeypatch.setattr(session, "read_other_document", stub.read_other_document)
+    lf = session._with_exhibits(lf)
+    for pure, whole in ((True, False), (True, True), (False, False)):
+      out = tools.describe_filing(lf, pure=pure, whole=whole)
+      assert "documents" in out["filing"]["items_note"], (pure, whole)
+      assert "part of this text" not in out["filing"]["items_note"], (pure, whole)
+      assert not out["next"][0].startswith("read_text from the EX-99.1")
+  finally:
+    session.close()
+
+
+def test_an_exhibit_out_of_reach_leaves_the_others(
+  tmp_path: Path, monkeypatch: Any
+) -> None:
+  from xbrlkit.edgar.filing_index import FilingDocument
+  from xbrlkit.serve.session import ReadDocument
+
+  path = tmp_path / "acme-8k.htm"
+  path.write_text(_EIGHT_K)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    documents = [
+      FilingDocument(seq=2, type="EX-99", document="slides.htm"),
+      FilingDocument(seq=3, type="EX-99", document="script.htm"),
+      FilingDocument(seq=4, type="EX-99", document="gone.htm"),
+    ]
+
+    def read(lf: object, name: str) -> ReadDocument:
+      if name == "gone.htm":
+        raise SourceError("404")
+      return ReadDocument(f"the {name.split('.')[0]}", [])
+
+    monkeypatch.setattr(session, "other_documents", lambda lf: documents)
+    monkeypatch.setattr(session, "read_other_document", read)
+    lf = session._with_exhibits(lf)
+    ids = [s.id for s in lf.sections if s.kind == "item" and s.id.startswith("ex_")]
+    # Two exhibits typed plain EX-99 each keep a section of their own.
+    assert ids == ["ex_99", "ex_99_2"]
+    assert "the slides" in lf.text and "the script" in lf.text
+  finally:
+    session.close()
+
+
 def test_only_an_8k_reaches_for_its_exhibits(tmp_path: Path, monkeypatch: Any) -> None:
   path = tmp_path / "form10-k.htm"
   path.write_text("<html><body><p>FORM 10-K</p><p>Annual report.</p></body></html>")

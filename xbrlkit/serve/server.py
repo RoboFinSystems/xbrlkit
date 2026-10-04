@@ -120,10 +120,12 @@ exist. On a 2.02, read the EX-99.1: it carries what the company leads with — \
 non-GAAP measures, adjusted EBITDA, segment detail, guidance — which no XBRL \
 anywhere holds, and it lands weeks before the 10-Q that restates part of it \
 in GAAP. Treat it as a primary source, not as a supplement to the 10-Q.
-- An 8-K loaded from EDGAR is read with its EX-99 exhibits: each is a section \
-of the same text, under `sections.items` with its offset, so search_text \
-finds the release and read_text pages it. An exhibit loaded on its own, by its \
-URL, reads as a document with no filing around it.
+- An 8-K loaded from EDGAR is read with its EX-99 exhibits: while the text \
+tools read the whole document, each is a section of the same text, under \
+`sections.items` with its offset, so search_text finds the release and \
+read_text pages it. describe_filing's items_note says which way in applies; \
+reading the tagged text alone, it is documents and read_document. An exhibit \
+loaded on its own, by its URL, reads as a document with no filing around it.
 
 RECORDS (XML filings)
 - records returns the form's own tables — a Form 4's transactions and \
@@ -697,8 +699,9 @@ def build_server(
       "What else was filed with this filing — the exhibits, and any second "
       "document the content actually lives in (an 8-K's EX-99.1 press "
       "release, a 13F's INFORMATION TABLE of holdings). An 8-K's EX-99 "
-      "exhibits are already in its text, for search_text and read_text; this "
-      "lists them with the rest. Costs one small fetch the first time and "
+      "exhibits are also in its text while the text tools read whole "
+      "documents; this lists them with the rest. Costs one small fetch the "
+      "first time and "
       "nothing after. "
       "Every document carries its URL and says whether read_document can read "
       "it: a PDF or an image is listed with its address so a caller that can "

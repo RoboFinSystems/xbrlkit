@@ -766,16 +766,28 @@ class FilingSession:
         for d in self.other_documents(lf)
         if d.type.upper().startswith(_CURRENT_REPORT_EXHIBIT) and d.is_readable
       ]
-      read = [(d, self.read_other_document(lf, d.document)) for d in exhibits]
     except (SourceError, requests.RequestException, OSError) as exc:
       logger.warning("%s loads without its exhibits: %s", lf.accession, exc)
       return lf
-    if not read:
+    read: list[tuple[FilingDocument, ReadDocument]] = []
+    for d in exhibits:
+      try:
+        read.append((d, self.read_other_document(lf, d.document)))
+      except (SourceError, requests.RequestException, OSError) as exc:
+        # One exhibit out of reach leaves the others in the text.
+        logger.warning("%s loads without %s: %s", lf.accession, d.document, exc)
+    if not any(r.text for _, r in read):
       return lf
     parts = [(FORM_SECTION_ID, f"Form {form}", lf.text, lf.sections)]
-    parts += [
-      (_exhibit_section_id(d.type), d.type.upper(), r.text, r.sections) for d, r in read
-    ]
+    taken = {FORM_SECTION_ID}
+    for d, r in read:
+      # Two exhibits typed plain "EX-99" would otherwise share one id.
+      section_id = base = _exhibit_section_id(d.type)
+      n = 2
+      while section_id in taken:
+        section_id, n = f"{base}_{n}", n + 1
+      taken.add(section_id)
+      parts.append((section_id, d.type.upper(), r.text, r.sections))
     lf.text, lf.sections = join_texts(parts)
     lf.exhibits_in_text = [d.type.upper() for d, r in read if r.text]
     return lf
