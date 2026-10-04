@@ -108,36 +108,44 @@ def is_earnings_release(codes: list[str] | None) -> bool:
   return EARNINGS_ITEM in (codes or [])
 
 
-def items_note(codes: list[str] | None) -> str | None:
+def items_note(codes: list[str] | None, exhibits_in_text: bool = False) -> str | None:
   """What a reader should do next, given what the filing is coded as.
 
   An 8-K's tagged content is its cover page; the substance is the exhibit. The
   note says so, and says it most strongly where the exhibit is the earnings
   release — the numbers a company leads with, which no XBRL anywhere carries.
+  ``exhibits_in_text`` when the exhibits were read into the filing's text, so
+  the text tools reach them and ``documents`` is not the way in.
   """
   codes = codes or []
   if not codes:
     return None
+  if exhibits_in_text:
+    reach = (
+      "The exhibits are part of this text, each under `sections.items` with "
+      "its `offset`: read_text from one, or search_text across the 8-K and "
+      "all of them."
+    )
+  else:
+    reach = "Call documents, then read_document on the exhibit."
   if is_earnings_release(codes):
     return (
       "Item 2.02 — this is an earnings release. The results are in the "
       "attached exhibit (usually EX-99.1), not in this filing's XBRL, which "
-      "is the cover page only. Call documents, then read_document on the "
-      "EX-99.1. The exhibit carries what the company leads with — non-GAAP "
-      "measures, adjusted EBITDA, segment detail and guidance — which no XBRL "
-      "holds, and it arrives weeks before the 10-Q that restates part of it."
+      f"is the cover page only. {reach} The exhibit carries what the company "
+      "leads with — non-GAAP measures, adjusted EBITDA, segment detail and "
+      "guidance — which no XBRL holds, and it arrives weeks before the 10-Q "
+      "that restates part of it."
     )
   if FD_ITEM in codes:
     return (
       "Item 7.01 — Regulation FD disclosure. The substance is normally an "
-      "exhibit (a presentation, a script, a release): call documents, then "
-      "read_document."
+      f"exhibit (a presentation, a script, a release). {reach}"
     )
   if EXHIBITS_ITEM in codes:
     return (
       "This 8-K has exhibits (Item 9.01) and an 8-K's tagged content is its "
-      "cover page, so the substance is in them: call documents, then "
-      "read_document."
+      f"cover page, so the substance is in them. {reach}"
     )
   return (
     "An 8-K's tagged content is its cover page; anything more is in the "

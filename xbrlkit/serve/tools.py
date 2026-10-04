@@ -663,7 +663,10 @@ def describe_filing(
       "extension_namespace": filing.extension_namespace,
       "taxonomies": len(filing.taxonomy_namespaces),
       **(
-        {"items": describe_items(filing.items), "items_note": items_note(filing.items)}
+        {
+          "items": describe_items(filing.items),
+          "items_note": items_note(filing.items, bool(lf.exhibits_in_text)),
+        }
         if filing.items
         else {}
       ),
@@ -774,7 +777,13 @@ def _next_steps(lf: LoadedFiling) -> list[str]:
       "calculation for what sums to a total, where the taxonomy has calculation arcs",
     ]
   exhibit_first: list[str] = []
-  if is_earnings_release(lf.model.filing.items):
+  if lf.exhibits_in_text:
+    exhibit_first = [
+      f"read_text from the {lf.exhibits_in_text[0]} `offset` in `sections.items` "
+      "— the exhibits are part of this text",
+      "search_text for a figure or a phrase across the 8-K and its exhibits",
+    ]
+  elif is_earnings_release(lf.model.filing.items):
     exhibit_first = [
       "documents, then read_document on the EX-99.1 — Item 2.02 means the "
       "results are in the attached release, not in this filing's XBRL",

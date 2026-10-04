@@ -19,7 +19,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from collections.abc import Mapping
@@ -51,6 +51,13 @@ from xbrlkit.text.xml import XmlDocument, parse_xml_document, raw_document_name
 from xbrlkit.text.xml import render as render_xml
 
 SectionKind = Literal["item", "text_block", "records"]
+
+# An 8-K's own text is its cover and its items; what it discloses — the
+# release, the slides, the script — is an EX-99 filed beside it, so the two
+# are read as one text.
+_CURRENT_REPORT_FORMS = frozenset({"8-K", "8-K/A"})
+_CURRENT_REPORT_EXHIBIT = "EX-99"
+FORM_SECTION_ID = "form_8k"
 
 _INLINE_SUFFIXES = {".htm", ".html", ".xhtml"}
 _PLAIN_SUFFIXES = {".txt", ".md"}
@@ -162,6 +169,9 @@ class LoadedFiling:
   # and each one read on first read. Nothing is fetched until something asks.
   other_documents: list[FilingDocument] | None = None
   read_documents: dict[str, "ReadDocument"] = field(default_factory=dict)
+  # The exhibits read into ``text`` after the filing's own document, by type
+  # (``EX-99.1``): an 8-K's release, searched and paged with the form.
+  exhibits_in_text: list[str] = field(default_factory=list)
   # The document the filing was loaded from, when it already is one of the
   # serializations this server hands out (a holon, a TAVI), and which one.
   # ``view_filing`` serves that document as it is rather than a re-projection
@@ -737,6 +747,39 @@ class FilingSession:
     lf.read_documents[match.document] = read
     return read
 
+  def _with_exhibits(self, lf: LoadedFiling) -> LoadedFiling:
+    """An 8-K read with its EX-99 exhibits, one text the text tools search.
+
+    Read alone, an 8-K is a cover page and a line saying a release was
+    furnished: a search for anything the release says finds nothing, and the
+    caller is left to know the exhibit is a second document. Costs the index
+    fetch ``documents`` makes and one fetch per exhibit, both kept for
+    ``read_document``. A filing whose exhibits cannot be reached loads as its
+    8-K alone, as it did before.
+    """
+    form = (lf.model.filing.form or "").upper()
+    if form not in _CURRENT_REPORT_FORMS or not lf.has_document:
+      return lf
+    try:
+      exhibits = [
+        d
+        for d in self.other_documents(lf)
+        if d.type.upper().startswith(_CURRENT_REPORT_EXHIBIT) and d.is_readable
+      ]
+      read = [(d, self.read_other_document(lf, d.document)) for d in exhibits]
+    except (SourceError, requests.RequestException, OSError) as exc:
+      logger.warning("%s loads without its exhibits: %s", lf.accession, exc)
+      return lf
+    if not read:
+      return lf
+    parts = [(FORM_SECTION_ID, f"Form {form}", lf.text, lf.sections)]
+    parts += [
+      (_exhibit_section_id(d.type), d.type.upper(), r.text, r.sections) for d, r in read
+    ]
+    lf.text, lf.sections = join_texts(parts)
+    lf.exhibits_in_text = [d.type.upper() for d, r in read if r.text]
+    return lf
+
   def _edgar_coordinates(self, lf: LoadedFiling) -> tuple[str, str]:
     """The CIK and accession needed to reach back to EDGAR for this filing."""
     cik, accession = lf.model.filing.cik, lf.accession
@@ -819,7 +862,7 @@ class FilingSession:
     model = self._parse(target, accession, filing=filing, entity=None)
     loaded = self._finish(accession, source, model, target, package_dir, document)
     _enrich_filer(loaded, self._filer_metadata(cik, client=client))
-    return loaded
+    return self._with_exhibits(loaded)
 
   def _load_document_only(
     self, client: Any, cik: str, accession: str, ref: Any, source: str
@@ -857,7 +900,7 @@ class FilingSession:
     # No XBRL, so no cover page to read: the submissions header is the only
     # account of the filer this filing has.
     _enrich_filer(loaded, self._filer_metadata(cik, client=client))
-    return loaded
+    return self._with_exhibits(loaded)
 
   def _load_from_submission(
     self, client: Any, cik: str, accession: str, ref: Any, source: str
@@ -1352,6 +1395,48 @@ def _read_document(doc: Path | None, model: XbrlModel) -> ReadDocument | None:
       )
     return ReadDocument(text, sections, parsed)
   return None
+
+
+def join_texts(
+  parts: list[tuple[str, str, str, list[TextSection]]],
+) -> tuple[str, list[TextSection]]:
+  """Several documents read as one text, in the order given.
+
+  ``parts`` is ``(id, label, text, sections)`` for each document. Each is set
+  under a ``## label`` heading and becomes a section whose offset is its
+  body's start, with the heading counted in ``heading_chars``; its own
+  sections move with it.
+  """
+  chunks: list[str] = []
+  sections: list[TextSection] = []
+  offset = 0
+  for section_id, label, body, inner in parts:
+    if not body:
+      continue
+    header = f"## {label}\n"
+    start = offset + len(header)
+    sections.append(
+      TextSection(
+        id=section_id,
+        label=label,
+        kind="item",
+        chars=len(body),
+        offset=start,
+        heading_chars=len(header),
+      )
+    )
+    sections.extend(
+      replace(s, offset=None if s.offset is None else s.offset + start) for s in inner
+    )
+    chunk = header + body + "\n\n"
+    chunks.append(chunk)
+    offset += len(chunk)
+  return "".join(chunks), sections
+
+
+def _exhibit_section_id(exhibit_type: str) -> str:
+  """``ex_99_1`` for ``EX-99.1``."""
+  return re.sub(r"[^a-z0-9]+", "_", exhibit_type.lower()).strip("_")
 
 
 def build_text(model: XbrlModel, html: str | None) -> tuple[str, list[TextSection]]:

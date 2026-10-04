@@ -23,6 +23,7 @@ import xbrlkit.serve as serve
 # has to be. The six marked (RoboSystems) are the ones in use today —
 # ``robosystems/operations/roboledger/views/information_blocks.py``.
 DECLARED: dict[str, str] = {
+  "FORM_SECTION_ID": "str",
   "FilingSession": "class",
   "LoadedFiling": "class",  # RoboSystems
   "SourceError": "class",
@@ -34,6 +35,7 @@ DECLARED: dict[str, str] = {
   "build_text": "callable",
   "disclosures": "callable",  # RoboSystems
   "information_block": "callable",  # RoboSystems
+  "join_texts": "callable",
   "serve": "callable",
 }
 
@@ -53,6 +55,8 @@ def test_every_declared_name_resolves() -> None:
       assert isinstance(obj, type), f"{name} should be a class"
     elif kind == "int":
       assert isinstance(obj, int), f"{name} should be an int"
+    elif kind == "str":
+      assert isinstance(obj, str), f"{name} should be a str"
     else:
       assert callable(obj), f"{name} should be callable"
 

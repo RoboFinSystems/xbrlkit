@@ -137,7 +137,16 @@ So an earnings 8-K is identifiable **before** anything is fetched:
                attached exhibit (usually EX-99.1), not in this filing's XBRL …"
 ```
 
-and `next` leads with `documents` rather than the fact tools.
+and `next` leads with the release rather than the fact tools.
+
+**An 8-K loaded from EDGAR is read with its `EX-99` exhibits.** The filing's
+own text comes first under `## Form 8-K`, then each exhibit under its type
+(`## EX-99.1`), every one a section in `sections.items` with its offset — so
+`search_text` finds what the release says and `read_text` pages it, with no
+second document to know about. It costs the index fetch `documents` makes and
+one fetch per exhibit, both kept for `read_document`; when they cannot be
+reached the 8-K loads alone. Other exhibits — a credit agreement, a
+certification — stay in `documents`.
 
 **Why this matters more than a routing convenience.** The exhibit carries what
 the company leads with — adjusted EBITDA, non-GAAP margin, segment detail,

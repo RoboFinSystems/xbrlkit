@@ -34,7 +34,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .session import FilingSession, LoadedFiling, SourceError, TextSection, build_text
+from .session import (
+  FORM_SECTION_ID,
+  FilingSession,
+  LoadedFiling,
+  SourceError,
+  TextSection,
+  build_text,
+  join_texts,
+)
 from .tools import (
   MAX_BLOCK_MEMBERS_CAP,
   MAX_BLOCK_ROWS,
@@ -44,6 +52,7 @@ from .tools import (
 )
 
 __all__ = (
+  "FORM_SECTION_ID",
   "MAX_BLOCK_MEMBERS_CAP",
   "MAX_BLOCK_ROWS",
   "FilingSession",
@@ -55,6 +64,7 @@ __all__ = (
   "build_text",
   "disclosures",
   "information_block",
+  "join_texts",
   "serve",
 )
 
