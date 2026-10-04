@@ -602,6 +602,12 @@ def describe_filing(
       )
 
   items = [] if pure else [s for s in sections if s.kind == "item"]
+  # The exhibits are reachable through the text tools only when they read the
+  # whole text and `sections.items` names where each one starts; otherwise
+  # `documents` is still the way in.
+  exhibits_readable = bool(
+    lf.exhibits_in_text and whole and lf.has_document and not pure
+  )
   blocks = sorted(
     (s for s in sections if s.kind == "text_block"), key=lambda s: -s.chars
   )[:DESCRIBE_TEXT_BLOCKS]
@@ -663,7 +669,10 @@ def describe_filing(
       "extension_namespace": filing.extension_namespace,
       "taxonomies": len(filing.taxonomy_namespaces),
       **(
-        {"items": describe_items(filing.items), "items_note": items_note(filing.items)}
+        {
+          "items": describe_items(filing.items),
+          "items_note": items_note(filing.items, exhibits_readable),
+        }
         if filing.items
         else {}
       ),
@@ -719,7 +728,7 @@ def describe_filing(
       ],
       "note": "offsets index into the plain text that search_text and read_text read",
     },
-    "next": _next_steps(lf),
+    "next": _next_steps(lf, exhibits_readable),
   }
 
 
@@ -756,7 +765,7 @@ def _describe_taxonomy(taxonomy: TaxonomyEntry) -> dict[str, Any]:
   }
 
 
-def _next_steps(lf: LoadedFiling) -> list[str]:
+def _next_steps(lf: LoadedFiling, exhibits_readable: bool = False) -> list[str]:
   """What to call next, given what this filing actually is.
 
   An 8-K leads with its exhibits whatever else is true of it: its tagged
@@ -774,7 +783,13 @@ def _next_steps(lf: LoadedFiling) -> list[str]:
       "calculation for what sums to a total, where the taxonomy has calculation arcs",
     ]
   exhibit_first: list[str] = []
-  if is_earnings_release(lf.model.filing.items):
+  if exhibits_readable:
+    exhibit_first = [
+      f"read_text from the {lf.exhibits_in_text[0]} `offset` in `sections.items` "
+      "— the exhibits are part of this text",
+      "search_text for a figure or a phrase across the 8-K and its exhibits",
+    ]
+  elif is_earnings_release(lf.model.filing.items):
     exhibit_first = [
       "documents, then read_document on the EX-99.1 — Item 2.02 means the "
       "results are in the attached release, not in this filing's XBRL",

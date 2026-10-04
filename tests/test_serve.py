@@ -17,6 +17,7 @@ import shutil
 import textwrap
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -35,7 +36,12 @@ from xbrlkit.model import (
 )
 from xbrlkit.serve import FilingSession, LoadedFiling, SourceError, build_text
 from xbrlkit.serve import tools
-from xbrlkit.serve.session import _find_load_target, _locate, _restore_sec_identity
+from xbrlkit.serve.session import (
+  _find_load_target,
+  _form_on_the_cover,
+  _locate,
+  _restore_sec_identity,
+)
 
 US_GAAP = "http://fasb.org/us-gaap/2024-01-31"
 IS_ROLE = "http://acme.example/role/StatementOfIncome"
@@ -740,6 +746,21 @@ def test_locate_matches_across_renderings() -> None:
   assert _locate(text, block) == text.index("\nNOTE 19.") + 1
   assert _locate(text, "nothing here at all whatsoever") is None
   assert _locate(text, "NOTE 19. Commitments") is None  # too short to trust
+
+
+def test_form_on_the_cover_reads_only_the_cover() -> None:
+  cover = (
+    "<p>UNITED STATES SECURITIES AND EXCHANGE COMMISSION</p>"
+    "<p>Washington, D.C. 20549</p><p>FORM 8-K</p><p>CURRENT REPORT</p>"
+  )
+  assert _form_on_the_cover(cover) == "8-K"
+  # A press release cites the annual report in its safe harbor; it is not one.
+  release = (
+    "<p>Workiva Announces Second Quarter 2026 Financial Results</p>"
+    + "<p>Revenue grew.</p>" * 300
+    + "<p>See our annual report on Form 10-K for risk factors.</p>"
+  )
+  assert _form_on_the_cover(release) is None
 
 
 def test_locate_skips_a_contents_row_that_carries_the_whole_heading() -> None:
@@ -2401,6 +2422,9 @@ def test_an_earnings_8k_is_identified_and_points_at_the_exhibit() -> None:
   assert items_note(["9.01"]) is not None
   assert items_note(["5.07"]) is not None
   assert items_note([]) is None
+  # With the exhibits read into the text, the text tools are the way in.
+  joined = items_note(["2.02", "9.01"], exhibits_in_text=True)
+  assert joined is not None and "search_text" in joined and "documents" not in joined
 
 
 def test_filing_meta_carries_the_items_off_an_edgar_ref() -> None:
@@ -2455,6 +2479,184 @@ def test_an_8k_describes_its_items_and_leads_with_the_exhibit() -> None:
   assert "EX-99.1" in out["filing"]["items_note"]
   # The exhibit steer comes first, ahead of the text tools that would otherwise lead.
   assert "documents" in out["next"][0] and "Item 2.02" in out["next"][0]
+
+
+def test_join_texts_sets_each_document_under_its_heading() -> None:
+  from xbrlkit.serve import TextSection, join_texts
+
+  inner = TextSection(id="item_2_02", label="Item 2.02", kind="item", chars=5, offset=3)
+  text, sections = join_texts(
+    [
+      ("form_8k", "Form 8-K", "the cover", [inner]),
+      ("ex_10_1", "EX-10.1", "", []),
+      ("ex_99_1", "EX-99.1", "the release", []),
+    ]
+  )
+  assert text == "## Form 8-K\nthe cover\n\n## EX-99.1\nthe release\n\n"
+  by_id = {s.id: s for s in sections}
+  assert set(by_id) == {
+    "form_8k",
+    "item_2_02",
+    "ex_99_1",
+  }  # an empty body is no section
+  release = by_id["ex_99_1"]
+  assert text[release.offset : release.offset + release.chars] == "the release"
+  assert text[release.offset - release.heading_chars :].startswith("## EX-99.1\n")
+  # A document's own sections move with it.
+  assert by_id["item_2_02"].offset == by_id["form_8k"].offset + 3
+
+
+_EIGHT_K = (
+  "<html><body><p>UNITED STATES SECURITIES AND EXCHANGE COMMISSION</p>"
+  "<p>FORM 8-K</p><p>Item 2.02 Results of Operations and Financial Condition. "
+  "The press release is furnished as Exhibit 99.1.</p></body></html>"
+)
+
+
+class _EightKExhibits:
+  """An 8-K's index and exhibits, answered from memory."""
+
+  def __init__(self, fail: bool = False) -> None:
+    self.fail = fail
+
+  def other_documents(self, lf: object) -> list[Any]:
+    from xbrlkit.edgar.filing_index import FilingDocument
+
+    if self.fail:
+      raise SourceError("the index could not be fetched")
+    return [
+      FilingDocument(seq=2, type="EX-10.1", document="credit.htm"),
+      FilingDocument(seq=3, type="EX-99.1", document="release.htm"),
+      FilingDocument(seq=4, type="GRAPHIC", document="logo.jpg"),
+    ]
+
+  def read_other_document(self, lf: object, name: str) -> Any:
+    from xbrlkit.serve.session import ReadDocument
+
+    assert name == "release.htm", "only the EX-99 is read into the text"
+    return ReadDocument("Free cash flow was $78 million for the quarter.", [])
+
+
+def test_an_8k_is_read_with_its_release(tmp_path: Path, monkeypatch: Any) -> None:
+  """Read alone, an earnings 8-K is a cover page: a search for anything the
+  release says found nothing and told the caller to reword."""
+  path = tmp_path / "acme-8k.htm"
+  path.write_text(_EIGHT_K)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    lf.model.filing.items = ["2.02", "9.01"]
+    assert lf.model.filing.form == "8-K"
+    stub = _EightKExhibits()
+    monkeypatch.setattr(session, "other_documents", stub.other_documents)
+    monkeypatch.setattr(session, "read_other_document", stub.read_other_document)
+    lf = session._with_exhibits(lf)
+
+    assert lf.exhibits_in_text == ["EX-99.1"]
+    hits = tools.search_text(lf, "free cash flow")
+    assert hits["total"] == 1 and hits["hits"][0]["section"] == "EX-99.1"
+    assert "FORM 8-K" in tools.search_text(lf, "FORM 8-K")["hits"][0]["text"]
+
+    out = tools.describe_filing(lf)
+    items = {s["id"]: s for s in out["sections"]["items"]}
+    assert {"form_8k", "ex_99_1"} <= set(items)
+    page = tools.read_text(lf, offset=items["ex_99_1"]["offset"])
+    assert page["text"].startswith("Free cash flow")
+    assert "part of this text" in out["filing"]["items_note"]
+    assert out["next"][0].startswith("read_text from the EX-99.1")
+  finally:
+    session.close()
+
+
+def test_an_8k_whose_exhibits_cannot_be_reached_loads_alone(
+  tmp_path: Path, monkeypatch: Any
+) -> None:
+  path = tmp_path / "acme-8k.htm"
+  path.write_text(_EIGHT_K)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    before = lf.text
+    monkeypatch.setattr(
+      session, "other_documents", _EightKExhibits(fail=True).other_documents
+    )
+    lf = session._with_exhibits(lf)
+    assert lf.text == before and lf.exhibits_in_text == []
+  finally:
+    session.close()
+
+
+def test_without_the_whole_text_an_8k_still_points_at_documents(
+  tmp_path: Path, monkeypatch: Any
+) -> None:
+  """Under pure, or reading the tagged text alone, the exhibits are not in the
+  text the tools search, so the note cannot send the caller there."""
+  path = tmp_path / "acme-8k.htm"
+  path.write_text(_EIGHT_K)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    lf.model.filing.items = ["2.02", "9.01"]
+    stub = _EightKExhibits()
+    monkeypatch.setattr(session, "other_documents", stub.other_documents)
+    monkeypatch.setattr(session, "read_other_document", stub.read_other_document)
+    lf = session._with_exhibits(lf)
+    for pure, whole in ((True, False), (True, True), (False, False)):
+      out = tools.describe_filing(lf, pure=pure, whole=whole)
+      assert "documents" in out["filing"]["items_note"], (pure, whole)
+      assert "part of this text" not in out["filing"]["items_note"], (pure, whole)
+      assert not out["next"][0].startswith("read_text from the EX-99.1")
+  finally:
+    session.close()
+
+
+def test_an_exhibit_out_of_reach_leaves_the_others(
+  tmp_path: Path, monkeypatch: Any
+) -> None:
+  from xbrlkit.edgar.filing_index import FilingDocument
+  from xbrlkit.serve.session import ReadDocument
+
+  path = tmp_path / "acme-8k.htm"
+  path.write_text(_EIGHT_K)
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+    documents = [
+      FilingDocument(seq=2, type="EX-99", document="slides.htm"),
+      FilingDocument(seq=3, type="EX-99", document="script.htm"),
+      FilingDocument(seq=4, type="EX-99", document="gone.htm"),
+    ]
+
+    def read(lf: object, name: str) -> ReadDocument:
+      if name == "gone.htm":
+        raise SourceError("404")
+      return ReadDocument(f"the {name.split('.')[0]}", [])
+
+    monkeypatch.setattr(session, "other_documents", lambda lf: documents)
+    monkeypatch.setattr(session, "read_other_document", read)
+    lf = session._with_exhibits(lf)
+    ids = [s.id for s in lf.sections if s.kind == "item" and s.id.startswith("ex_")]
+    # Two exhibits typed plain EX-99 each keep a section of their own.
+    assert ids == ["ex_99", "ex_99_2"]
+    assert "the slides" in lf.text and "the script" in lf.text
+  finally:
+    session.close()
+
+
+def test_only_an_8k_reaches_for_its_exhibits(tmp_path: Path, monkeypatch: Any) -> None:
+  path = tmp_path / "form10-k.htm"
+  path.write_text("<html><body><p>FORM 10-K</p><p>Annual report.</p></body></html>")
+  session = FilingSession()
+  try:
+    lf = session.load(str(path))
+
+    def refuse(lf: object) -> list[Any]:
+      raise AssertionError("a 10-K's exhibits are not read into its text")
+
+    monkeypatch.setattr(session, "other_documents", refuse)
+    assert session._with_exhibits(lf).exhibits_in_text == []
+  finally:
+    session.close()
 
 
 def test_a_filing_with_no_items_says_nothing_about_them(loaded: LoadedFiling) -> None:

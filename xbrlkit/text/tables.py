@@ -171,11 +171,13 @@ def _parse_rows(table_html: str) -> list[list[tuple[str, int]]]:
     tr_content = tr_match.group(1)
     cells: list[tuple[str, int]] = []
 
+    # A self-closing ``<td colspan="3" />`` is an empty cell; read as an open
+    # tag it swallowed the cell after it up to that one's ``</td>``.
     for cell_match in re.finditer(
-      r"<(t[dh])([^>]*)>(.*?)</\1>", tr_content, re.DOTALL | re.IGNORECASE
+      r"<(t[dh])\b([^>]*?)(?:/>|>(.*?)</\1\s*>)", tr_content, re.DOTALL | re.IGNORECASE
     ):
       attrs = cell_match.group(2)
-      inner = cell_match.group(3)
+      inner = cell_match.group(3) or ""
       text = _cell_text(inner)
       colspan = _get_colspan(attrs)
       cells.append((text, colspan))
@@ -192,8 +194,15 @@ def _merge_currency_cells(rows: list[list[tuple[str, int]]]) -> list[list[str]]:
   SEC filings often put "$" in its own <td>, separate from the number.
   This merges ["$", "11,866.1"] into ["$11,866.1"] and expands colspan.
   Also drops columns that are empty across all rows (SEC spacer cells).
+
+  A merge keeps every cell's position, so a row with a "$" stays as wide as
+  one without. The column a "$" stood in is then joined to the number's
+  column wherever no row fills both: a value with no "$" often spans the two
+  (colspan 2) and lands in the symbol's column, as do the period headers
+  above, while a "$" row's value lands one to the right.
   """
   merged: list[list[str]] = []
+  symbol_cols: set[int] = set()
 
   for row in rows:
     # Expand colspan first
@@ -214,10 +223,11 @@ def _merge_currency_cells(rows: list[list[tuple[str, int]]]) -> list[list[str]]:
         while j < len(expanded) and not expanded[j].strip():
           j += 1
         if j < len(expanded):
-          # Add empty cells between as-is, then the merged cell
-          for k in range(i + 1, j):
+          # The symbol's cell and any between stay, empty; then the merged cell
+          for _ in range(i, j):
             final.append("")
           final.append(cell + expanded[j])
+          symbol_cols.update(range(i, j))
           i = j + 1
         else:
           final.append(cell)
@@ -227,6 +237,7 @@ def _merge_currency_cells(rows: list[list[tuple[str, int]]]) -> list[list[str]]:
         for k in range(len(final) - 1, -1, -1):
           if final[k].strip():
             final[k] = final[k] + cell
+            final.append("")
             break
         else:
           final.append(cell)
@@ -244,6 +255,15 @@ def _merge_currency_cells(rows: list[list[tuple[str, int]]]) -> list[list[str]]:
     for row in merged:
       while len(row) < max_cols:
         row.append("")
+
+    for col in sorted(symbol_cols, reverse=True):
+      if col + 1 < max_cols and not any(
+        row[col].strip() and row[col + 1].strip() for row in merged
+      ):
+        for row in merged:
+          row[col] = row[col] or row[col + 1]
+          del row[col + 1]
+        max_cols -= 1
 
     keep_cols = [
       col
