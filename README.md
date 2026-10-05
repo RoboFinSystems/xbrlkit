@@ -79,7 +79,7 @@ behind `xbrlkit view` and the `view_filing` tool.
 pip install xbrlkit
 ```
 
-Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `cache`, `serve`) and the
+Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `view`, `cache`, `serve`) and the
 library. Three optional extras: `xbrlkit[lpg]` for the property graph as a
 LadybugDB database and for querying it (pyarrow, LadybugDB), `xbrlkit[icebug]`
 for the same graph as an experimental icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for
@@ -144,16 +144,25 @@ xbrlkit serve ./mmm-20241231.htm
 From a source checkout, `just` wraps the same CLI: `just build 320193
 0000320193-23-000106` and `just fetch NVDA`.
 
-```python
-from xbrlkit.parse import load_model, to_xbrl_model
-from xbrlkit.serialize import to_holon, to_tavi_report
-from xbrlkit.deserialize import from_holon_json
+As a library, a `FilingSession` resolves a filing the way `view` and `serve`
+do, with no extra installed:
 
-model = to_xbrl_model(load_model("mmm-20241231.htm"), filing_meta)
-holon = to_holon(model)
-tavi, gaps = to_tavi_report(model)
-model = from_holon_json(holon)  # and back again
+```python
+from xbrlkit.deserialize import from_holon_json
+from xbrlkit.serialize import to_holon, to_tavi_report
+from xbrlkit.serve import FilingSession
+
+session = FilingSession()
+model = session.load("NVDA").model  # or "NVDA 10-Q", "cik:accession", "lei:…", a path
+holon = to_holon(model)             # holon.jsonld text
+tavi, gaps = to_tavi_report(model)  # the TAVI model, and what it could not carry
+model = from_holon_json(holon)      # and back again
+session.close()
 ```
+
+A host running its own Arelle goes a level down: `xbrlkit.parse.load_model`
+returns the `ModelXbrl`, and `to_xbrl_model(mx, filing)` walks it into the
+same model, given the filing's `FilingMeta` (CIK and accession).
 
 ## Serve to an MCP client
 
