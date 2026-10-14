@@ -30,6 +30,7 @@ from xbrlkit.model import (
   XbrlFact,
   XbrlModel,
 )
+from xbrlkit.deserialize import from_tavi_json, from_tavi_report
 from xbrlkit.serialize import to_tavi, to_tavi_report
 from xbrlkit.serialize.tavi import (
   DOCTYPE_COMPILED,
@@ -967,3 +968,122 @@ def test_a_model_without_provenance_declares_nothing_for_it() -> None:
     for f in document["xbrlModel"]["facts"]
     for p in f.get("properties", [])
   )
+
+
+# -- the group tree (section 12.1) ---------------------------------------------
+
+PARENT_CHILD = "http://www.xbrl.org/2003/arcrole/parent-child"
+BS_ROLE = "http://example.com/role/BalanceSheet"
+BS_PAREN_ROLE = "http://example.com/role/BalanceSheetParenthetical"
+NOTE_ROLE = "http://example.com/role/Leases"
+TABLES_ROLE = "http://example.com/role/LeasesTables"
+DETAILS_ROLE = "http://example.com/role/LeasesDetails"
+DRAWER_ROLE = "http://example.com/role/Leases_1"
+
+
+def _titled(role: str, definition: str, child: str) -> Network:
+  return Network(
+    role_uri=role,
+    definition=definition,
+    kind="presentation",
+    arcs=[
+      Arc(
+        from_qname="us-gaap:AssetsAbstract",
+        to_qname=child,
+        arcrole=PARENT_CHILD,
+        order=1.0,
+        is_root=True,
+      )
+    ],
+  )
+
+
+def _family_model() -> XbrlModel:
+  """A filing whose role titles spell out its sections, EDGAR style: a
+  statement with a parenthetical, a note with its tables and a details
+  table, and a second drawer of the note's own arcs."""
+  return _model().model_copy(
+    update={
+      "networks": [
+        _titled(
+          BS_ROLE, "0000002 - Statement - Consolidated Balance Sheets", "us-gaap:Assets"
+        ),
+        _titled(
+          BS_PAREN_ROLE,
+          "0000003 - Statement - Consolidated Balance Sheets (Parenthetical)",
+          "us-gaap:SharesOutstanding",
+        ),
+        _titled(NOTE_ROLE, "0000010 - Disclosure - Leases", "us-gaap:Cash"),
+        _titled(TABLES_ROLE, "0000020 - Disclosure - Leases (Tables)", "us-gaap:Cash"),
+        _titled(
+          DETAILS_ROLE,
+          "0000030 - Disclosure - Leases - Lease cost (Details)",
+          "us-gaap:Cash",
+        ),
+        _titled(DRAWER_ROLE, "0000010 - Disclosure - Leases", "us-gaap:Assets"),
+      ]
+    }
+  )
+
+
+def _tree(document: dict[str, Any]) -> dict[str, Any]:
+  return document["xbrlModel"]["groupTree"]
+
+
+def test_group_tree_places_each_section_under_its_family() -> None:
+  """Section 12.1: one tree per model, rooted at xbrl:rootSource, each
+  statement over its parenthetical and each note over its tables and
+  details, in EDGAR order; a second drawer of a section sits under it."""
+  document, _ = to_tavi_report(_family_model())
+  groups = {g["groupURI"]: g["name"] for g in document["xbrlModel"]["groups"]}
+  tree = _tree(document)
+  assert tree["name"] == "rpt:ReportGroupTree"
+  assert tree["relationships"] == [
+    {"source": ROOT_SOURCE, "target": groups[BS_ROLE], "order": 1.0},
+    {"source": ROOT_SOURCE, "target": groups[NOTE_ROLE], "order": 2.0},
+    {"source": groups[BS_ROLE], "target": groups[BS_PAREN_ROLE], "order": 1.0},
+    {"source": groups[NOTE_ROLE], "target": groups[TABLES_ROLE], "order": 1.0},
+    {"source": groups[NOTE_ROLE], "target": groups[DETAILS_ROLE], "order": 2.0},
+    {"source": groups[NOTE_ROLE], "target": groups[DRAWER_ROLE], "order": 3.0},
+  ]
+  # Every target is a group (section 12.1.2); every group with a
+  # presentation tree is placed exactly once.
+  targets = [r["target"] for r in tree["relationships"]]
+  assert sorted(targets) == sorted(groups.values())
+  assert len(targets) == len(set(targets))
+
+
+def test_a_role_without_a_title_is_still_a_section_in_order() -> None:
+  """A filing with no EDGAR titles still has an order worth stating: each
+  presented role is a top-level section. A role that carries only a cube is
+  scaffolding and takes no place."""
+  document = _document()
+  groups = {g["groupURI"]: g["name"] for g in document["xbrlModel"]["groups"]}
+  assert _tree(document)["relationships"] == [
+    {
+      "source": ROOT_SOURCE,
+      "target": groups["http://example.com/role/BalanceSheet"],
+      "order": 1.0,
+    }
+  ]
+
+
+def test_a_model_with_no_sections_omits_the_tree() -> None:
+  """Section 14.1.5: a model that needs no prescribed ordering omits it."""
+  document, _ = to_tavi_report(_model().model_copy(update={"networks": []}))
+  assert "groupTree" not in document["xbrlModel"]
+
+
+def test_the_tree_is_a_fixed_point_through_the_reader() -> None:
+  """The reader has no slot for the tree and says so; it reads the sections
+  back from the role titles, which for an EDGAR filing is the same tree, so
+  writing the model it read gives the tree back unchanged."""
+  text = to_tavi(_family_model())
+  got, gaps = from_tavi_report(text)
+  assert "the group tree (sections are re-read from the role titles)" in gaps.missing
+  again, _ = to_tavi_report(got)
+  assert _tree(again) == _tree(json.loads(text))
+  # A document without a tree loses nothing on that count.
+  _, plain = from_tavi_report(to_tavi(_model().model_copy(update={"networks": []})))
+  assert "group tree" not in " ".join(plain.missing)
+  assert from_tavi_json(text).networks

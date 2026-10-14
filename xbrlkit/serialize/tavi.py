@@ -517,6 +517,7 @@ def to_tavi_report(
   networks, groups, group_contents, group_labels = _networks_and_groups(
     model, dimensional, default_language
   )
+  group_tree = _group_tree(model, groups)
   fact_groups = _fact_groups(model, groups)
   # A fact in one section carries the draft's own property; only a fact in
   # more needs rs:groups, and only then is the rs namespace bound for it.
@@ -546,8 +547,11 @@ def to_tavi_report(
     "networks": networks,
     "groups": groups,
     "groupContents": group_contents,
+    "groupTree": group_tree,
     "facts": _facts(model, gaps, dimensional, fact_groups),
   }
+  if group_tree is None:
+    del xbrl_model["groupTree"]
 
   document: dict[str, object] = {
     "documentInfo": {
@@ -1460,6 +1464,58 @@ def _fact_groups(
     for fact in facts:
       by_fact.setdefault(fact.id, []).append(group)
   return {fid: [name for _, name in sorted(set(gs))] for fid, gs in by_fact.items()}
+
+
+# The level a role title spells out that heads its family: the statement, the
+# note, the cover. Parentheticals, policies, tables and details sit under theirs.
+_FAMILY_HEADS = frozenset({"statement", "note", "document", "other"})
+
+
+def _group_tree(
+  model: XbrlModel, groups: list[dict[str, object]]
+) -> dict[str, object] | None:
+  """The group tree (section 12.1): the report's sections in their order, each
+  note over its policies, tables and details, each statement over its
+  parenthetical, as ``xbrl:taxonomy-group`` relationships from
+  ``xbrl:rootSource``.
+
+  EDGAR filers write that hierarchy into their role definitions ("Leases",
+  "Leases (Tables)", "Leases - Lease cost (Details)"), which
+  :func:`xbrlkit.information_block.group_disclosures` reads back into families
+  in EDGAR order; this writes the same families. A role folded into another as
+  a second drawer of one section (``Role_1``) sits under it. A role with no
+  presentation tree is scaffolding for a section named elsewhere and takes no
+  place; a model with no section omits the tree, as section 14.1.5 allows.
+  """
+  from xbrlkit.information_block import group_disclosures, plan_blocks
+
+  group_name = {str(g["groupURI"]): str(g["name"]) for g in groups}
+  children: dict[str, list[str]] = {ROOT_SOURCE: []}
+  for family in group_disclosures(plan_blocks(model)):
+    blocks = [block for block in family.blocks if block.role_uri in group_name]
+    if not blocks:
+      continue
+    head = next((b for b in blocks if b.level in _FAMILY_HEADS), blocks[0])
+    children[ROOT_SOURCE].append(group_name[head.role_uri])
+    children.setdefault(group_name[head.role_uri], []).extend(
+      group_name[block.role_uri] for block in blocks if block is not head
+    )
+    for block in blocks:
+      children.setdefault(group_name[block.role_uri], []).extend(
+        group_name[role] for role in block.merged_roles if role in group_name
+      )
+  if not children[ROOT_SOURCE]:
+    return None
+  # The roots come first, as a network's do, so the top level reads before
+  # the branches; each parent numbers its own children once.
+  return {
+    "name": f"{REPORT_PREFIX}:ReportGroupTree",
+    "relationships": [
+      {"source": source, "target": target, "order": float(position)}
+      for source, targets in children.items()
+      for position, target in enumerate(targets, start=1)
+    ],
+  }
 
 
 def _property_types(
