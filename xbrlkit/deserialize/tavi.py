@@ -216,6 +216,12 @@ def _read(document: Mapping[str, Any]) -> tuple[XbrlModel, ImportGaps]:
     ]
   )
 
+  if xbrl_model.get("groupTree") is not None:
+    # The model has no slot for a stated section hierarchy: its sections are
+    # read back from the role titles, which for an EDGAR filing is the same
+    # tree the writer built them from.
+    gaps.missing.append("the group tree (sections are re-read from the role titles)")
+
   entity = _entity(xbrl_model, namespaces)
   concepts = _concepts(xbrl_model, namespaces, gaps)
   _apply_labels(xbrl_model, concepts, entity, _entity_sqname(xbrl_model), gaps)
