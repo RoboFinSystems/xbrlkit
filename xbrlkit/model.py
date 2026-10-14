@@ -317,6 +317,11 @@ class XbrlFact(BaseModel):
   # so this stays ``None`` there; a multi-FactSet authored report needs the
   # pin. (serialization-waist phase 2)
   structure_id: str | None = None
+  # The section the producer placed this fact in, as that section's extended
+  # link role: TAVI's core ``xbrl:factLocation`` names one group per fact, and
+  # the reader keeps it as a pin that ``fact_membership`` honours after
+  # ``structure_id``. A filing leaves it ``None``.
+  section_role: str | None = None
   # Where the fact came from, when the producer said. A filing leaves it
   # ``None``; an authored report may carry it, and both projections keep it.
   provenance: FactProvenance | None = None

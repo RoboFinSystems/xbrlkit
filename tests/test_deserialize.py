@@ -634,16 +634,61 @@ def test_tavi_round_trips_an_authored_reports_own_fields(model: XbrlModel) -> No
   assert gaps.unmapped_fact_properties == {}
 
 
+def test_tavi_reads_a_stated_fact_location_as_the_facts_pin(model: XbrlModel) -> None:
+  """A ``xbrl:factLocation`` the producer wrote (section 14.3.7) comes back as
+  the fact's section role, and membership honours it over the rule."""
+  from xbrlkit.information_block import fact_membership, plan_blocks
+
+  document = json.loads(to_tavi(model))
+  xbrl_model = document["xbrlModel"]
+  groups = {g["name"]: g["groupURI"] for g in xbrl_model["groups"]}
+  # Pick a fact and a group that is not where the rule would put it.
+  fact = xbrl_model["facts"][0]
+  own = _stated_groups(fact)
+  elsewhere = next(name for name in groups if name not in own)
+  fact["properties"] = [
+    p
+    for p in fact.get("properties", [])
+    if p["property"] not in ("rs:groups", "xbrl:factLocation")
+  ] + [{"property": "xbrl:factLocation", "value": elsewhere}]
+
+  got, gaps = from_tavi_report(json.dumps(document))
+  assert got.facts[0].section_role == groups[elsewhere]
+  assert gaps.unmapped_fact_properties == {}
+  membership = fact_membership(got, plan_blocks(got))
+  placed = [role for role, facts in membership.items() if got.facts[0] in facts]
+  assert placed == [groups[elsewhere]]
+
+
+def _stated_groups(fact: dict) -> set[str]:
+  for p in fact.get("properties", []):
+    if p["property"] == "xbrl:factLocation":
+      return {str(p["value"])}
+    if p["property"] == "rs:groups":
+      return set(str(p["value"]).split(","))
+  return set()
+
+
 def test_a_filings_tavi_carries_no_report_properties(model: XbrlModel) -> None:
-  """A filing has none of an authored report's fields, so the only property it
-  declares is each fact's sections (`rs:groups`), which every filing has. A
-  legal name equal to the name, which the parse always sets, writes nothing."""
+  """A filing has none of an authored report's fields. The only property it
+  may declare is `rs:groups`, for a fact that sits in more than one section;
+  a fact in one section carries the draft's own `xbrl:factLocation`, which
+  needs no declaration. A legal name equal to the name, which the parse
+  always sets, writes nothing."""
   model.entity.legal_name = model.entity.name
   model.filing.report_uri = "https://www.sec.gov/Archives/edgar/data/1/0001-24-1.htm"
   document = json.loads(to_tavi(model))
   declared = [t["name"] for t in document["xbrlModel"].get("propertyTypes", [])]
-  assert declared == ["rs:groups"]
-  assert document["documentInfo"]["namespaces"]["rs"] == HOLON_VOCAB
+  assert declared in ([], ["rs:groups"])
+  assert any(
+    p["property"] == "xbrl:factLocation"
+    for f in document["xbrlModel"]["facts"]
+    for p in f.get("properties", [])
+  )
+  # The rs namespace is bound only for a property of ours.
+  namespaces = document["documentInfo"]["namespaces"]
+  assert ("rs" in namespaces) == bool(declared)
+  assert namespaces.get("rs", HOLON_VOCAB) == HOLON_VOCAB
   used = {
     p["property"]
     for obj in (document["xbrlModel"], *document["xbrlModel"]["facts"])

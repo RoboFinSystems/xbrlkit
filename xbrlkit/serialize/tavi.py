@@ -240,9 +240,12 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
       "No core datatype types a share count, which every equity filing reports; "
       "xbrlr:perShare exists but nothing it divides by. Section 2.4 reserves "
       "xbrla for an accounting module and an example imports "
-      "../spec-taxonomies/xbrla.json, but the draft does not publish that "
-      "module. The copy Arelle ships defines xbrla:sharesType, a unit "
-      "xbrla:shares, and xbrla:MonetaryPerShare."
+      "../spec-taxonomies/xbrla.json; section 15 publishes part of that module "
+      "in prose and no machine-readable copy is published. The copy in "
+      "Arelle's XbrlModel plugin (pull request 2418) defines xbrla:sharesType, "
+      "a unit xbrla:shares, and xbrla:MonetaryPerShare. Beside it: section 7 "
+      "says a built-in model must not appear in an import mapping, and the "
+      "section 4.2.3 example maps xbrla to a file."
     ),
     "choice": (
       "sharesItemType maps to xbrla:sharesType and the shares unit to "
@@ -276,12 +279,12 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
       "xbrl:positivePeriodEndTotalLabel and xbrl:positivePeriodStartTotalLabel. "
       "The consequence is that .../negativePeriodEndLabel and "
       ".../positivePeriodEndTotalLabel have no binding at all, so a filing "
-      "using either Link Role Registry role has nothing to map to. The prose "
-      "table in section 14.6 gives each type its matching URI, so the core "
-      "model is the copy that is wrong. The core.json Arelle ships carries the "
-      "same two duplicates."
+      "using either Link Role Registry role has nothing to map to. Appendix "
+      "A.6's non-normative list gives each type its matching URI; the core "
+      "model breaks the draft's own section 11.8.2 rule. The core.json Arelle "
+      "ships carries the same two duplicates."
     ),
-    "choice": "the prose URIs are used, which restores a 1:1 role/type mapping.",
+    "choice": "the A.6 URIs are used, which restores a 1:1 role/type mapping.",
   },
   {
     "id": "domain-vs-domainNetwork",
@@ -295,17 +298,15 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
   },
   {
     "id": "reconciliation-required-but-unused",
-    "where": "section 14.3.2 vs. section 14.3.4 and the published example models",
+    "where": "section 14.3.2 vs. Appendix E and the published example models",
     "issue": (
-      "Section 14.3.2 states that xbrl:reconciliation is required on "
-      "xbrl:summation-item relationships, while section 14.3.4 defines it as a "
-      "boolean whose true value marks a relationship as a reconciliation exempt "
-      "from the weight/balance rule (and calls it xbrla:reconciliation there). "
-      "A required boolean of that meaning forces every converter to assert "
-      "something false on every ordinary relationship. None of the eight "
-      "example models carries it, though they use xbrl:weight on those same "
-      "relationships 42 times, and Arelle's core model lists it as allowed, "
-      "not required."
+      "Section 14.3.2 requires xbrl:reconciliation on xbrl:summation-item "
+      "relationships and defines it as whether a contributing concept is "
+      "included in the reconciliation; Appendix E's summation-item type lists "
+      "only xbrl:weight as required and documents reconciliation as an "
+      "exemption marker. None of the eight example models carries it, though "
+      "they use xbrl:weight on those same relationships 42 times. Which copy "
+      "is the rule, and is it required?"
     ),
     "choice": (
       "not emitted: an XBRL 2.1 calculation arc carries no reconciliation flag, "
@@ -316,11 +317,14 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
     "id": "period-literal-form",
     "where": "section 8.5.2.2 vs. xbrlr:periodString (Appendix E) vs. the examples",
     "issue": (
-      "Section 8.5.2.2 calls xbrl:period an ISO 8601 interval and says no more. "
+      "Section 8.5.2.2 permits a date-only value and says how it resolves. "
       "The built-in xbrlr:periodString requires xs:dateTime values in canonical "
-      "form and states that the time component cannot be omitted "
-      "(oimce:invalidPeriodRepresentation). The examples write twelve instants "
-      "as bare dates and durations in both forms."
+      "form, states that the time component cannot be omitted "
+      "(oimce:invalidPeriodRepresentation), and is never bound to xbrl:period "
+      "in the text; section 5.12.1 requires a canonical dateTime and its own "
+      "example writes a bare date. The examples write twelve instants as bare "
+      "dates and durations in both forms, so two forms are specified and "
+      "nothing says which one a fact carries."
     ),
     "choice": (
       "the datatype's form — dateTime with an exclusive end, identical to "
@@ -330,13 +334,14 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
   },
   {
     "id": "language-case",
-    "where": "section 5.7 (xbrl:languageDomain) vs. xBRL-JSON's language rule",
+    "where": "section 5.6 (the domain class example) vs. xBRL-JSON's language rule",
     "issue": (
-      "The language domain's example value is fr-CA. xBRL-JSON requires the "
-      "lower-case form (xbrlje:invalidLanguageCodeCase), and Arelle applies "
-      "that rule to a TAVI fact — so its own converter flags its own en-US "
-      "output. BCP 47 tags are case-insensitive, so either form names the "
-      "same language."
+      "The domain class example writes fr-CA, which BCP 47 recommends. "
+      "xBRL-JSON requires the lower-case form (xbrlje:invalidLanguageCodeCase) "
+      "and the draft does not say whether language values are case-normalised; "
+      "Arelle applies xBRL-JSON's rule to a TAVI fact, so its own converter "
+      "flags its own en-US output. BCP 47 tags are case-insensitive, so either "
+      "form names the same language."
     ),
     "choice": (
       "lower case on facts, as xBRL-JSON; label languages keep the filing's "
@@ -347,9 +352,10 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
     "id": "fact-value-literal-type",
     "where": "section 8.4.1 vs. the published example models",
     "issue": (
-      "The fact value's `value` is typed xs:anyType. The examples write 244 "
-      "numeric values as JSON strings and 42 as JSON numbers; Arelle's "
-      "converter writes strings."
+      "The fact value's `value` may be any type (section 8.4.1). The examples "
+      "write numeric values both as JSON strings and as JSON numbers; "
+      "permitted, but the equivalence and precision of a number written as a "
+      "number are not defined. Arelle's converter writes strings."
     ),
     "choice": (
       "strings — the reported lexical value, which is also what xBRL-JSON "
@@ -362,17 +368,67 @@ SPEC_AMBIGUITIES: tuple[dict[str, str], ...] = (
     "issue": (
       "Section 8.4.1 marks the fact value object's `name` (required); the fact "
       "object example in 8.3.1 writes its fact value with no name, while the "
-      "valueSources examples in 8.4.1 name theirs (`aapl:f-9_val`). The fact "
-      "object's own `name` is `(optional)` in its property line and `base "
-      "object: (required)` in the line beneath it."
+      "valueSources examples in 8.4.1 name theirs (`aapl:f-9_val`)."
     ),
     "choice": (
       "no name on the fact value — the 8.3.1 example's shape, which every "
       "reader of this document has accepted — until the editors say which "
-      "line is the rule."
+      "is the rule."
+    ),
+  },
+  {
+    "id": "factLocation-allowed-objects",
+    "where": "section 14.3.7 vs. the core model (Appendix E)",
+    "issue": (
+      "Section 14.3.7 defines xbrl:factLocation as a fact property whose value "
+      "is the QName of a group object and gives it allowedObjects of "
+      "xbrl:factObject; Appendix E's copy of the core model gives it "
+      "allowedObjects of xbrl:groupObject. A group cannot carry its own "
+      "location, so the appendix is the copy that is wrong. The property is "
+      "also single-valued (section 11.6.2 forbids conflicting values), so a "
+      "fact presented in two sections has no standard way to say so."
+    ),
+    "choice": (
+      "written on fact objects as section 14.3.7 says, for every fact that "
+      "belongs to exactly one section; a fact in more carries rs:groups, a "
+      "QName set, instead."
     ),
   },
 )
+
+
+# The label roles the duplicate-label-uris ambiguity is about: the two the
+# core model binds twice and the two it leaves unbound.
+_DUPLICATE_LABEL_ROLES: frozenset[str] = frozenset(
+  {
+    "http://www.xbrl.org/2009/role/negativePeriodEndLabel",
+    "http://www.xbrl.org/2009/role/negativePeriodEndTotalLabel",
+    "http://www.xbrl.org/2009/role/positivePeriodEndTotalLabel",
+    "http://www.xbrl.org/2009/role/positivePeriodStartTotalLabel",
+  }
+)
+
+
+def _ambiguities_arising(model: XbrlModel) -> dict[str, bool]:
+  """Which SPEC_AMBIGUITIES this document forces a decision on.
+
+  Most arise on every document by construction (a namespace is bound, a
+  period literal is written). Two depend on what the filing carries: the
+  label-role duplicates only matter to a filing that uses one of the four
+  affected roles, and the language case only to one whose tags are not
+  already lower case. Entries absent here arise.
+  """
+  roles = {
+    label.role
+    for concept in model.concepts.values()
+    for label in concept.labels
+    if label.role
+  }
+  tags = [fact.language for fact in model.facts if fact.language]
+  return {
+    "duplicate-label-uris": bool(roles & _DUPLICATE_LABEL_ROLES),
+    "language-case": any(tag != language_tag(tag) for tag in tags),
+  }
 
 
 @dataclass
@@ -400,6 +456,11 @@ class GapReport:
   # repeated, and were adjusted to be written as the fact's name.
   renamed_facts: int = 0
   notes: list[str] = field(default_factory=list)
+  # Which SPEC_AMBIGUITIES this document actually forced a decision on. Most
+  # arise on every document by construction; the two that depend on what the
+  # filing carries are computed, so the report never claims a decision it did
+  # not make (see _ambiguities_arising).
+  ambiguities_arising: dict[str, bool] = field(default_factory=dict)
 
   def to_dict(self) -> dict[str, object]:
     return {
@@ -409,7 +470,10 @@ class GapReport:
           sorted(self.item_types_without_builtin.items())
         ),
         "dropped_period_semantics": self.dropped_period_semantics,
-        "spec_ambiguities": [dict(a) for a in SPEC_AMBIGUITIES],
+        "spec_ambiguities": [
+          {**a, "arises": self.ambiguities_arising.get(a["id"], True)}
+          for a in SPEC_AMBIGUITIES
+        ],
       },
       "against_this_emitter": {
         "item_types_unmapped_here": dict(sorted(self.item_types_unmapped_here.items())),
@@ -454,14 +518,18 @@ def to_tavi_report(
     model, dimensional, default_language
   )
   fact_groups = _fact_groups(model, groups)
-  if fact_groups:
+  # A fact in one section carries the draft's own property; only a fact in
+  # more needs rs:groups, and only then is the rs namespace bound for it.
+  multi_section = any(len(names) > 1 for names in fact_groups.values())
+  if multi_section:
     namespaces.setdefault("rs", HOLON_VOCAB)
+  gaps.ambiguities_arising = _ambiguities_arising(model)
 
   xbrl_model: dict[str, object] = {
     "name": f"{REPORT_PREFIX}:Report",
     "modelType": "xbrl:report",
     "properties": _model_properties(model),
-    "propertyTypes": _property_types(model, sections=bool(fact_groups)),
+    "propertyTypes": _property_types(model, sections=multi_section),
     "entities": _entities(model),
     "units": _units(model),
     "dataTypes": datatypes,
@@ -1181,7 +1249,7 @@ def _facts(
   model: XbrlModel,
   gaps: GapReport,
   dimensional: Dimensional,
-  fact_groups: dict[str, str] | None = None,
+  fact_groups: dict[str, list[str]] | None = None,
 ) -> list[dict[str, object]]:
   """Fact objects (section 8.3) — the near-identity mapping.
 
@@ -1253,8 +1321,17 @@ def _facts(
     )
     if fact.structure_id:
       properties.append({"property": "rs:structureId", "value": fact.structure_id})
-    if fact_groups and fact.id in fact_groups:
-      properties.append({"property": SECTIONS_PROPERTY, "value": fact_groups[fact.id]})
+    groups_of_fact = fact_groups.get(fact.id) if fact_groups else None
+    if groups_of_fact:
+      if len(groups_of_fact) == 1:
+        properties.append({"property": LOCATION_PROPERTY, "value": groups_of_fact[0]})
+      else:
+        properties.append(
+          {
+            "property": SECTIONS_PROPERTY,
+            "value": SECTIONS_DELIMITER.join(groups_of_fact),
+          }
+        )
     if properties:
       entry["properties"] = properties
     facts.append(entry)
@@ -1322,9 +1399,14 @@ REPORT_PROPERTIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
-# The groups a fact belongs to (see _fact_groups). The draft has no list
-# datatype, so the value is the group names separated by spaces.
+# Where a fact sits in the report. The draft's core ``xbrl:factLocation``
+# (section 14.3.7) names one group per fact, so a fact that belongs to exactly
+# one section carries it; a fact that belongs to more carries ``rs:groups``, a
+# ``xbrlr:QNameSet`` written with the draft's JSON collection delimiter, a
+# comma (section 11.2.2). See _fact_groups.
+LOCATION_PROPERTY = "xbrl:factLocation"
 SECTIONS_PROPERTY = "rs:groups"
+SECTIONS_DELIMITER = ","
 
 
 def _network_properties(network: Network) -> list[dict[str, object]]:
@@ -1355,12 +1437,15 @@ def _report_properties_used(model: XbrlModel) -> set[str]:
   return used
 
 
-def _fact_groups(model: XbrlModel, groups: list[dict[str, object]]) -> dict[str, str]:
+def _fact_groups(
+  model: XbrlModel, groups: list[dict[str, object]]
+) -> dict[str, list[str]]:
   """Fact id → the groups (report sections, section 10.1) it belongs to, as
-  space-separated group names in document order.
+  group names in document order.
 
-  The draft's group contents name networks and cubes but not facts, so which
-  facts a section shows is otherwise every reader's own inference. The rule is
+  The draft's group contents name networks and cubes but not facts, and its
+  ``xbrl:factLocation`` names one group per fact, so which facts a section
+  shows is otherwise every reader's own inference. The rule is
   :func:`xbrlkit.information_block.fact_membership`, the same one the holon's
   fact sets are written from.
   """
@@ -1374,9 +1459,7 @@ def _fact_groups(model: XbrlModel, groups: list[dict[str, object]]) -> dict[str,
       continue
     for fact in facts:
       by_fact.setdefault(fact.id, []).append(group)
-  return {
-    fid: " ".join(name for _, name in sorted(set(gs))) for fid, gs in by_fact.items()
-  }
+  return {fid: [name for _, name in sorted(set(gs))] for fid, gs in by_fact.items()}
 
 
 def _property_types(
@@ -1405,7 +1488,7 @@ def _property_types(
     types.append(
       {
         "name": SECTIONS_PROPERTY,
-        "dataType": "xs:string",
+        "dataType": "xbrlr:QNameSet",
         "definitional": False,
         "allowedObjects": ["xbrl:factObject"],
       }

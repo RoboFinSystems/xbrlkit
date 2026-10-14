@@ -61,6 +61,7 @@ from ..serialize.tavi import (
   PROVENANCE_PROPERTIES,
   REPORT_PREFIX,
   REPORT_PROPERTIES,
+  LOCATION_PROPERTY,
   SECTIONS_PROPERTY,
 )
 from ..parse.ids import unit_id
@@ -831,6 +832,11 @@ def _facts(
   set the filing used.
   """
   members = {qname for qname, concept in concepts.items() if concept.is_domain_member}
+  group_roles = {
+    str(group["name"]): str(group["groupURI"])
+    for group in (_mapping(entry) for entry in _sequence(xbrl_model.get("groups")))
+    if isinstance(group.get("name"), str) and isinstance(group.get("groupURI"), str)
+  }
   periods: dict[str, Any] = {}
   units: dict[str, Unit] = {}
   facts: list[XbrlFact] = []
@@ -908,10 +914,31 @@ def _facts(
         language=str(language) if isinstance(language, str) else None,
         provenance=_fact_provenance(obj, namespaces, gaps),
         structure_id=_optional_str(_report_property(obj, "rs:structureId", namespaces)),
+        section_role=_fact_location(obj, group_roles),
       )
     )
 
   return facts, list(periods.values()), list(units.values())
+
+
+def _fact_location(
+  obj: Mapping[str, Any], group_roles: Mapping[str, str]
+) -> str | None:
+  """The role of the group a fact's ``xbrl:factLocation`` names, if any.
+
+  The draft's one fact-to-group link (section 14.3.7). ``rs:groups``, our
+  many-to-many property, is deliberately not read: the model recomputes
+  membership with the rule it was written from.
+  """
+  for entry in _sequence(obj.get("properties")):
+    prop = _mapping(entry)
+    if str(prop.get("property", "")) != LOCATION_PROPERTY:
+      continue
+    value = prop.get("value")
+    if isinstance(value, list) and len(value) == 1:
+      value = value[0]
+    return group_roles.get(str(value)) if value is not None else None
+  return None
 
 
 def _report_prefix(namespaces: Mapping[str, str]) -> str:
@@ -979,6 +1006,8 @@ def _fact_provenance(
       continue  # read where the fact is built
     if iri == _SECTIONS_IRI:
       continue  # derived: the model recomputes membership with the same rule
+    if qname == LOCATION_PROPERTY:
+      continue  # read where the fact is built, as its pin
     attr = _PROVENANCE_IRIS.get(iri)
     if attr is None or value is None:
       if qname:
