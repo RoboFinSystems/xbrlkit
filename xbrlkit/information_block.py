@@ -505,9 +505,10 @@ def fact_membership(
 
   A fact belongs to every section whose presentation cites its concept and
   that declares its breakdown (:meth:`InformationBlock.admits`). An authored
-  report that pinned a fact to one structure (``XbrlFact.structure_id``)
-  keeps the pin. This is the one membership rule: the holon's fact sets and
-  the TAVI's ``rs:groups`` are written from it.
+  report that pinned a fact to one structure (``XbrlFact.structure_id``), or
+  a TAVI that located it in one group (``XbrlFact.section_role``), keeps the
+  pin. This is the one membership rule: the holon's fact sets and the TAVI's
+  ``xbrl:factLocation`` / ``rs:groups`` are written from it.
   """
   by_concept: dict[str, list[InformationBlock]] = defaultdict(list)
   for st in blocks:
@@ -516,11 +517,16 @@ def fact_membership(
     for concept in st.concepts:
       by_concept[concept].append(st)
   by_structure_id = {st.structure_id: st for st in blocks if st.structure_id}
+  by_role = {st.role_uri: st for st in blocks}
   out: dict[str, list[XbrlFact]] = defaultdict(list)
   for fact in model.facts:
     pinned = by_structure_id.get(fact.structure_id or "")
     if pinned is not None:
       out[pinned.role_uri].append(fact)
+      continue
+    located = by_role.get(fact.section_role or "")
+    if located is not None:
+      out[located.role_uri].append(fact)
       continue
     for st in by_concept.get(fact.concept_qname, ()):
       if st.admits(fact):

@@ -646,7 +646,76 @@ def test_gap_report_carries_the_spec_ambiguities() -> None:
     "reconciliation-required-but-unused",
     "period-literal-form",
     "language-case",
+    "factLocation-allowed-objects",
   } <= ids
+  entries = gaps.to_dict()["against_the_model"]["spec_ambiguities"]
+  assert all(isinstance(a["arises"], bool) for a in entries)
+
+
+# -- where a fact sits (sections 14.3.7, 11.2) -----------------------------------
+
+
+def _properties(fact: dict[str, object]) -> dict[str, object]:
+  return {p["property"]: p["value"] for p in fact.get("properties", [])}  # type: ignore[union-attr]
+
+
+def test_a_fact_in_one_section_carries_the_drafts_fact_location() -> None:
+  """The draft's core ``xbrl:factLocation`` names one group per fact, so a
+  fact that belongs to exactly one section carries it and nothing of ours."""
+  document, _ = to_tavi_report(_model())
+  xbrl_model = document["xbrlModel"]
+  groups = {g["name"] for g in xbrl_model["groups"]}
+  located = [
+    _properties(f) for f in xbrl_model["facts"] if "xbrl:factLocation" in _properties(f)
+  ]
+  assert located
+  for props in located:
+    assert props["xbrl:factLocation"] in groups
+    assert "rs:groups" not in props
+
+
+def test_a_fact_in_several_sections_carries_a_comma_delimited_qname_set() -> None:
+  """``xbrl:factLocation`` is single-valued, so a fact in more than one
+  section carries ``rs:groups``: a ``xbrlr:QNameSet`` whose JSON delimiter is a
+  comma (section 11.2.2), declared only when some fact needs it."""
+  document, _ = to_tavi_report(_model())
+  xbrl_model = document["xbrlModel"]
+  groups = {g["name"] for g in xbrl_model["groups"]}
+  stated = [
+    _properties(f)["rs:groups"]
+    for f in xbrl_model["facts"]
+    if "rs:groups" in _properties(f)
+  ]
+  declared = {t["name"]: t for t in xbrl_model.get("propertyTypes", [])}
+  if not stated:
+    assert "rs:groups" not in declared
+    return
+  assert declared["rs:groups"]["dataType"] == "xbrlr:QNameSet"
+  for value in stated:
+    names = str(value).split(",")
+    assert len(names) > 1
+    assert " " not in str(value)
+    assert set(names) <= groups
+
+
+def test_the_gap_report_says_which_ambiguities_this_filing_raised() -> None:
+  """Two ambiguities depend on the filing: the duplicate label roles only
+  bite a filing that uses one of the four, and the language case only one
+  whose tags are not already lower case. The rest arise by construction."""
+  model = _model()
+  _, gaps = to_tavi_report(model)
+  arises = {
+    a["id"]: a["arises"]
+    for a in gaps.to_dict()["against_the_model"]["spec_ambiguities"]
+  }
+  assert arises["xs-namespace-scheme"] is True
+  assert arises["duplicate-label-uris"] is False
+  for fact in model.facts:
+    if fact.value_kind == "text":
+      fact.language = "en-US"
+      break
+  _, gaps = to_tavi_report(model)
+  assert gaps.ambiguities_arising["language-case"] is True
 
 
 def test_serialization_is_deterministic_and_valid_json() -> None:
@@ -861,7 +930,9 @@ def test_provenance_is_written_as_declared_properties() -> None:
   document, _ = to_tavi_report(model)
   xbrl_model = document["xbrlModel"]
   assert [
-    p for p in xbrl_model["facts"][0]["properties"] if p["property"] != "rs:groups"
+    p
+    for p in xbrl_model["facts"][0]["properties"]
+    if p["property"] not in ("rs:groups", "xbrl:factLocation")
   ] == [
     {"property": "prov:hadPrimarySource", "value": "src:trial-balance#assets"},
     {"property": "rs:sourceKind", "value": "trial_balance_line"},
@@ -872,7 +943,8 @@ def test_provenance_is_written_as_declared_properties() -> None:
     },
   ]
   assert all(
-    p["property"] == "rs:groups" for p in xbrl_model["facts"][1].get("properties", [])
+    p["property"] in ("rs:groups", "xbrl:factLocation")
+    for p in xbrl_model["facts"][1].get("properties", [])
   )
   declared = {p["name"]: p for p in xbrl_model["propertyTypes"]}
   assert declared["prov:hadPrimarySource"]["dataType"] == "xs:anyURI"
@@ -891,7 +963,7 @@ def test_a_model_without_provenance_declares_nothing_for_it() -> None:
   )
   assert "prov" not in document["documentInfo"]["namespaces"]
   assert all(
-    p["property"] == "rs:groups"
+    p["property"] in ("rs:groups", "xbrl:factLocation")
     for f in document["xbrlModel"]["facts"]
     for p in f.get("properties", [])
   )

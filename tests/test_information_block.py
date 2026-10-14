@@ -715,9 +715,16 @@ def test_the_holon_and_the_tavi_carry_the_same_membership(model):
   tavi: dict[str, set[str]] = {}
   for fact in xm["facts"]:
     for prop in fact.get("properties", []):
-      if prop["property"] == "rs:groups":
-        for group in prop["value"].split():
-          tavi.setdefault(role_of[group], set()).add(fact["name"].split(":", 1)[-1])
+      # One section: the draft's own xbrl:factLocation. More: rs:groups, a
+      # QName set with the draft's JSON delimiter, a comma (section 11.2.2).
+      if prop["property"] == "xbrl:factLocation":
+        groups = [prop["value"]]
+      elif prop["property"] == "rs:groups":
+        groups = prop["value"].split(",")
+      else:
+        continue
+      for group in groups:
+        tavi.setdefault(role_of[group], set()).add(fact["name"].split(":", 1)[-1])
   assert tavi == expected
 
 
