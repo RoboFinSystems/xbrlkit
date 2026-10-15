@@ -2,7 +2,7 @@
 
 Clients that install from the registry run exactly the version server.json
 pins, so it has to be the version pyproject.toml releases. create-release.yml
-bumps both in one commit and publish.yml lists it after the PyPI upload; these
+bumps both in one commit and then lists it after the PyPI upload; these
 tests keep a hand edit from splitting them, and keep the description true.
 """
 
