@@ -3,7 +3,7 @@ name = "xbrlkit"
 version = "0.21.2"
 description = "Work with XBRL filings above Arelle: one parse, portable models"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     {name = "RFS LLC"},
 ]
@@ -20,10 +20,9 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Office/Business :: Financial",
     "Topic :: Office/Business :: Financial :: Accounting",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -106,7 +105,7 @@ include = [
 include = ["xbrlkit"]
 exclude = ["tests", "xbrlkit/serialize/_kernel", "xbrlkit/_vendor"]
 extraPaths = ["."]
-pythonVersion = "3.13"
+pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "standard"
