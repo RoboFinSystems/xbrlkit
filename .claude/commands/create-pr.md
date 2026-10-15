@@ -9,7 +9,7 @@ Create a GitHub pull request for the current branch, writing the title and descr
 
 A description written from the diff alone can't know _why_ a change was made, so it tends to describe things that aren't true — and those descriptions then feed `@claude` reviews, compounding the bad information. **You author it here, where the full context is available.**
 
-This is `xbrlkit` — a **published Python package** exposing the `holon` CLI (`build`, `fetch`, `query`) and a library that converts SEC XBRL filings into `holon.jsonld` documents. **This repository is public**, and publishing is triggered by a push to `release/**` rather than by a merge, so the PR text is often public before the version that carries it.
+This is `xbrlkit` — a **published Python package** exposing the `holon` CLI (`build`, `fetch`, `query`) and a library that converts SEC XBRL filings into `holon.jsonld` documents. **This repository is public**, and publishing happens only when a release is dispatched rather than on merge, so the PR text is often public before the version that carries it.
 
 **Everything runs through `uv run`** — the `just` recipes already do. Never invoke bare `python`, `pytest`, or `ruff`.
 
@@ -23,7 +23,7 @@ TARGET=${1:-main}
 ```
 
 - **Never PR from `main`.** Branches come from `just create-feature <type> <name>`, not `git switch -c`.
-- **Never target `release/**`** — that's the publish trigger, not a review branch.
+- **Never target `release/**`** — those are cut records that `create-release.yml` tags and publishes from, not review branches.
 - **Uncommitted changes**: surface them and ask whether to commit (never on `main`, stage by name, no `git add -A`).
 - **Existing PR**: `gh pr list --head "$CURRENT" --base "$TARGET" --json url,number` — offer `gh pr edit` rather than duplicating.
 - **Push**: `git push -u origin "$CURRENT"`.
