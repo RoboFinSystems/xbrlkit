@@ -24,14 +24,15 @@ latest = client.list_filings(cik, forms=["10-K"])[0]
 package = download_filing(client, cik, latest.accession, Path("data"))  # the Arelle load target
 ```
 
-The SEC **User-Agent** is required here as everywhere: set
-`SEC_GOV_USER_AGENT="Your Name your@email.com"` or pass `--user-agent`.
+The SEC **User-Agent** is a courtesy here as everywhere — EDGAR works under a
+default, saying so once. To identify yourself, set
+`SEC_GOV_USER_AGENT="Your Name your@email.com"` or pass `xbrlkit --user-agent`.
 
 ## What EDGAR actually holds
 
 By count EDGAR is not an XBRL corpus. Ownership forms alone are 49% of one
 filer's history and 85% of another's; XBRL is 10–30%. Three kinds of filing
-load, and `describe_filing`'s `profile` says which one you have — see
+load, and `describe_filing` says which one you have — see
 [`serve/`](../serve/README.md#three-kinds-of-filing).
 
 Three things about EDGAR shape how this reads a filing, and each was a bug
@@ -40,8 +41,9 @@ before it was a feature:
 **A filing is a *set* of documents, and the primary one is not always where the
 content is.** An 8-K is boilerplate with the press release attached as
 `EX-99.1`; a 13F-HR's primary document is a 2 KB cover page whose holdings are
-every one of them in a second document. `other_documents()` lists what else was
-filed — one small fetch of the index page, and only when asked.
+every one of them in a second document. `fetch_filing_index()` and
+`other_documents()` list what else was filed — one small fetch of the index
+page, made when asked, or on load to read an 8-K's exhibits.
 
 Everything is listed, **including what this cannot read**, with the URL it
 lives at. A PDF annual report and a chart filed as an image are content; that

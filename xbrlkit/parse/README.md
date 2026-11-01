@@ -69,9 +69,8 @@ the network; a miss is then an error, not a fetch.
 
 ## Hosting your own controller
 
-A host that loads filings through its own Arelle controller — the RoboSystems
-SEC adapter does, for its cache policy — takes two things from here instead of
-carrying the EDGAR plugin itself:
+A host that loads filings through its own Arelle controller takes two things
+from here instead of carrying the EDGAR plugin itself:
 
 ```python
 from xbrlkit.parse import configure_webcache, register_sec_transforms

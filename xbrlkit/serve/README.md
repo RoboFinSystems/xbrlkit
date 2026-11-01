@@ -100,7 +100,9 @@ and notebooks, and the Cypher runner on its own as `xbrlkit.cypher`.
 
 ## Three kinds of filing
 
-`describe_filing`'s `profile` says which one you have:
+`describe_filing` says which one you have: `profile.xbrl` is true for the first
+(and for an 8-K with a tagged cover page), and `sections.records` lists the
+second's tables:
 
 | kind | what it is | how it reads |
 | --- | --- | --- |
@@ -226,8 +228,9 @@ claude mcp add xbrlkit -e SEC_GOV_USER_AGENT="Your Name your@email.example" \
   -- uvx --from "xbrlkit[mcp]@latest" xbrlkit serve --transport stdio
 ```
 
-`SEC_GOV_USER_AGENT` is needed for anything EDGAR has to fetch (a ticker, a
-`cik:accession`); a local file needs none.
+`SEC_GOV_USER_AGENT` identifies you on anything EDGAR has to fetch (a ticker, a
+`cik:accession`); without it those go out under a default, saying so once. A
+local file needs none.
 
 **Where exports go.** A client that launches the server also picks its working
 directory: Claude Desktop starts it in `/`, which is not writable, and Claude
