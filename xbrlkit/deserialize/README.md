@@ -13,10 +13,10 @@ model = from_tavi_json(Path("boeing.tavi.json").read_text())
 model = from_holon_json(Path("boeing.holon.jsonld").read_text())
 ```
 
-Arelle is not involved and cannot be: it does not load either format. That is
+Arelle is not involved and cannot be: it does not load any of them. That is
 the point — a report that never was an SEC filing (a ledger's own output, a
 converted filing someone handed you) becomes queryable with the same tools, and
-[`xbrlkit serve`](../serve/README.md) loads either one by path or by URL.
+[`xbrlkit serve`](../serve/README.md) loads any of them by path or by URL.
 
 `from_clawdog_report`, `from_tavi_report` and `from_holon_report` return the
 model **and** a gap report, so a round trip can be diffed without re-deriving

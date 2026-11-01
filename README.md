@@ -14,7 +14,8 @@ get the model back.
   filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
   XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI            (compiled model)
                                      │         ├──▶ xBRL-JSON       (OIM)
-                   holon, TAVI ──────┘         └──▶ property graph  (parquet, .lbdb, icebug-disk)
+                                     │         ├──▶ ClawDog         (authored-report JSON-LD)
+          holon, TAVI, ClawDog ──────┘         └──▶ property graph  (parquet, .lbdb, icebug-disk)
 
                    primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
 
@@ -30,8 +31,8 @@ XBRL package or archive (`.zip`), an iXBRL document (`.htm`), a bare instance
 the middle of this requires EDGAR, or a regulator at all — a report that was
 never filed with anybody parses like one that was.
 
-Four projections out, and two of those read back, so a report that was never an
-SEC filing gets the same treatment. A fifth surface, the filing's text, reads
+Five projections out, and three of those read back, so a report that was never an
+SEC filing gets the same treatment. Another surface, the filing's text, reads
 the primary HTML directly and needs neither Arelle nor the network. And
 `xbrlkit view` puts a filing on screen.
 
@@ -61,8 +62,8 @@ that is the change that turns a kit into a junk drawer.
 | | | |
 | --- | --- | --- |
 | [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
-| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the four projections | holon, TAVI (+ its gap report), xBRL-JSON, the property graph |
-| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon or a TAVI read back into the model, no Arelle |
+| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the five projections | holon, TAVI (+ its gap report), xBRL-JSON, ClawDog (+ its gap report), the property graph |
+| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon, a TAVI or a ClawDog report read back into the model, no Arelle |
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
@@ -108,7 +109,8 @@ SEC_GOV_USER_AGENT="Your Name your@email.com"
 `.env` is loaded automatically by every command **run from a checkout of this
 repo** — the lookup is relative to the installed code, not your working
 directory, so a `uvx` or `pip` install never picks one up. There, use
-`export SEC_GOV_USER_AGENT=…`, `--user-agent`, or an MCP `env` block (see
+`export SEC_GOV_USER_AGENT=…`, `--user-agent` (before the command), or an MCP
+`env` block (see
 [Serve to an MCP client](#serve-to-an-mcp-client)). Nothing outside EDGAR
 needs it — a local file, a JSON report and filings.xbrl.org all load without.
 
@@ -119,13 +121,14 @@ needs it — a local file, a JSON report and filings.xbrl.org all load without.
 xbrlkit build --cik 320193 --accno 0000320193-23-000106
 
 # The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
-# the property graph (lpg: a .lbdb to query, needs the lpg extra; icebug: an
-# experimental directory any LadybugDB reads in place), or every one of them
+# ClawDog, the property graph (lpg: a .lbdb to query, needs the lpg extra; icebug:
+# an experimental directory any LadybugDB reads in place), or `all` for every one
+# of them but the graph
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format lpg
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
 
-# Fetch the latest filing for a ticker (-> ./output/); --form and --n filter
+# Fetch the latest 10-K for a ticker (-> ./output/); --form and --n filter
 xbrlkit fetch --ticker NVDA
 
 # Query consolidated facts in a built holon (in-memory SPARQL)
@@ -221,7 +224,7 @@ claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 A `.env` file is **not** a channel for either of these. The lookup is relative
 to the installed code rather than your working directory, so it resolves only
 inside a checkout of this repo — a `uvx` or `pip` install never sees one. Use
-the environment, the `env` block, or `--user-agent`.
+the environment, the `env` block, or `--user-agent` before the command.
 
 Both are optional: EDGAR works unattributed under the default, saying so once.
 And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all.
@@ -273,8 +276,9 @@ answer's `read_from` says which one you have; `--pure` or
 
 No graph and no database sits behind any of it: every answer about a filing is
 read from that filing, and the only graph `run_cypher` reads is one you asked
-`export_filing` to write. The one outward call is `search_filings`, which asks
-EDGAR's own full-text index which filings to go and read. Full detail,
+`export_filing` to write. Beyond fetching a filing and its documents, the one
+outward call is `search_filings`, which asks EDGAR's own full-text index which
+filings to go and read. Full detail,
 including the tool table and the `--pure` profile, in
 [`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
 
@@ -283,8 +287,8 @@ including the tool table and the `--pure` profile, in
 **RoboSystems.** The
 [RoboSystems](https://github.com/RoboFinSystems/robosystems) platform's SEC
 pipeline is built on this package: filings are parsed with `xbrlkit.parse`
-(its own Arelle controller, with `register_sec_transforms` and the cache policy
-from `configure_webcache`), projected with `to_holon`, `to_tavi_report` and the
+(`load_model` on the platform's own cache directory, then `to_xbrl_model`),
+projected with `to_holon`, `to_tavi_report` and the
 property-graph tables, the shared `sec` graph is declared from
 `xbrlkit.schema`, and the full-text index behind its document search is built
 from `xbrlkit.text`.

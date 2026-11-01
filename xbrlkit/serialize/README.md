@@ -1,6 +1,6 @@
 # Serialize — the projections
 
-Four portable representations, all hanging off one parse. Fidelity loss is a
+Five portable representations, all hanging off one parse. Fidelity loss is a
 *projection* choice, never a limitation of [`XbrlModel`](../model.py): the
 parse captures the full XBRL and each serializer decides what to shed.
 
@@ -133,8 +133,8 @@ conn.execute("MATCH (f:Fact)-[:FACT_HAS_ELEMENT]->(e:Element) RETURN e.qname, co
 default, or `write_icebug(..., storage="https://…")` (or `s3://`, `hf://`) for a
 tree you host; remote reads need LadybugDB's `httpfs` extension. Every table is
 read back through Cypher identical to the `.lbdb` built from the same rows, on
-LadybugDB 0.18.1, 0.20.2 and 0.21.0. Two engine defects to know while they are
-open: write relationship patterns with a type (`-[:FACT_HAS_ELEMENT]->`, never
+LadybugDB 0.18.1, 0.20.2 and 0.21.0. Two engine defects, fixed upstream in
+0.21.1, to know on an older engine: write relationship patterns with a type (`-[:FACT_HAS_ELEMENT]->`, never
 `-[r]->`), since untyped patterns over icebug-disk tables return wrong rows
 ([#1066](https://github.com/LadybugDB/ladybug/issues/1066)); and on 0.21.0 a
 pattern that changes direction and then filters a later node can fail
