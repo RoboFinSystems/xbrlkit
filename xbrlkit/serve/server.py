@@ -9,9 +9,9 @@ cannot drive it. Point an MCP client at ``http://127.0.0.1:8765/mcp``.
 Two switches shape what the tools return:
 
 - ``pure`` — a faithful reading of the filing and nothing more: no statement
-  kinds, no detected Items, no period buckets, the Filing Ladder's read cap.
-  The profile a benchmark rung runs under; the default is the product
-  profile, which keeps those conveniences.
+  kinds, no detected Items, no period buckets, the Filing Ladder v0.1.1's read
+  cap, kept for replication. The ladder's own serve rung (v0.2, 4c) ran the
+  default product profile, which keeps those conveniences.
 - ``with_document`` — whether the text tools read the whole primary document
   or only the tagged text blocks (the form's own text). On by default for
   the product profile, off by default under ``pure`` so the document can be
