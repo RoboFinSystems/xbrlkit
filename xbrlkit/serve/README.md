@@ -79,7 +79,7 @@ The tools are the shapes a reader needs, not a query language.
 
 | tool | what it answers |
 | --- | --- |
-| `describe_filing` | how the filing is laid out: entity, periods (with the keys the other tools use), statements and disclosures by role, dimensional axes, text sections with offsets — **call it first** |
+| `describe_filing` | how the filing is laid out: entity, periods (with the keys the other tools use), statements by role and notes by name, dimensional axes, text sections with offsets — **call it first** |
 | `resolve_element` | which concepts the filing reports for a phrase ("revenue", "lease liability"), ranked, with fact counts and where they appear |
 | `fact_grid` | values by concept and period — the consolidated total by default (no dimensional qualifier, the most precise of duplicate tags), member breakdowns on request |
 | `statement` | one presentation network as a table: rows in filing order with preferred labels, values per period column |

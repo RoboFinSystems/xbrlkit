@@ -74,8 +74,8 @@ export_filing loads at once — by path or by URL — and answers everything \
 below, so a report that was never an SEC filing, a ledger's own output \
 included, uses the same tools. unload_filing drops one.
 - describe_filing FIRST for a filing you have not looked at: the entity, the \
-periods with the `key` the other tools use, the networks by role, the axes \
-present, and the text sections with their offsets. Never guess a concept name \
+periods with the `key` the other tools use, the statements and the notes by \
+name, the axes present, and the text sections with their offsets. Never guess a concept name \
 or a period key.
 
 NUMBERS
@@ -420,9 +420,9 @@ def build_server(
     description=(
       "How a loaded filing is laid out: entity, form and fiscal context; fact "
       "counts; the reporting periods with the `key` fact_grid and statement "
-      "use; units; the presentation networks by role (statements and "
-      "disclosures — the primary statements flagged under the product "
-      "profile); the dimensional axes present; and the text sections with "
+      "use; units; the primary statements by role and the notes by name "
+      "(`disclosures` lists a note's blocks; under `--pure`, every "
+      "presentation network by role); the dimensional axes present; and the text sections with "
       "their character offsets. For an 8-K it also returns the SEC's own item "
       "codes and what they mean (2.02 = an earnings release) with a note "
       "saying where that filing's substance actually is. Call this first — "

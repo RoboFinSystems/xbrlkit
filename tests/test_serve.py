@@ -344,9 +344,9 @@ def test_describe_filing_orients(loaded: LoadedFiling) -> None:
   assert kinds == {IS_ROLE: "income_statement", BS_ROLE: "balance_sheet"}
   assert [s["id"] for s in out["statements"]] == ["StatementOfIncome", "BalanceSheet"]
   assert out["statements"][0]["name"] == "Consolidated Statements of Income"
-  assert out["disclosures"] == [
-    {"id": "RevenueDisclosure", "name": "Revenue (Policies)", "concepts": 2}
-  ]
+  # One name per note; `disclosures` lists a note's blocks.
+  assert out["disclosures"] == ["Revenue"]
+  assert out["disclosure_blocks"] == 1
   assert out["periods"][0] == {"key": "2024-12-31", "instant": True, "facts": 2}
   assert out["axes"][0]["axis"] == "us-gaap:StatementBusinessSegmentsAxis"
   assert out["axes"][0]["members"] == 1
@@ -632,7 +632,7 @@ def test_income_taxes_note_is_not_an_income_statement() -> None:
     id="acme", source="memory", model=model, text=text, sections=sections
   )
   described = tools.describe_filing(lf)
-  assert {s["id"] for s in described["disclosures"]} >= {"IncomeTaxes"}
+  assert "Income Taxes" in described["disclosures"]
   assert "IncomeTaxes" not in {s["id"] for s in described["statements"]}
   # The plain income statement beats the comprehensive one and the note.
   assert tools.statement(lf, "income statement")["statement"]["role"] == IS_ROLE
