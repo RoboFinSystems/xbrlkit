@@ -163,9 +163,12 @@ which is untagged in the 10-Q too.
 
 `--pure` is a faithful reading of the filing and nothing more: no statement
 kinds (networks are listed by the filer's own names), no detected Items, no
-period buckets, the Filing Ladder's read cap — the profile a benchmark rung
-runs under. It parses a ticker or `cik:accession` from EDGAR rather than
-reading RoboSystems' published parse, unless `XBRLKIT_ARTIFACTS_URL` is set.
+period buckets, the Filing Ladder v0.1.1's read cap — the hit shape that run
+used, kept so it can be replicated. The ladder's own `xbrlkit serve` rung
+(v0.2, rung 4c) ran the default product profile with the document on, which is
+what any reader gets. `--pure` parses a ticker or `cik:accession` from EDGAR
+rather than reading RoboSystems' published parse, unless
+`XBRLKIT_ARTIFACTS_URL` is set.
 
 `--with-document` / `--without-document` choose whether the text tools read the
 whole primary document or only the tagged text blocks; the product profile

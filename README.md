@@ -295,14 +295,21 @@ from `xbrlkit.text`.
 
 **Filing Ladder.** The
 [Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark —
-one filing handed to the same language model in every representation — built
-its 26-filing corpus of 2024–2025 10-Ks and 10-Qs with this package. Each
-projection is a rung of the ladder, so its
-[published results](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/README.md)
-are also a measurement of what a model can do with each of these outputs. That
-corpus is this package's test bench too: the text sections were checked against
-the filing's own text-block facts on all 26 filings, the property graph row for
-row against the platform's processor, and the JSON importers by round trip.
+one SEC filing handed to the same language model in every representation, the
+same questions, scored with cost — built its 26-filing corpus of 2024–2025 10-Ks
+and 10-Qs with this package, and each projection is a rung of the ladder. Since
+protocol v0.2 (November 2026) the package is a rung of its own: `xbrlkit serve`
+over one filing on the reader's machine, under the product profile with the
+document on, answered the same questions as the hosted knowledge graph's tools
+at the same accuracy, and the
+[published table](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/README.md)
+carries its cost per correct answer beside every other row of every version.
+What the transcripts showed about the tools fed straight back into the package
+(the `concepts` and `phrase` argument aliases in 0.21.5; the orientation
+payload is the next item). That corpus is this package's test bench too: the
+text sections were checked against the filing's own text-block facts on all 26
+filings, the property graph row for row against the platform's processor, and
+the JSON importers by round trip.
 
 ## View & explore
 
