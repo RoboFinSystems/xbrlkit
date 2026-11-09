@@ -214,6 +214,13 @@ def _error(message: str) -> str:
   return json.dumps({"error": message})
 
 
+def _names(given: list[str] | None, alias: list[str] | None) -> list[str]:
+  """One list from an argument and its alias: the argument as given, the alias's other names after it."""
+  names = list(given or [])
+  names.extend(name for name in alias or [] if name not in names)
+  return names
+
+
 def build_server(
   session: FilingSession,
   out_dir: Path | None = None,
@@ -438,13 +445,20 @@ def build_server(
     structured_output=False,
   )
   def resolve_element(
-    query: Annotated[str, Field(description="A concept name, qname, or label phrase.")],
+    query: Annotated[
+      str | None, Field(description="A concept name, qname, or label phrase.")
+    ] = None,
+    phrase: Annotated[
+      str | None, Field(description="The same as query; either name is taken.")
+    ] = None,
     filing: Filing = None,
     limit: Annotated[
       int, Field(description="Matches to return (max 100).", ge=1, le=100)
     ] = 20,
   ) -> str:
-    return run(lambda: tools.resolve_element(session.get(filing), query, limit))
+    return run(
+      lambda: tools.resolve_element(session.get(filing), query or phrase or "", limit)
+    )
 
   @server.tool(
     name="fact_grid",
@@ -462,13 +476,17 @@ def build_server(
   )
   def fact_grid(
     elements: Annotated[
-      list[str],
+      list[str] | None,
       Field(
         description=(
           "Concept qnames or names, e.g. ['us-gaap:Revenues', 'NetIncomeLoss']."
         )
       ),
-    ],
+    ] = None,
+    concepts: Annotated[
+      list[str] | None,
+      Field(description="The same as elements; either name is taken."),
+    ] = None,
     filing: Filing = None,
     period_end: Annotated[
       str | None,
@@ -510,7 +528,7 @@ def build_server(
     return run(
       lambda: tools.fact_grid(
         session.get(filing),
-        elements,
+        _names(elements, concepts),
         period_end=period_end,
         period_type=period_type,
         include_dimensions=include_dimensions,
