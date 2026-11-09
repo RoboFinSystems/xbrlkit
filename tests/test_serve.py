@@ -2789,3 +2789,45 @@ def test_what_the_filing_said_is_not_overwritten_from_outside_it() -> None:
   assert loaded.model.entity.exchange == "NASDAQ"
   # And the one field no cover page tags is filled.
   assert loaded.model.entity.sic == "3674"
+
+
+# -- the MCP surface's argument aliases ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_server_takes_concepts_and_phrase_beside_elements_and_query(
+  session: FilingSession, tmp_path: Path
+) -> None:
+  """A model names the argument after the description's noun — `fact_grid` speaks of
+  concepts and `resolve_element` of a phrase — so both names are taken, and a call that
+  uses either gets the same answer."""
+  from mcp.client import Client
+
+  from xbrlkit.serve import build_server
+
+  async with Client(build_server(session, tmp_path, graph_tools=False)) as client:
+    listed = {t.name: t for t in (await client.list_tools()).tools}
+    assert {"elements", "concepts"} <= set(
+      listed["fact_grid"].input_schema["properties"]
+    )
+    assert {"query", "phrase"} <= set(
+      listed["resolve_element"].input_schema["properties"]
+    )
+
+    async def call(name: str, args: dict[str, Any]) -> str:
+      return (await client.call_tool(name, args)).content[0].text
+
+    assert await call("fact_grid", {"concepts": ["us-gaap:Revenues"]}) == await call(
+      "fact_grid", {"elements": ["us-gaap:Revenues"]}
+    )
+    assert await call("resolve_element", {"phrase": "revenue"}) == await call(
+      "resolve_element", {"query": "revenue"}
+    )
+    both = json.loads(
+      await call(
+        "fact_grid", {"elements": ["us-gaap:Revenues"], "concepts": ["Assets"]}
+      )
+    )
+    assert both["resolved"] == ["us-gaap:Revenues", "us-gaap:Assets"]
+    assert "required" in json.loads(await call("fact_grid", {}))["error"]
+    assert "required" in json.loads(await call("resolve_element", {}))["error"]
