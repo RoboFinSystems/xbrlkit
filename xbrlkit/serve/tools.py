@@ -622,12 +622,23 @@ def describe_filing(
     }
     section_items: dict[str, Any] = {}
   else:
+    statement_roles = {s["role"] for s in statements}
+    families = blocks_for(lf)[2] if disclosures else []
     networks_view = {
       "statements": statements,
-      "disclosures": disclosures,
+      # One name per note, not one row per network: a 10-K's networks ran to
+      # most of this payload, and `disclosures` lists any note's blocks.
+      "disclosures": [
+        fam.name
+        for fam in families
+        if any(st.role_uri not in statement_roles for st in fam.blocks)
+      ],
+      "disclosure_blocks": len(disclosures),
       "networks_note": (
         "`statement` takes an id, a name (or part of one), a role, or a kind "
-        "(balance_sheet, income_statement, cash_flow_statement, equity_statement)"
+        "(balance_sheet, income_statement, cash_flow_statement, equity_statement); "
+        "`disclosures` with one of the names above lists that note's blocks — "
+        "its policies, tables and details — for information_block to read"
       ),
     }
     section_items = {
