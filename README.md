@@ -6,8 +6,10 @@
 
 Work with XBRL filings above [Arelle](https://arelle.org): fetch a filing, parse
 it **once** into a neutral typed model, and project that model into whichever
-portable representation you need — or hand it one of those representations and
+portable representation you need, or hand it one of those representations and
 get the model back.
+
+From RoboSystems, the open-source knowledge graph for finance.
 
 ```
   EDGAR ───────────┐
@@ -24,11 +26,11 @@ get the model back.
                    any of the above ──▶ xbrlkit serve ──▶ MCP client (18 shaped tools, + Cypher with [lpg])
 ```
 
-Three ways in — the SEC, everyone else through
+Three ways in: the SEC, everyone else through
 [filings.xbrl.org](https://filings.xbrl.org), and **the filing itself**: an
 XBRL package or archive (`.zip`), an iXBRL document (`.htm`), a bare instance
 (`.xml`), a filing directory, or an `http(s)` URL to any of them. Nothing about
-the middle of this requires EDGAR, or a regulator at all — a report that was
+the middle of this requires EDGAR, or a regulator at all: a report that was
 never filed with anybody parses like one that was.
 
 Five projections out, and three of those read back, so a report that was never an
@@ -36,21 +38,21 @@ SEC filing gets the same treatment. Another surface, the filing's text, reads
 the primary HTML directly and needs neither Arelle nor the network. And
 `xbrlkit view` puts a filing on screen.
 
-**It is also a local MCP server.** The package stands alone — a library and a
-CLI — but `xbrlkit serve` holds filings in memory and exposes them to Claude,
+**It is also a local MCP server.** The package stands alone (a library and a
+CLI), but `xbrlkit serve` holds filings in memory and exposes them to Claude,
 ChatGPT or any MCP client through eighteen shaped tools, which makes reading a
 filing a conversation instead of a script: ask for a statement, the concepts
 behind a phrase, what foots to a subtotal, a segment breakdown, an exhibit, or
-a regex across the prose. Nothing is indexed and no database sits behind it —
+a regex across the prose. Nothing is indexed and no database sits behind it:
 every answer is read from the filing in memory, on your machine. With the `lpg`
-extra it also writes several filings as one property graph — a company's years,
-or its peers — and answers read-only Cypher over it.
+extra it also writes several filings as one property graph (a company's years,
+or its peers) and answers read-only Cypher over it.
 **[What you can ask it →](#what-you-can-ask-it)**
 
-Arelle stays the parser — nobody should reimplement DTS resolution. What it
+Arelle stays the parser; nobody should reimplement DTS resolution. What it
 does not give you is anything ergonomic to *hold*: `ModelXbrl` is a large
 mutable object graph tied to a controller you have to close. `XbrlModel` is the
-answer to that — stateless, single-filing, lossless, and the waist every
+answer to that: stateless, single-filing, lossless, and the waist every
 projection hangs off.
 
 **The one architectural rule:** everything goes through `XbrlModel`. A feature
@@ -97,7 +99,7 @@ just install     # dependencies, and .env from the template
 
 SEC fair access asks for a `User-Agent` identifying you with contact info.
 EDGAR works out of the box under a default that names the project, and the
-first unattributed fetch says so once — SEC rate limits per IP, so the shared
+first unattributed fetch says so once; SEC rate limits per IP, so the shared
 default costs nobody else their budget. Identifying yourself is a courtesy,
 and one worth extending. `just install` already created your `.env`:
 
@@ -107,12 +109,12 @@ SEC_GOV_USER_AGENT="Your Name your@email.com"
 ```
 
 `.env` is loaded automatically by every command **run from a checkout of this
-repo** — the lookup is relative to the installed code, not your working
+repo**: the lookup is relative to the installed code, not your working
 directory, so a `uvx` or `pip` install never picks one up. There, use
 `export SEC_GOV_USER_AGENT=…`, `--user-agent` (before the command), or an MCP
 `env` block (see
 [Serve to an MCP client](#serve-to-an-mcp-client)). Nothing outside EDGAR
-needs it — a local file, a JSON report and filings.xbrl.org all load without.
+needs it: a local file, a JSON report and filings.xbrl.org all load without.
 
 ## Usage
 
@@ -172,7 +174,7 @@ same model, given the filing's `FilingMeta` (CIK and accession).
 Two ways to run it. They differ in which process does the fetching, and so in
 where your SEC identity goes.
 
-**stdio — the client launches the server.** The identity belongs in the
+**stdio: the client launches the server.** The identity belongs in the
 server's own `env` block:
 
 ```json
@@ -190,7 +192,7 @@ server's own `env` block:
 }
 ```
 
-**HTTP — you start the server, the client only points at a URL.** An `env`
+**HTTP: you start the server, the client only points at a URL.** An `env`
 block in the client config would reach nothing here; set it on the command:
 
 ```bash
@@ -223,7 +225,7 @@ claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
 
 A `.env` file is **not** a channel for either of these. The lookup is relative
 to the installed code rather than your working directory, so it resolves only
-inside a checkout of this repo — a `uvx` or `pip` install never sees one. Use
+inside a checkout of this repo; a `uvx` or `pip` install never sees one. Use
 the environment, the `env` block, or `--user-agent` before the command.
 
 Both are optional: EDGAR works unattributed under the default, saying so once.
@@ -231,7 +233,7 @@ And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all
 
 ### What you can ask it
 
-Load a filing from the chat — a ticker, an EDGAR `cik:accession`, a `lei:` for
+Load a filing from the chat: a ticker, an EDGAR `cik:accession`, a `lei:` for
 ESEF and the national regimes, a local package, or a holon or TAVI by path or
 URL. A ticker or `cik:accession` loads the filing's published holon (or its
 TAVI model) first when the RoboSystems CDN has one, falling back to EDGAR. That
@@ -241,14 +243,14 @@ answer's `read_from` says which one you have; `--pure` or
 `~/xbrlkit/output` unless `--out-dir` says otherwise. Then:
 
 - **Pull a statement as a table.** The income statement, balance sheet, cash
-  flow or equity statement — or any disclosure network — as rows in the filer's
+  flow or equity statement (or any disclosure network) as rows in the filer's
   own order and labels, values per period column.
 - **Find the concept behind a phrase.** "Revenue", "operating lease liability"
   → the qnames *this* filer actually reports, its own extension concepts
   included, ranked with fact counts and where each appears. You never have to
   guess a US-GAAP name.
-- **Get values by concept and period.** Consolidated totals by default — no
-  dimensional qualifier, the most precise of duplicate tags — or broken out by
+- **Get values by concept and period.** Consolidated totals by default (no
+  dimensional qualifier, the most precise of duplicate tags) or broken out by
   any axis the filing carries: segment, product, debt instrument, acquisition.
 - **Check whether a subtotal foots.** The calculation children with their
   weights, the reported total against the sum computed from them, per period,
@@ -256,11 +258,11 @@ answer's `read_from` says which one you have; `--pure` or
 - **Read one disclosure whole.** A note's rows with values, the same rows by
   its own axes, its calculation arcs footed, and its tagged text beside the
   numbers. The `disclosures` index finds the right block first, cheaply.
-- **Search the prose.** Regex over the whole primary document — Items, the
+- **Search the prose.** Regex over the whole primary document: Items, the
   notes, the cover, the signatures, tagged or not. A pattern that matches more
   than fits in the answer says which sections the rest fall in, busiest first.
-- **Read the other documents.** Exhibits, an 8-K's EX-99.1 earnings release —
-  where the non-GAAP measures and guidance live, since no XBRL holds them — or
+- **Read the other documents.** Exhibits, an 8-K's EX-99.1 earnings release
+  (where the non-GAAP measures and guidance live, since no XBRL holds them), or
   a 13F's holdings table.
 - **Read the forms with no XBRL at all.** A Form 4's transactions and holdings,
   a 13F's positions, as rows with the document's header fields beside them.
@@ -270,7 +272,7 @@ answer's `read_from` says which one you have; `--pure` or
   a LadybugDB graph or icebug-disk tree, or the parse itself; or open it as a
   rendered report in the browser and hand back the link.
 - **Stack filings and query across them** (with the `lpg` extra). Export several
-  loaded filings as one graph — a company's years, or peers — and run read-only
+  loaded filings as one graph (a company's years, or peers) and run read-only
   Cypher over it with `run_cypher`: revenue by report and period, or a figure
   that one year's comparative restates.
 
@@ -294,9 +296,9 @@ property-graph tables, the shared `sec` graph is declared from
 from `xbrlkit.text`.
 
 **Filing Ladder.** The
-[Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark —
-one SEC filing handed to the same language model in every representation, the
-same questions, scored with cost — built its 26-filing corpus of 2024–2025 10-Ks
+[Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark
+(one SEC filing handed to the same language model in every representation, the
+same questions, scored with cost) built its 26-filing corpus of 2024–2025 10-Ks
 and 10-Qs with this package, and each projection is a rung of the ladder. Since
 protocol v0.2 (November 2026) the package is a rung of its own: `xbrlkit serve`
 over one filing on the reader's machine, under the product profile with the
@@ -313,11 +315,11 @@ the JSON importers by round trip.
 
 ## View & explore
 
-Built holons and TAVI models render in the **xbrlkit viewer** — the browser
+Built holons and TAVI models render in the **xbrlkit viewer**, the browser
 side of the toolkit, a reader that renders the financial statements and lets
 you ask questions of the report with AI:
 
-- **Hosted:** <https://xbrlkit.com/> — open a `holon.jsonld` or a `tavi.json`
+- **Hosted:** <https://xbrlkit.com/>: open a `holon.jsonld` or a `tavi.json`
   and explore the statements, notes and dimensional facts, or chat with the
   report.
 - **Source:** <https://github.com/RoboFinSystems/xbrlkit-viewer>
@@ -325,7 +327,7 @@ you ask questions of the report with AI:
 The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
 complete, portable, self-describing report. Its chat asks the report raw
 questions (jq over a TAVI model, SPARQL over a holon); `xbrlkit serve` is the
-other side of that pair — the same filing behind shaped tools, on your own
+other side of that pair: the same filing behind shaped tools, on your own
 machine.
 
 **`xbrlkit view` joins the two.** It resolves a filing the way `serve` does,
@@ -346,8 +348,8 @@ Without installing anything:
 uvx xbrlkit view NVDA
 ```
 
-A browser cannot be handed a local path — `file://` is unreachable from an
-https page, and a file input cannot be pre-populated — so this serves the
+A browser cannot be handed a local path (`file://` is unreachable from an
+https page, and a file input cannot be pre-populated), so this serves the
 document instead, on an ephemeral loopback port with an unguessable path, and
 opens `xbrlkit.com/view?url=…` pointing at it (earlier releases open
 `xbrlkit.com/?url=…`, which keeps working). `http://127.0.0.1` is a
@@ -360,4 +362,4 @@ then *"show me it"*.
 
 ## License
 
-MIT © 2026 RFS LLC — see [LICENSE](LICENSE).
+MIT © 2026 RFS LLC. See [LICENSE](LICENSE).
