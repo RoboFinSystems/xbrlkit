@@ -6,8 +6,9 @@ released predecessor to supersede. The design history (XBRL-aligned →
 graph-native) is recorded in the specs; the artifact itself is v1.
 
 Builds an :class:`rdflib.Graph` from the bundle and serializes it as JSON-LD
-using the canonical ``CANONICAL_CONTEXT`` (``robosystems/arelle/context.py``),
-so the export bundle speaks the *same* vocabulary as the framework seeds.
+using the kernel's own ``CANONICAL_CONTEXT`` (``.context``), xbrlkit's copy of
+the RoboSystems canonical context, so the graph speaks the *same* vocabulary as
+the framework seeds.
 
 Shape:
 * Concepts are ``rs:Element`` nodes carrying XBRL item attributes
@@ -23,9 +24,9 @@ Shape:
 
 Validation is decoupled from serialization: ``shacl_report`` (non-raising,
 structured) / ``validate_graph`` (raising) run SHACL over the built graph
-against ``frameworks/ontology/v1/shapes.ttl`` — the same shapes that gate the
-seeds. The publish hook runs it opt-in per ``REPORT_BUNDLE_SHACL_VALIDATION``
-and records the outcome on the Report; serialization itself never blocks.
+against the vendored ``_vendor/ontology/v1/shapes.ttl``, xbrlkit's copy of the
+RoboSystems shapes (it adds a ``DimensionShape``). Only the test suite runs
+them, as a drift guard; serialization itself never blocks.
 """
 
 from __future__ import annotations
@@ -135,10 +136,7 @@ def serialize_to_jsonld(bundle: StatementBundle) -> str:
   """Serialize a ``StatementBundle`` to a v1.0 JSON-LD string.
 
   Serialization does not validate — that's a separate, caller-controlled
-  concern (``shacl_report`` / ``validate_graph``). The publish hook decides
-  whether to validate per the ``REPORT_BUNDLE_SHACL_VALIDATION`` mode; the
-  standalone ``examples/_common/validate.py`` and the SHACL regression test
-  validate the on-disk artifact; downloads just serialize.
+  concern (``shacl_report`` / ``validate_graph``).
   """
   graph = build_graph(bundle)
   return graph.serialize(
@@ -599,7 +597,7 @@ def shacl_report(g: Graph) -> ShaclResult:
   ``Report.metadata``) or escalate. Checks the positive instance shapes
   (a Fact has element/period; an Association has from/to/associationType)
   and the negative shapes that ban the retired dialects (``xbrli:contextRef``,
-  ``arcFrom``, direct ``summationOf``) — the same shapes that gate the seeds.
+  ``arcFrom``, direct ``summationOf``).
   """
   shapes = _shapes_graph()
   if shapes is None:
@@ -626,8 +624,7 @@ def validate_graph(g: Graph, bundle: StatementBundle) -> None:
   """Strict SHACL check — raises on non-conformance.
 
   Thin wrapper over :func:`shacl_report` for callers that want fail-loud
-  behavior (tests; the ``strict`` publish mode). Skips silently when the
-  shapes file is unavailable.
+  behavior. Skips silently when the shapes file is unavailable.
   """
   result = shacl_report(g)
   if result.ran and not result.conforms:

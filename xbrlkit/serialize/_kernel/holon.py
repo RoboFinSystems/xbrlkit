@@ -24,11 +24,11 @@ them: JSON-LD is the one holon format.)
 This module is the **single source of truth** for the partition. Two entry
 paths converge on :func:`build_holon_dataset`:
 
-* production — :func:`serialize_to_holon_jsonld` builds the flat
-  :class:`~rdflib.Graph` from a ``StatementBundle`` (via ``build_graph``), then
-  partitions it;
-* demo / offline — ``examples/_common/databook.py`` parses a downloaded flat
-  ``.jsonld`` into a graph and partitions *that*.
+* :func:`xbrlkit.serialize.to_holon` builds the flat :class:`~rdflib.Graph`
+  from an ``XbrlModel`` (``build_holon_graph``), then hands it to
+  :func:`serialize_holon_jsonld_from_graph`;
+* :func:`serialize_to_holon_jsonld` builds it from a ``StatementBundle`` (via
+  ``build_graph``), then partitions it.
 
 Both call :func:`build_holon_dataset`, so the holon is derived one way.
 """
@@ -68,9 +68,10 @@ def partition_report_graph(g: Graph) -> dict[str, Graph]:
   aggregation of the books, not the books. Everything here already lives in
   the report graph, so this is a pure repartition — no ledger access.
 
-  The bulky ``rs:envelopeJson`` literal is dropped from the published graphs;
-  it lives in the flat JSON-LD bundle for callers that need the opaque IB
-  mechanics.
+  The bulky ``rs:envelopeJson`` literal, which only the kernel's
+  ``StatementBundle`` encoder (``jsonld.build_graph``) writes, is dropped from
+  the published graphs; :func:`~xbrlkit.serialize.graph.build_holon_graph`
+  never emits it.
   """
   scene, boundary, projection = Graph(), Graph(), Graph()
 
