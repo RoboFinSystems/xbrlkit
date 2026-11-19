@@ -217,6 +217,21 @@ def test_an_authored_report_survives_each_serialization(fmt: str) -> None:
   assert (result.calculations_checked, result.balance_checked) == (3, 1)
 
 
+def test_a_report_read_from_tavi_can_be_written_as_a_holon() -> None:
+  """A pure unit comes back from TAVI under the instance namespace even when
+  the document never bound it, so the holon written next keeps its periods
+  readable and every fact with them."""
+  model = build_report(_rows())
+  from_tavi, _ = from_tavi_report(to_tavi(model))
+  pure = next(u for u in from_tavi.units if u.measure == "xbrli:pure")
+  assert pure.uri == "http://www.xbrl.org/2003/instance#pure"
+
+  got, gaps = from_holon_report(to_holon(from_tavi))
+  assert gaps.unresolved_references == 0
+  assert len(got.facts) == len(model.facts)
+  assert check_report(got, expected_facts=len(model.facts), require_source=True).ok
+
+
 def test_an_authored_holon_is_stable_from_its_first_write() -> None:
   first = to_holon(build_report(_rows()))
   assert to_holon(from_holon_report(first)[0]) == first

@@ -128,9 +128,12 @@ NUMERIC_BASE_TYPES: frozenset[str] = frozenset(
 MEASURE_SOURCES: dict[str, tuple[str, str]] = {
   "xbrla:shares": ("xbrli:shares", "http://www.xbrl.org/2003/instance#shares"),
   "xbrlr:pure": ("xbrli:pure", "http://www.xbrl.org/2003/instance#pure"),
+  # The restored forms themselves. A filing binds `xbrli`; a report that never
+  # was one may not, and the measure must not then resolve to a bare prefix.
+  "xbrli:shares": ("xbrli:shares", "http://www.xbrl.org/2003/instance#shares"),
+  "xbrli:pure": ("xbrli:pure", "http://www.xbrl.org/2003/instance#pure"),
 }
 PURE_MEASURE = "xbrli:pure"
-PURE_URI = "http://www.xbrl.org/2003/instance#pure"
 UTR_NAMESPACE = "http://www.xbrl.org/2009/utr"
 
 _DEI_DOCUMENT_TYPE = "dei:DocumentType"
