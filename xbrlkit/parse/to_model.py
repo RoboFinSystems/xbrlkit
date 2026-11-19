@@ -12,25 +12,39 @@ Key conventions carried over from the adapter:
 - Arelle stores instant/end dates as the *exclusive* next midnight, so every
   instant/end date is rolled back one day (``- timedelta(1)``).
 - Measures resolve to prefixed tokens (``iso4217:USD``) from the QName.
+
+A fact the walk cannot place is never dropped silently: it is counted on the
+model's ``parse_report`` by reason, and a fact under a context the instance
+references but never declares is kept when the filing states that context's
+period itself (see :func:`_recoverable_contexts`).
 """
 
 from __future__ import annotations
 
+import hashlib
+import logging
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from arelle import XbrlConst
 
 from xbrlkit.model import (
+  RECOVERED_CONTEXT,
   Arc,
   Concept,
   DimQualifier,
+  DroppedFacts,
+  DropReason,
   EntityIdentity,
+  FactProvenance,
   FilingMeta,
   Label,
   Network,
   NetworkKind,
+  ParseReport,
   Period,
+  RecoveredContext,
   Reference,
   Unit,
   XbrlFact,
@@ -41,6 +55,8 @@ from xbrlkit.periods import duration_period, forever_period, instant_period
 
 if TYPE_CHECKING:
   from arelle.ModelXbrl import ModelXbrl
+
+logger = logging.getLogger(__name__)
 
 # Extended-link roles that carry no statement/disclosure network — the label
 # and reference linkbases (standard link role) plus the enumeration-list roles.
@@ -53,6 +69,17 @@ ROLES_FILTERED = {
 _DEI_FISCAL_YEAR = "dei:DocumentFiscalYearFocus"
 _DEI_FISCAL_PERIOD = "dei:DocumentFiscalPeriodFocus"
 _DEI_FISCAL_YEAR_END = "dei:CurrentFiscalYearEndDate"
+
+# Concept local names (start, end) under which a filing states the period of
+# the context they sit in. The Indian exchanges' results taxonomies report
+# these under each column's context, including the ones some filings never
+# declare.
+_REPORTING_PERIOD_FACTS = (
+  ("DateOfStartOfReportingPeriod", "DateOfEndOfReportingPeriod"),
+)
+
+# Concepts sampled per dropped group on the parse report.
+_DROPPED_CONCEPT_SAMPLE = 5
 
 
 def to_xbrl_model(
@@ -86,11 +113,23 @@ def to_xbrl_model(
   fiscal_period_focus: str | None = None
   fiscal_year_end_month: str | None = None
 
+  tally = _ParseTally()
+  rebuilt_contexts = _recoverable_contexts(mx, main_cik)
+
   for f in mx.facts:
-    if f.context is None:
-      continue
+    context = f.context
+    context_id = getattr(f, "contextID", None)
     concept = f.concept
+    rebuilt: _RebuiltContext | None = None
+    if context is None:
+      # A rebuilt context is a duration; an instant concept cannot sit in it.
+      if getattr(concept, "periodType", None) == "duration":
+        rebuilt = rebuilt_contexts.get(context_id or "")
+      if rebuilt is None:
+        tally.drop("undeclared_context", context_id, f)
+        continue
     if concept is None or concept.qname is None:
+      tally.drop("undefined_concept", context_id, f)
       continue
 
     qname_str = str(concept.qname)
@@ -112,8 +151,9 @@ def to_xbrl_model(
     _ensure_concept(mx, concepts, namespaces, concept)
 
     # Period (deduped by content-derived id). Skip facts with invalid dates.
-    period = _make_period(f.context)
+    period = rebuilt.period if rebuilt else _make_period(context)
     if period is None:
+      tally.drop("invalid_period", context_id, f)
       continue
     if period.id not in periods:
       periods[period.id] = period
@@ -128,7 +168,11 @@ def to_xbrl_model(
         unit_ref = unit.id
 
     # Entity identity (prefer the context whose CIK is the filer's).
-    scheme, raw_cik = f.context.entityIdentifier
+    if rebuilt:
+      scheme, raw_cik = rebuilt.scheme, rebuilt.identifier
+      rebuilt.facts += 1
+    else:
+      scheme, raw_cik = context.entityIdentifier
     norm_cik = _normalize_cik(raw_cik)
     if entity_scheme is None or norm_cik == main_cik:
       entity_scheme = scheme
@@ -142,26 +186,38 @@ def to_xbrl_model(
         numeric_value = None
 
     raw_value = getattr(f, "value", None)
+    source_hash = _md5(f)
+    if rebuilt:
+      source_hash = _orphan_hash(f, source_hash, context_id, unit_ref)
     facts.append(
       XbrlFact(
-        id=fact_id(report_uri, f.md5sum.value),
+        id=fact_id(report_uri, source_hash if rebuilt else f.md5sum.value),
         concept_qname=qname_str,
         period_id=period.id,
         unit_id=unit_ref,
         entity_cik=norm_cik,
         entity_scheme=scheme,
         entity_identifier=str(raw_cik),
-        dims=_make_dims(f.context, mx, concepts, namespaces),
+        dims=[] if rebuilt else _make_dims(context, mx, concepts, namespaces),
         value_str=_value_str(f),
         raw_value=str(raw_value) if raw_value is not None else None,
-        source_hash=_md5(f),
+        source_hash=source_hash,
         numeric_value=numeric_value,
         decimals=(str(f.decimals) if (is_numeric and f.decimals is not None) else None),
         value_kind="numeric" if is_numeric else "text",
         language=getattr(f, "xmlLang", None),
         is_nil=bool(getattr(f, "isNil", False)),
+        provenance=(
+          FactProvenance(kind=RECOVERED_CONTEXT, attributed_to="xbrlkit")
+          if rebuilt
+          else None
+        ),
       )
     )
+
+  parse_report = tally.report(rebuilt_contexts)
+  if parse_report is not None:
+    logger.warning("%s: %s", report_uri, _describe_report(parse_report))
 
   # Networks last: their arc endpoints (abstract headers, subtotals, hypercube
   # wiring) complete the concept coverage and add their namespaces.
@@ -204,7 +260,173 @@ def to_xbrl_model(
     units=list(units.values()),
     facts=facts,
     networks=networks,
+    parse_report=parse_report,
   )
+
+
+@dataclass
+class _RebuiltContext:
+  """An undeclared context's period and entity, as the parse rebuilt them."""
+
+  period: Period
+  start: date
+  end: date
+  scheme: str | None
+  identifier: str
+  period_from: list[str]
+  entity_from: str
+  facts: int = 0
+
+
+@dataclass
+class _ParseTally:
+  """Counts the facts the walk leaves out, by reason and context id."""
+
+  groups: dict[tuple[DropReason, str | None], DroppedFacts] = field(
+    default_factory=dict
+  )
+
+  def drop(self, reason: DropReason, context_id: str | None, fact: Any) -> None:
+    group = self.groups.setdefault(
+      (reason, context_id), DroppedFacts(reason=reason, context_id=context_id)
+    )
+    group.facts += 1
+    qname = str(getattr(fact, "qname", None) or "")
+    if (
+      qname
+      and qname not in group.concepts
+      and len(group.concepts) < _DROPPED_CONCEPT_SAMPLE
+    ):
+      group.concepts.append(qname)
+
+  def report(self, rebuilt: dict[str, _RebuiltContext]) -> ParseReport | None:
+    recovered = [
+      RecoveredContext(
+        context_id=context_id,
+        start=ctx.start,
+        end=ctx.end,
+        period_id=ctx.period.id,
+        facts=ctx.facts,
+        period_from=ctx.period_from,
+        entity_from=ctx.entity_from,  # pyright: ignore[reportArgumentType]
+      )
+      for context_id, ctx in rebuilt.items()
+      if ctx.facts
+    ]
+    if not self.groups and not recovered:
+      return None
+    return ParseReport(dropped=list(self.groups.values()), recovered_contexts=recovered)
+
+
+def _describe_report(report: ParseReport) -> str:
+  """One line for the log: what was dropped and what was rebuilt."""
+  parts: list[str] = []
+  if report.dropped:
+    by_reason: dict[str, int] = {}
+    for group in report.dropped:
+      by_reason[group.reason] = by_reason.get(group.reason, 0) + group.facts
+    parts.append(
+      f"{report.dropped_facts} fact(s) dropped ("
+      + ", ".join(f"{reason}: {count}" for reason, count in by_reason.items())
+      + ")"
+    )
+  if report.recovered_contexts:
+    parts.append(
+      f"{report.recovered_facts} fact(s) placed in rebuilt context(s) "
+      + ", ".join(r.context_id for r in report.recovered_contexts)
+    )
+  return "; ".join(parts)
+
+
+def _recoverable_contexts(mx: ModelXbrl, filing_id: str) -> dict[str, _RebuiltContext]:
+  """Rebuild the contexts the instance references but never declares.
+
+  Some filings name a context id on most of their facts and declare no
+  ``<xbrli:context>`` for it; Arelle loads those facts with no context. A
+  context is rebuilt only when the filing states its period itself: exactly
+  one start date and one end date reported under that same id (see
+  ``_REPORTING_PERIOD_FACTS``). The period is never taken from a declared
+  sibling context — the same filings date some of those wrongly.
+
+  The entity is the one every declared context names. When the declared
+  contexts disagree nothing is rebuilt; when the instance declares none,
+  ``filing_id`` (the caller's identifier for the filer) stands in, with no
+  scheme. A rebuilt context has no dimensions.
+  """
+  orphans = [f for f in mx.facts if f.context is None and getattr(f, "contextID", None)]
+  if not orphans:
+    return {}
+
+  entities = {c.entityIdentifier for c in (mx.contexts or {}).values()}
+  if len(entities) > 1:
+    return {}
+  if entities:
+    scheme, identifier = next(iter(entities))
+    entity_from = "declared_contexts"
+  else:
+    scheme, identifier, entity_from = None, filing_id, "filing"
+
+  stated: dict[str, dict[str, dict[date, str]]] = {}
+  for f in orphans:
+    qname = getattr(f, "qname", None)
+    local = getattr(qname, "localName", None)
+    if not any(local in pair for pair in _REPORTING_PERIOD_FACTS):
+      continue
+    value = _iso_date(getattr(f, "value", None))
+    if value is not None:
+      stated.setdefault(f.contextID, {}).setdefault(local, {})[value] = str(qname)
+
+  rebuilt: dict[str, _RebuiltContext] = {}
+  for context_id, by_name in stated.items():
+    for start_name, end_name in _REPORTING_PERIOD_FACTS:
+      starts, ends = by_name.get(start_name, {}), by_name.get(end_name, {})
+      if len(starts) != 1 or len(ends) != 1:
+        continue
+      (start, start_qname), (end, end_qname) = (
+        next(iter(starts.items())),
+        next(iter(ends.items())),
+      )
+      if start > end:
+        continue
+      rebuilt[context_id] = _RebuiltContext(
+        period=duration_period(start, end),
+        start=start,
+        end=end,
+        scheme=scheme,
+        identifier=str(identifier),
+        period_from=[start_qname, end_qname],
+        entity_from=entity_from,
+      )
+      break
+  return rebuilt
+
+
+def _orphan_hash(
+  fact: Any, arelle_hash: str | None, context_id: str | None, unit_ref: str | None
+) -> str:
+  """A hash for a fact Arelle loaded with no context.
+
+  Arelle hashes such a fact by its qname alone — the value, language, nil and
+  unit only enter beside a context — so every orphan of one concept shares a
+  hash. This folds in what Arelle would have, with the context id standing
+  where the context's own hash goes.
+  """
+  parts = [
+    arelle_hash or "",
+    context_id or "",
+    getattr(fact, "xmlLang", None) or "",
+    "nil" if getattr(fact, "isNil", False) else str(getattr(fact, "value", "") or ""),
+    unit_ref or "",
+  ]
+  return hashlib.md5("|".join(parts).encode(), usedforsecurity=False).hexdigest()
+
+
+def _iso_date(value: Any) -> date | None:
+  """An ISO date from a fact's lexical value, or ``None``."""
+  try:
+    return _to_date(date.fromisoformat(str(value).strip()[:10]))
+  except ValueError:
+    return None
 
 
 def _ensure_concept(

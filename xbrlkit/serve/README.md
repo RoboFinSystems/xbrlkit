@@ -56,6 +56,11 @@ A filing loaded without a taxonomy whose host has gone — every Danish ESEF
 report cites one — says that too: `missing_taxonomy` names the documents and
 counts the facts that are in the report and not in the model.
 
+So does a filing whose facts the parse could not place as written:
+`parse_report` counts the facts dropped, by reason and context id, and names
+any context the instance never declared that was
+[rebuilt from the filing's own dates](../parse/README.md#facts-the-walk-cannot-place).
+
 To read the filing itself, parse it from EDGAR:
 
 - `--pure` does so by default (see below).

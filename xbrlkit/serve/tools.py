@@ -35,7 +35,16 @@ import requests
 from xbrlkit.check import precision as _precision
 from xbrlkit.check import tolerance as _tolerance
 from xbrlkit.config import CONFIG, Config
-from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
+from xbrlkit.model import (
+  Arc,
+  Concept,
+  Network,
+  ParseReport,
+  Period,
+  Unit,
+  XbrlFact,
+  XbrlModel,
+)
 from xbrlkit.serialize import classify_network, root_qname
 from xbrlkit.serve.session import (
   FilingSession,
@@ -485,6 +494,7 @@ LOAD_RECEIPT_KEYS = (
   "read_from",
   "taxonomy",
   "missing_taxonomy",
+  "parse_report",
   "filing",
   "entity",
   "counts",
@@ -653,6 +663,11 @@ def describe_filing(
       if lf.missing_taxonomy
       else {}
     ),
+    **(
+      {"parse_report": _describe_parse_report(model.parse_report)}
+      if model.parse_report
+      else {}
+    ),
     "filing": {
       "id": lf.id,
       "source": lf.source,
@@ -745,6 +760,48 @@ def _describe_missing(missing: MissingTaxonomy) -> dict[str, Any]:
       "tagged against the taxonomies that resolved is here."
     ),
   }
+
+
+def _describe_parse_report(report: ParseReport) -> dict[str, Any]:
+  """What the parse left out or rebuilt, so no answer is read as the whole."""
+  out: dict[str, Any] = {}
+  notes: list[str] = []
+  if report.dropped:
+    out["facts_dropped"] = report.dropped_facts
+    out["dropped"] = [
+      {
+        "reason": d.reason,
+        "context": d.context_id,
+        "facts": d.facts,
+        "concepts": d.concepts,
+      }
+      for d in report.dropped
+    ]
+    notes.append(
+      "the dropped facts are in the report and not in this model: "
+      "`undeclared_context` names a context id the instance references and "
+      "never declares, `invalid_period` a context whose dates could not be read"
+    )
+  if report.recovered_contexts:
+    out["facts_in_recovered_contexts"] = report.recovered_facts
+    out["recovered_contexts"] = [
+      {
+        "context": r.context_id,
+        "start": r.start.isoformat(),
+        "end": r.end.isoformat(),
+        "facts": r.facts,
+        "period_from": r.period_from,
+        "entity_from": r.entity_from,
+      }
+      for r in report.recovered_contexts
+    ]
+    notes.append(
+      "a recovered context is referenced by the instance and never declared; "
+      "its period was read from the filing's own reporting-period facts, and "
+      "it carries no dimensions"
+    )
+  out["note"] = "; ".join(notes) + "."
+  return out
 
 
 def _describe_taxonomy(taxonomy: TaxonomyEntry) -> dict[str, Any]:
