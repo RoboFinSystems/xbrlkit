@@ -206,6 +206,7 @@ def test_an_authored_report_survives_each_serialization(fmt: str) -> None:
   assert signature(got) == signature(model)
   assert got.filing.report_id == model.filing.report_id
   assert got.filing.reporting_style == "authored-package"
+  assert got.filing.report_date == OCT
   assert (got.entity.identifier, got.entity.scheme, got.entity.name) == (
     model.entity.identifier,
     model.entity.scheme,

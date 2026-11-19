@@ -49,6 +49,7 @@ import re
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 
 from ..model import Arc, Concept, FactProvenance, Network, Period, XbrlFact, XbrlModel
 from ..namespaces import HOLON_VOCAB, PROV_VOCAB, TAVI_REPORT_BASE
@@ -862,7 +863,18 @@ def _model_properties(model: XbrlModel) -> list[dict[str, object]]:
     properties.append(
       {"property": "rs:reportingStyle", "value": model.filing.reporting_style}
     )
+  period_end = _stated_period_end(model)
+  if period_end is not None:
+    properties.append({"property": "rs:periodEndDate", "value": period_end.isoformat()})
   return properties
+
+
+def _stated_period_end(model: XbrlModel) -> date | None:
+  """The report's period end, when it needs a property of its own. A filing
+  says it in a cover fact; a report with no cover page has nowhere else."""
+  if any(f.concept_qname == PERIOD_END_FACT for f in model.facts):
+    return None
+  return model.filing.report_date
 
 
 def _default_language(model: XbrlModel) -> str:
@@ -1395,6 +1407,7 @@ PROVENANCE_PROPERTIES: tuple[tuple[str, str, str], ...] = (
 # filing's `report_uri` (its EDGAR document) would otherwise be written too.
 REPORT_PROPERTIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
   ("rs:reportingStyle", "xs:string", ("xbrl:xbrlModelObject",)),
+  ("rs:periodEndDate", "xs:date", ("xbrl:xbrlModelObject",)),
   ("rs:legalName", "xs:string", ("xbrl:entityObject",)),
   ("rs:blockType", "xs:string", ("xbrl:networkObject",)),
   ("rs:structureId", "xs:string", ("xbrl:networkObject", "xbrl:factObject")),
@@ -1402,6 +1415,9 @@ REPORT_PROPERTIES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
   ("rs:structureOrder", "xs:integer", ("xbrl:networkObject",)),
 )
 
+
+# The cover fact a filing states its period end in.
+PERIOD_END_FACT = "dei:DocumentPeriodEndDate"
 
 # Where a fact sits in the report. The draft's core ``xbrl:factLocation``
 # (section 14.3.7) names one group per fact, so a fact that belongs to exactly
@@ -1431,6 +1447,8 @@ def _report_properties_used(model: XbrlModel) -> set[str]:
   used: set[str] = set()
   if model.filing.reporting_style:
     used.add("rs:reportingStyle")
+  if _stated_period_end(model) is not None:
+    used.add("rs:periodEndDate")
   if _distinct_legal_name(model):
     used.add("rs:legalName")
   for network in model.networks:

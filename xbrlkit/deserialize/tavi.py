@@ -315,7 +315,8 @@ def _filing(
     form=cover.get(_DEI_DOCUMENT_TYPE),
     is_inline_xbrl=None,
     filing_date=filing_date,
-    report_date=_date(cover.get(_DEI_PERIOD_END)),
+    report_date=_date(cover.get(_DEI_PERIOD_END))
+    or _date(_report_property(xbrl_model, "rs:periodEndDate", namespaces)),
     fiscal_year_focus=cover.get(_DEI_FISCAL_YEAR),
     fiscal_period_focus=cover.get(_DEI_FISCAL_PERIOD),
     fiscal_year_end_month=(
