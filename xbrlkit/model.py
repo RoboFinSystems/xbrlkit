@@ -324,6 +324,8 @@ class XbrlFact(BaseModel):
   section_role: str | None = None
   # Where the fact came from, when the producer said. A filing leaves it
   # ``None``; an authored report may carry it, and both projections keep it.
+  # The parse sets it in one case: a fact whose context the instance never
+  # declared and the parse rebuilt carries ``kind="recovered_context"``.
   provenance: FactProvenance | None = None
 
 
@@ -387,6 +389,63 @@ class Network(BaseModel):
   fact_set_id: str | None = None
 
 
+# ``FactProvenance.kind`` of a fact whose context the parse rebuilt.
+RECOVERED_CONTEXT = "recovered_context"
+
+DropReason = Literal["undeclared_context", "undefined_concept", "invalid_period"]
+
+
+class DroppedFacts(BaseModel):
+  """Facts in the instance that are not in the model, for one reason and context."""
+
+  reason: DropReason
+  # The ``contextRef`` the facts name; for ``undeclared_context`` an id the
+  # instance never declares.
+  context_id: str | None = None
+  facts: int = 0
+  # A sample of the concepts lost, in instance order.
+  concepts: list[str] = Field(default_factory=list)
+
+
+class RecoveredContext(BaseModel):
+  """A context the instance references but never declares, rebuilt by the parse.
+
+  The period is read from the filing's own reporting-period date facts under
+  that context id, never borrowed from another context. The facts placed in
+  it carry ``provenance.kind == "recovered_context"``.
+  """
+
+  context_id: str
+  start: date
+  end: date
+  period_id: str
+  facts: int = 0
+  # The two facts the period was read from.
+  period_from: list[str] = Field(default_factory=list)
+  # ``declared_contexts`` when every declared context names one entity;
+  # ``filing`` when the instance declares none and the caller's id stands in.
+  entity_from: Literal["declared_contexts", "filing"]
+
+
+class ParseReport(BaseModel):
+  """What the parse could not place as the instance wrote it.
+
+  ``None`` on a model means the parse had nothing to report, or the model was
+  not parsed from XBRL at all.
+  """
+
+  dropped: list[DroppedFacts] = Field(default_factory=list)
+  recovered_contexts: list[RecoveredContext] = Field(default_factory=list)
+
+  @property
+  def dropped_facts(self) -> int:
+    return sum(d.facts for d in self.dropped)
+
+  @property
+  def recovered_facts(self) -> int:
+    return sum(r.facts for r in self.recovered_contexts)
+
+
 class XbrlModel(BaseModel):
   """The whole filing as neutral objects — the contract between parse and serialize."""
 
@@ -397,3 +456,5 @@ class XbrlModel(BaseModel):
   units: list[Unit] = Field(default_factory=list)
   facts: list[XbrlFact] = Field(default_factory=list)
   networks: list[Network] = Field(default_factory=list)
+  # Facts the parse dropped or placed in a rebuilt context; ``None`` when none.
+  parse_report: ParseReport | None = None

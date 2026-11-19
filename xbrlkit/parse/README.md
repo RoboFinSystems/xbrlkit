@@ -36,6 +36,38 @@ so all three have to agree exactly.
   every qname the slice touches — abstract headers, subtotals, axes, domains,
   members — so labels and structural flags are available for all of them.
 
+## Facts the walk cannot place
+
+A fact is left out of the model for three reasons, and each is counted on
+`model.parse_report` (by reason and context id, with a sample of the concepts)
+and logged as a warning, never dropped silently:
+
+| Reason | What happened |
+| --- | --- |
+| `undeclared_context` | The fact's `contextRef` names an id the instance never declares. Arelle loads the fact with no context |
+| `undefined_concept` | The fact has no concept behind it |
+| `invalid_period` | The context's dates could not be read |
+
+`parse_report` is `None` when there was nothing to report.
+
+**An undeclared context is rebuilt when the filing states its period itself.**
+Some Indian exchange results filings put most of their facts under `OneD` (the
+quarter) and `FourD` (the year to date) and declare neither, but report
+`DateOfStartOfReportingPeriod` and `DateOfEndOfReportingPeriod` under each. When
+exactly one start and one end date sit under an undeclared id, the parse builds
+a duration from them and keeps the facts. The rules are narrow on purpose:
+
+- The period comes only from those two facts, never from a declared sibling
+  context: the same filings date some of those wrongly.
+- The entity is the one every declared context names. If they disagree, nothing
+  is rebuilt; if the instance declares none, the caller's filer id stands in.
+- Only duration concepts are placed, and a rebuilt context has no dimensions.
+
+A fact kept this way carries `provenance.kind == "recovered_context"`, which
+the holon and TAVI projections write and their readers restore, and the
+context is listed in `parse_report.recovered_contexts`. Arelle hashes a fact
+with its context, so these facts' ids fold in the context id.
+
 ## The Arelle cache
 
 Arelle resolves a filing's DTS by fetching every schema and linkbase it
