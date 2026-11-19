@@ -39,7 +39,7 @@ from rdflib import RDF, RDFS, XSD, Graph, Literal, Namespace, URIRef
 from ..information_block import fact_membership, plan_blocks
 from ..model import Concept, Network, Unit, XbrlModel
 from .tavi import LABEL_ROLE_TYPES
-from ..namespaces import FACTSET_BASE, PROV_VOCAB, REPORT_BASE
+from ..namespaces import AS_FILED_STYLE, FACTSET_BASE, PROV_VOCAB, REPORT_BASE
 from ._kernel.jsonld import (
   LINK,
   RS,
@@ -272,7 +272,7 @@ def _add_root(
     (
       root,
       RS.reportingStyle,
-      Literal(model.filing.reporting_style or "sec-as-filed"),
+      Literal(model.filing.reporting_style or AS_FILED_STYLE),
     )
   )
   g.add((root, RS.entity, entity_node))

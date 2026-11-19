@@ -53,7 +53,11 @@ TAVI_REPORT_BASE = f"{_INSTANCE_BASE}/tavi/report"
 # in already-emitted documents; changing the scheme changes entity identity.
 ENTITY_SCHEME = "http://robosystems.ai/entity"
 
+# The style a holon states for a filing, which has none of its own.
+AS_FILED_STYLE = "sec-as-filed"
+
 __all__ = (
+  "AS_FILED_STYLE",
   "PROV_VOCAB",
   "CONCEPT_BASE",
   "DATATYPE_BASE",

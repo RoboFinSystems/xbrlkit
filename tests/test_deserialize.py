@@ -601,6 +601,18 @@ def test_round_trip_keeps_the_facts(model: XbrlModel, fmt: str) -> None:
   assert cash.unit_id == next(u.id for u in got.units if u.measure == "iso4217:USD")
 
 
+def test_holon_round_trips_an_authored_reports_style(model: XbrlModel) -> None:
+  """An authored report's style comes back, so a second write does not restate
+  the report as an SEC filing; a filing's own default still reads as unset."""
+  assert from_holon_json(to_holon(model)).filing.reporting_style is None
+
+  model.filing.reporting_style = "BSC-CORP-IS02-CF1"
+  first = to_holon(model)
+  got = from_holon_json(first)
+  assert got.filing.reporting_style == "BSC-CORP-IS02-CF1"
+  assert '"sec-as-filed"' not in to_holon(got)
+
+
 def test_tavi_round_trips_an_authored_reports_own_fields(model: XbrlModel) -> None:
   """An authored report's style, legal name, and each network's structure,
   block type, fact set and order, ride as `rs:` properties and come back."""
