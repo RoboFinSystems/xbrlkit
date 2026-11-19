@@ -22,7 +22,6 @@ whether a number is right:
 from __future__ import annotations
 
 import json
-import math
 import re
 from bisect import bisect_right
 from collections import Counter, defaultdict
@@ -33,6 +32,8 @@ from typing import Any
 
 import requests
 
+from xbrlkit.check import precision as _precision
+from xbrlkit.check import tolerance as _tolerance
 from xbrlkit.config import CONFIG, Config
 from xbrlkit.model import Arc, Concept, Network, Period, Unit, XbrlFact, XbrlModel
 from xbrlkit.serialize import classify_network, root_qname
@@ -276,17 +277,6 @@ def _period_view(p: Period, facts: int | None = None) -> dict[str, Any]:
   if facts is not None:
     out["facts"] = facts
   return out
-
-
-def _precision(decimals: str | None) -> float:
-  if decimals is None:
-    return -math.inf
-  if decimals.strip().upper() == "INF":
-    return math.inf
-  try:
-    return float(decimals)
-  except ValueError:
-    return -math.inf
 
 
 def _dims_key(f: XbrlFact) -> tuple[tuple[str, str], ...]:
@@ -1776,15 +1766,6 @@ def _find_block(
     if st.role_uri == network.role_uri:
       return st
   raise ToolError(f"No information block for {block!r}")  # pragma: no cover
-
-
-def _tolerance(decimals: str | None) -> float:
-  """Half a unit at the fact's stated precision — a total reported to the
-  million foots when it is within half a million of its children."""
-  precision = _precision(decimals)
-  if math.isinf(precision):
-    return 0.5 if precision < 0 else 0.0
-  return 0.5 * 10 ** (-precision)
 
 
 def _member_key(f: XbrlFact, axis_order: dict[str, int]) -> str:

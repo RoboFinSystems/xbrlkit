@@ -160,6 +160,8 @@ class ImportGaps:
   # Properties on facts this reader has no slot for, by property QName.
   unmapped_fact_properties: dict[str, int] = field(default_factory=dict)
   typed_dimensions: int = 0
+  # Facts left out because they name no concept or no readable period.
+  skipped_facts: int = 0
 
   def to_dict(self) -> dict[str, object]:
     return {
@@ -168,6 +170,7 @@ class ImportGaps:
       "unmapped_label_types": dict(sorted(self.unmapped_label_types.items())),
       "unmapped_fact_properties": dict(sorted(self.unmapped_fact_properties.items())),
       "typed_dimensions": self.typed_dimensions,
+      "skipped_facts": self.skipped_facts,
     }
 
 
@@ -312,7 +315,8 @@ def _filing(
     form=cover.get(_DEI_DOCUMENT_TYPE),
     is_inline_xbrl=None,
     filing_date=filing_date,
-    report_date=_date(cover.get(_DEI_PERIOD_END)),
+    report_date=_date(cover.get(_DEI_PERIOD_END))
+    or _date(_report_property(xbrl_model, "rs:periodEndDate", namespaces)),
     fiscal_year_focus=cover.get(_DEI_FISCAL_YEAR),
     fiscal_period_focus=cover.get(_DEI_FISCAL_PERIOD),
     fiscal_year_end_month=(
@@ -853,6 +857,7 @@ def _facts(
     dimensions = _mapping(obj.get("factDimensions"))
     concept_qname = str(dimensions.get("xbrl:concept", ""))
     if not concept_qname:
+      gaps.skipped_facts += 1
       continue
     concept = concepts.get(concept_qname)
 
@@ -863,6 +868,7 @@ def _facts(
       if period is not None:
         periods[period_literal] = period
     if period is None:
+      gaps.skipped_facts += 1
       continue
 
     values = _sequence(obj.get("factValues"))

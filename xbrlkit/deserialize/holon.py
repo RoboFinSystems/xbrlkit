@@ -57,6 +57,7 @@ from ..model import (
   XbrlModel,
 )
 from ..namespaces import (
+  AS_FILED_STYLE,
   CONCEPT_BASE,
   ENTITY_SCHEME,
   HOLON_VOCAB,
@@ -434,9 +435,13 @@ def _filing(
   IRIs under the same report rather than under ``report/unknown``.
   """
   node = _mapping(nodes[0]) if nodes else {}
+  # The writer stamps a filing, which has no style of its own, as as-filed;
+  # reading that back as a style would turn the default into a claim.
+  style = _text(node.get("reportingStyle"))
   return FilingMeta(
     accession=_text(node.get("accessionNumber")) or report_id or "unknown",
     cik=entity.cik,
+    reporting_style=None if style == AS_FILED_STYLE else style,
     form=_text(node.get("form")),
     is_inline_xbrl=None,
     filing_date=_date(node.get("filingDate")),

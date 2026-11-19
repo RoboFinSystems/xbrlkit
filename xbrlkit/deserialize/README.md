@@ -22,6 +22,12 @@ converted filing someone handed you) becomes queryable with the same tools, and
 model **and** a gap report, so a round trip can be diffed without re-deriving
 the list by hand.
 
+The readers are tolerant: a TAVI fact with no concept or no readable period is
+left out and counted (`gaps.skipped_facts`), and a holon fact whose element or
+period does not resolve is counted the same way (`gaps.unresolved_references`).
+A caller that must not lose a fact passes the count it expects to
+[`check_report`](../check.py), which fails on a mismatch.
+
 ## The rule
 
 **Read what the serialization carries and nothing else.** Where a projection

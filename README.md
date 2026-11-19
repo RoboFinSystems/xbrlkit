@@ -165,6 +165,55 @@ model = from_holon_json(holon)      # and back again
 session.close()
 ```
 
+A report that never was a filing is authored from rows. `build_report` mints
+the periods, units, fact ids and the presentation and calculation networks, so
+nobody writes a holon or a TAVI by hand, and `check_report` gives one verdict
+on any model before something trusts it: every fact resolves, duplicate facts
+agree, every calculation foots, the balance sheet balances.
+
+```python
+from datetime import date
+from xbrlkit.author import ConceptRow, EntityRow, FactRow, LineRow, ReportRows, SectionRow, build_report
+from xbrlkit.check import check_report
+
+model = build_report(
+  ReportRows(
+    report_id="acme-2026-10",
+    entity=EntityRow(identifier="acme-co", name="Acme Co"),
+    reporting_style="authored-package",
+    concepts=[
+      ConceptRow(qname="us-gaap:Assets", label="Total assets", period_type="instant"),
+      ConceptRow(qname="us-gaap:Cash", label="Cash", period_type="instant"),
+    ],
+    sections=[
+      SectionRow(
+        name="Balance Sheet",
+        block_type="balance_sheet",
+        lines=[
+          LineRow(concept="us-gaap:Assets"),
+          LineRow(concept="us-gaap:Cash", parent="us-gaap:Assets", weight=1),
+        ],
+      )
+    ],
+    facts=[
+      FactRow(concept="us-gaap:Assets", value=600, end=date(2026, 10, 31), unit="USD",
+              decimals=0, source="package.xlsx#sheet=BS&cell=B10"),
+      FactRow(concept="us-gaap:Cash", value=600, end=date(2026, 10, 31), unit="USD",
+              decimals=0, source="package.xlsx#sheet=BS&cell=B4"),
+    ],
+  )
+)
+result = check_report(model, require_source=True)
+result.ok, result.to_dict()["problems"]  # (True, [])
+```
+
+A row the builder cannot place raises `AuthoringError` naming every row at
+fault. A fact's `source` is one string, the place in the document the value
+was read from: the document's name or URL, then a fragment of `key=value`
+pairs. Use `page=3` for a PDF, `sheet=BS&cell=B10` for a workbook, and add
+`label=` with the line's own wording when the next reader will need to match
+the line again. Both serializations carry it and both readers return it.
+
 A host running its own Arelle goes a level down: `xbrlkit.parse.load_model`
 returns the `ModelXbrl`, and `to_xbrl_model(mx, filing)` walks it into the
 same model, given the filing's `FilingMeta` (CIK and accession).
