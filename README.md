@@ -66,6 +66,7 @@ that is the change that turns a kit into a junk drawer.
 | [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
 | [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the five projections | holon, TAVI (+ its gap report), xBRL-JSON, ClawDog (+ its gap report), the property graph |
 | [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon, a TAVI or a ClawDog report read back into the model, no Arelle |
+| [**`holon`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/holon/README.md) | the holon format | what each named graph holds, and `xbrlkit validate`: a file checked against it, graph by graph |
 | [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
 | [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
 | [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
@@ -135,6 +136,9 @@ xbrlkit fetch --ticker NVDA
 
 # Query consolidated facts in a built holon (in-memory SPARQL)
 xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:Assets
+
+# Check a holon against the format, one verdict per named graph
+xbrlkit validate output/0000320193-23-000106.holon.jsonld
 
 # Open a filing as a rendered report in the browser — no account, no download
 xbrlkit view NVDA

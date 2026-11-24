@@ -1,0 +1,41 @@
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rs:    <https://robosystems.ai/vocab/> .
+@prefix hs:    <https://robosystems.ai/vocab/shapes/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xbrli: <http://www.xbrl.org/2003/instance#> .
+@prefix xlink: <http://www.w3.org/1999/xlink#> .
+@prefix link:  <http://www.xbrl.org/2003/linkbase#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# An rs:Element, wherever it is written. A holon carries an element in every
+# graph that cites it (#scene beside the facts, #projection beside the arcs),
+# so these shapes are read into both.
+
+hs:ElementShape a sh:NodeShape ;
+  sh:targetClass rs:Element ;
+  sh:property [
+    sh:path rs:internalId ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "An element states its QName once, as rs:internalId." ] ;
+  sh:property [
+    sh:path rs:elementType ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:in ( "concept" "abstract" "axis" "member" "hypercube" ) ;
+    sh:message "An element is one of concept, abstract, axis, member or hypercube." ] ;
+  sh:property [
+    sh:path rs:itemType ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "An element states the kind of value its facts carry, once." ] ;
+  sh:property [
+    sh:path rs:abstract ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "An element says whether it is abstract, once." ] ;
+  sh:property [
+    sh:path rs:monetary ; sh:maxCount 1 ] ;
+  sh:property [
+    sh:path xbrli:periodType ; sh:maxCount 1 ; sh:in ( "instant" "duration" ) ;
+    sh:message "An element's period type is instant or duration." ] ;
+  sh:property [
+    sh:path xbrli:balance ; sh:maxCount 1 ; sh:in ( "debit" "credit" ) ;
+    sh:message "An element's balance is debit or credit." ] ;
+  sh:property [
+    sh:path skos:prefLabel ; sh:maxCount 1 ;
+    sh:message "An element has at most one preferred label; the other roles have their own terms." ] .

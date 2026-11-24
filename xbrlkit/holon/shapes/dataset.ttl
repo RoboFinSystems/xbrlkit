@@ -1,0 +1,83 @@
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rs:    <https://robosystems.ai/vocab/> .
+@prefix hs:    <https://robosystems.ai/vocab/shapes/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xbrli: <http://www.xbrl.org/2003/instance#> .
+@prefix xlink: <http://www.w3.org/1999/xlink#> .
+@prefix link:  <http://www.xbrl.org/2003/linkbase#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# The graphs taken together: what no single graph can show. A reference that
+# leaves its graph must land on something another graph describes, and the
+# retired ways of writing a report must appear nowhere.
+
+hs:FactStructureShape a sh:NodeShape ;
+  sh:targetClass rs:Fact ;
+  sh:property [
+    sh:path rs:structure ; sh:class rs:Structure ;
+    sh:message "A fact's structure is an rs:Structure described in #projection." ] ;
+  sh:property [
+    sh:path prov:wasDerivedFrom ; sh:class rs:Contribution ;
+    sh:message "A fact is derived from rs:Contribution nodes described in #lineage." ] .
+
+hs:BlockStructureShape a sh:NodeShape ;
+  sh:targetClass rs:InformationBlock ;
+  sh:property [
+    sh:path rs:structure ; sh:class rs:Structure ;
+    sh:message "An information block's structure is an rs:Structure described in #projection." ] .
+
+hs:StructureArcsShape a sh:NodeShape ;
+  sh:targetClass rs:Structure ;
+  sh:property [
+    sh:path rs:hasAssociation ; sh:class rs:Association ;
+    sh:message "A structure's arcs are rs:Association nodes described in #projection or #boundary." ] .
+
+hs:ArcEndsShape a sh:NodeShape ;
+  sh:targetClass rs:Association ;
+  sh:property [
+    sh:path xlink:from ; sh:class rs:Element ;
+    sh:message "An arc runs from an rs:Element described in #projection." ] ;
+  sh:property [
+    sh:path xlink:to ; sh:class rs:Element ;
+    sh:message "An arc runs to an rs:Element described in #projection." ] .
+
+hs:ContributionFactShape a sh:NodeShape ;
+  sh:targetClass rs:Contribution ;
+  sh:property [
+    sh:path rs:substantiates ; sh:class rs:Fact ;
+    sh:message "A contribution substantiates an rs:Fact described in #scene." ] .
+
+# Retired ways of writing a report. A fact carries its period, entity and unit
+# directly (no XBRL context), and a relationship is an rs:Association node
+# (no arc* properties, no direct predicate between two elements).
+hs:NoXbrlContextShape a sh:NodeShape ;
+  sh:targetSubjectsOf xbrli:contextRef ;
+  sh:property [ sh:path xbrli:contextRef ; sh:maxCount 0 ;
+    sh:message "xbrli:contextRef is XBRL syntax: a fact carries rs:period, rs:entity and rs:unit directly." ] .
+
+hs:NoArcStarShape a sh:NodeShape ;
+  sh:targetSubjectsOf rs:arcFrom ;
+  sh:property [ sh:path rs:arcFrom ; sh:maxCount 0 ;
+    sh:message "rs:arcFrom / rs:arcTo are retired: an arc is an rs:Association with xlink:from and xlink:to." ] .
+
+hs:NoDirectSummationShape a sh:NodeShape ;
+  sh:targetSubjectsOf rs:summationOf ;
+  sh:property [ sh:path rs:summationOf ; sh:maxCount 0 ;
+    sh:message "rs:summationOf is retired: a calculation arc is an rs:Association." ] .
+
+hs:NoDirectParentShape a sh:NodeShape ;
+  sh:targetSubjectsOf rs:parent ;
+  sh:property [ sh:path rs:parent ; sh:maxCount 0 ;
+    sh:message "rs:parent is retired: a presentation arc is an rs:Association." ] .
+
+hs:NoDirectGeneralOfShape a sh:NodeShape ;
+  sh:targetSubjectsOf rs:generalOf ;
+  sh:property [ sh:path rs:generalOf ; sh:maxCount 0 ;
+    sh:message "rs:generalOf is retired: a definition arc is an rs:Association." ] .
+
+hs:NoDirectDimensionOfShape a sh:NodeShape ;
+  sh:targetSubjectsOf rs:dimensionOf ;
+  sh:property [ sh:path rs:dimensionOf ; sh:maxCount 0 ;
+    sh:message "rs:dimensionOf is retired: a definition arc is an rs:Association." ] .

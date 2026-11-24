@@ -1,0 +1,79 @@
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rs:    <https://robosystems.ai/vocab/> .
+@prefix hs:    <https://robosystems.ai/vocab/shapes/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xbrli: <http://www.xbrl.org/2003/instance#> .
+@prefix xlink: <http://www.w3.org/1999/xlink#> .
+@prefix link:  <http://www.xbrl.org/2003/linkbase#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# #projection: how the report is arranged. The structures (one per section),
+# the presentation and definition arcs under them, and the elements the arcs
+# join. Calculation arcs are not here: they are the #boundary.
+
+hs:StructureShape a sh:NodeShape ;
+  sh:targetClass rs:Structure ;
+  sh:property [
+    sh:path rs:internalId ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A structure carries its identifier as rs:internalId, once." ] ;
+  sh:property [
+    sh:path rs:roleUri ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A structure names its extended-link role, once." ] ;
+  sh:property [
+    sh:path rs:structureName ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A structure has a name, once." ] ;
+  sh:property [ sh:path rs:structureOrder ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:blockType ; sh:maxCount 1 ] ;
+  sh:property [
+    sh:path rs:factSet ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "A structure names at most one fact set, by IRI." ] ;
+  sh:property [
+    sh:path rs:hasAssociation ; sh:class rs:Association ;
+    sh:message "A structure's arcs here are rs:Association nodes described in this graph." ] .
+
+hs:AssociationShape a sh:NodeShape ;
+  sh:targetClass rs:Association ;
+  sh:property [
+    sh:path xlink:from ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Element ;
+    sh:message "An arc runs from exactly one rs:Element, described in this graph." ] ;
+  sh:property [
+    sh:path xlink:to ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Element ;
+    sh:message "An arc runs to exactly one rs:Element, described in this graph." ] ;
+  sh:property [
+    sh:path rs:associationType ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "An arc states its kind, once." ] ;
+  sh:property [ sh:path xlink:arcrole ; sh:maxCount 1 ] ;
+  sh:property [ sh:path xlink:role ; sh:maxCount 1 ] ;
+  sh:property [ sh:path link:order ; sh:maxCount 1 ] ;
+  sh:property [ sh:path link:weight ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:preferredLabelRole ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:preferredLabel ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:targetRole ; sh:maxCount 1 ] .
+
+hs:NoCalculationInProjection a sh:NodeShape ;
+  sh:targetClass rs:Association ;
+  sh:not [ sh:property [ sh:path rs:associationType ; sh:hasValue "calculation" ] ] ;
+  sh:message "A calculation arc belongs in #boundary, not #projection." .
+
+hs:NoRollUpInProjection a sh:NodeShape ;
+  sh:targetClass rs:RollUpRelationship ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:RollUpRelationship belongs in #boundary, not #projection." ] .
+
+# What does not belong here: what the report states is the #scene.
+hs:NoFactInProjection a sh:NodeShape ;
+  sh:targetClass rs:Fact ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:Fact belongs in #scene, not #projection." ] .
+
+hs:NoReportInProjection a sh:NodeShape ;
+  sh:targetClass rs:Report ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "The rs:Report belongs in #scene, not #projection." ] .
+
+hs:NoInformationBlockInProjection a sh:NodeShape ;
+  sh:targetClass rs:InformationBlock ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:InformationBlock belongs in #scene, not #projection." ] .

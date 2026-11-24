@@ -1,0 +1,60 @@
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rs:    <https://robosystems.ai/vocab/> .
+@prefix hs:    <https://robosystems.ai/vocab/shapes/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xbrli: <http://www.xbrl.org/2003/instance#> .
+@prefix xlink: <http://www.w3.org/1999/xlink#> .
+@prefix link:  <http://www.xbrl.org/2003/linkbase#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# #boundary: the roll-ups the facts must obey. Calculation arcs and nothing
+# else, each grouped under its structure by a bare rs:hasAssociation (the
+# structure itself is described in #projection).
+
+hs:RollUpShape a sh:NodeShape ;
+  sh:targetClass rs:Association ;
+  sh:class rs:RollUpRelationship ;
+  sh:property [
+    sh:path xlink:from ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "A roll-up runs from exactly one total (an IRI)." ] ;
+  sh:property [
+    sh:path xlink:to ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "A roll-up runs to exactly one component (an IRI)." ] ;
+  sh:property [
+    sh:path rs:associationType ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:hasValue "calculation" ;
+    sh:message "Every arc in #boundary is a calculation arc." ] ;
+  sh:property [
+    sh:path link:weight ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A roll-up states its weight, once." ] ;
+  sh:property [ sh:path link:order ; sh:maxCount 1 ] ;
+  sh:property [ sh:path xlink:arcrole ; sh:maxCount 1 ] ;
+  sh:property [ sh:path xlink:role ; sh:maxCount 1 ] .
+
+# A structure appears here only as the subject of rs:hasAssociation.
+hs:StructureStubShape a sh:NodeShape ;
+  sh:targetSubjectsOf rs:hasAssociation ;
+  sh:closed true ;
+  sh:ignoredProperties ( ) ;
+  sh:property [
+    sh:path rs:hasAssociation ; sh:class rs:Association ;
+    sh:message "A structure's arcs here are rs:Association nodes described in this graph." ] ;
+  sh:message "In #boundary a structure carries only rs:hasAssociation; it is described in #projection." .
+
+# What does not belong here.
+hs:NoFactInBoundary a sh:NodeShape ;
+  sh:targetClass rs:Fact ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:Fact belongs in #scene, not #boundary." ] .
+
+hs:NoElementInBoundary a sh:NodeShape ;
+  sh:targetClass rs:Element ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:Element is described in #scene and #projection, not #boundary." ] .
+
+hs:NoReportInBoundary a sh:NodeShape ;
+  sh:targetClass rs:Report ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "The rs:Report belongs in #scene, not #boundary." ] .
