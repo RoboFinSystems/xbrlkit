@@ -1,0 +1,254 @@
+# The holon — the format, and how a file is checked against it
+
+A **holon** is one report written as an RDF dataset: a handful of named graphs
+that hang off a single report IRI, each holding one kind of thing. It is
+serialized as dataset-form JSON-LD (`.holon.jsonld`). xbrlkit writes one from
+any filing it can parse ([`serialize/`](../serialize/README.md)), reads one
+back into the model ([`deserialize/`](../deserialize/README.md)), and this
+package says whether a given file *is* one.
+
+This page is the definition. It describes what the writers produce today,
+version `1.0`; the shapes in [`shapes/`](shapes/) are the same definition in a
+form a machine can run.
+
+```bash
+xbrlkit validate report.holon.jsonld
+```
+
+```
+conforms  https://robosystems.ai/report/0000320193-24-000123
+  #scene       ok  (90,561 triples, 12 shapes)
+  #projection  ok  (86,983 triples, 8 shapes)
+  #boundary    ok  (3,480 triples, 5 shapes)
+  #lineage     absent
+  dataset      ok  (162,319 triples, 11 shapes)
+  report       7 problems  (1,283 facts, 41/48 calculations foot)
+```
+
+```python
+from xbrlkit.holon import validate_holon
+
+result = validate_holon(text)
+result.conforms   # the file meets the format
+result.ok         # ... and the report inside it holds together
+result.graphs["scene"].findings
+```
+
+## Why named graphs
+
+A report is several different things at once, and they change for different
+reasons and are wanted by different readers:
+
+| Graph | Holds | The question it answers |
+| --- | --- | --- |
+| `<report>#scene` | the report and its entity; the facts; the element, period, unit and dimensions each fact points at; the information blocks that group facts into sections | *What does the report state?* |
+| `<report>#projection` | the structures (one per section), their presentation and definition arcs, and the elements those arcs join | *How is it arranged?* |
+| `<report>#boundary` | the calculation arcs: which facts must sum to which | *What must hold for it to be right?* |
+| `<report>#lineage` | the ledger behind the facts: contributions, ledger lines, entries, transactions, events | *Where did each number come from?* |
+
+A single flat graph can carry all of it, and nobody can then say which triples
+are the statement, which are its layout and which are its rules. Kept apart, a
+reader takes the graph it needs, a writer can leave one out, and each can be
+checked against its own definition.
+
+Only `#scene` is always present. A report with no networks has no
+`#projection` and no `#boundary`; an empty graph is not written. `#lineage` is
+optional by design: a report is an aggregation of the books, not the books,
+and whoever holds the ledger decides who receives it.
+
+### How the names line up with other writing on holons
+
+The words *scene*, *boundary* and *projection* are used in more than one sense
+in the literature this draws on, so, for the avoidance of doubt:
+
+- `#scene` is the graph of **current reported values**. It is not the
+  human-readable prose layer of a document.
+- `#boundary` is the set of **rules the contents must satisfy**. It is not
+  access control.
+- `#projection` is the report's **arrangement** for a reader.
+- `#lineage` contains what is elsewhere called the **event graph**, together
+  with the ledger derived from those events and the links from each fact back
+  to it. The events in it are typed `rs:Event` and `prov:Activity`.
+
+## The document
+
+```json
+{
+  "@context": { "rs": "https://robosystems.ai/vocab/", "us-gaap": "http://fasb.org/us-gaap/2024#", "…": "…" },
+  "@graph": [
+    { "@id": "https://robosystems.ai/report/<id>#boundary",   "@graph": [ … ] },
+    { "@id": "https://robosystems.ai/report/<id>#projection", "@graph": [ … ] },
+    { "@id": "https://robosystems.ai/report/<id>#scene",      "@graph": [ … ] }
+  ]
+}
+```
+
+- **One report per file.** Every graph is named `<report IRI>#<name>`, and the
+  `rs:Report` node in `#scene` *is* that report IRI.
+- **The vocabulary** is `https://robosystems.ai/vocab/` (`rs:`), with XBRL's
+  own terms where XBRL has them (`xbrli:`, `xlink:`, `link:`), SKOS for labels
+  and PROV-O for provenance.
+- **Each document binds its own prefixes**, from the namespaces its concepts,
+  their declared types and its units actually use. A `us-gaap` concept is
+  addressed in the taxonomy year the filing used.
+- **The version** is on the report: `rs:serializationVersion`, currently
+  `"1.0"`.
+- **Order carries no meaning.** `@graph` arrays and multi-valued properties are
+  sorted so the same report is the same bytes on every write.
+
+## What each graph contains
+
+Cardinalities below are what the shapes enforce. *Described in this graph*
+means the node being pointed at has its own description in the same graph, so
+the graph can be read alone.
+
+### `#scene`
+
+| Node | Requires | May carry |
+| --- | --- | --- |
+| `rs:Report` (exactly one) | `rs:entity` → an `rs:Entity` here; `rs:serializationVersion`; `rs:accessionNumber` (the report's identifier); `rs:reportingStyle` | `rs:form`, `rs:filingDate`, `rs:periodEndDate`, the fiscal focus, `rs:mode` |
+| `rs:Entity` | `rs:internalId`; `rs:scheme` (an IRI); `skos:prefLabel` | `rs:legalName`, `rs:ein` |
+| `rs:Fact` | `rs:element`, `rs:period`, `rs:entity`, each exactly one and described here; `rs:factType` (`numeric` or `nonnumeric`); `rs:internalId` | `rs:unit` (at most one, described here); `rs:numericValue` (an `xsd:decimal`) or `rs:stringValue`; `rs:decimals`; `rs:dimension`…; `rs:factSet`…; `rs:structure`; `rs:isNil`; `rs:language`; provenance (below) |
+| `rs:Element` | `rs:internalId` (its QName); `rs:elementType` (`concept`, `abstract`, `axis`, `member`, `hypercube`); `rs:itemType`; `rs:abstract` | `xbrli:periodType`, `xbrli:balance`, labels, `rs:dataType`, `rs:baseType`, `rs:substitutionGroup` |
+| `rs:Period` | `xbrli:periodType` (`instant`, `duration`, `forever`) | `xbrli:instant`, or `xbrli:startDate` and `xbrli:endDate`; the calendar keys |
+| `rs:Unit` | `xbrli:measure` (an IRI) | |
+| `rs:Dimension` | `rs:axis` → an `rs:Element` here | `rs:member` → an `rs:Element` here, or `rs:typedValue`; `rs:isExplicit`, `rs:isTyped`, `rs:axisType` |
+| `rs:InformationBlock` | `rs:structure` (an IRI); `rs:factSet` (an IRI); `rs:internalId`; `skos:prefLabel` | `rs:blockType` |
+
+A numeric fact carries its number and a nonnumeric fact carries none. An
+instant period that states no instant, or a duration with no end date, is a
+warning: unusual, and still readable.
+
+A fact joins a section through `rs:factSet`: it shares a fact-set IRI with the
+information block for that section, and may sit in several. The fact set has
+no node of its own.
+
+**Provenance on a fact** is PROV-O where PROV-O has the word:
+`prov:hadPrimarySource`, `prov:wasAttributedTo`, and, when the ledger is
+attached, `prov:wasDerivedFrom` → the contributions in `#lineage`. Two terms
+are the vocabulary's own: `rs:sourceKind`, and `rs:contentHash`, a digest of
+what the fact was computed from that travels with the fact whether or not the
+ledger does.
+
+**Labels are literals, one predicate per role**: `skos:prefLabel`, then
+`rs:standardLabel`, `rs:terseLabel`, `rs:totalLabel`, `rs:negatedLabel`,
+`rs:periodStartLabel` and the rest, with `rdfs:comment` for documentation. A
+label is not a node.
+
+No `rs:Association` and no `rs:Structure` belongs in `#scene`.
+
+### `#projection`
+
+| Node | Requires | May carry |
+| --- | --- | --- |
+| `rs:Structure` (also typed `rs:RollUp` or `rs:Hierarchy`) | `rs:internalId`; `rs:roleUri`; `rs:structureName` | `rs:hasAssociation`… → `rs:Association` nodes here; `rs:factSet`; `rs:structureOrder`; `rs:blockType` |
+| `rs:Association` | `xlink:from` and `xlink:to`, each exactly one `rs:Element` described here; `rs:associationType` (anything but `calculation`) | `xlink:arcrole`, `xlink:role`, `link:order`, `rs:preferredLabelRole`, `rs:preferredLabel`, `rs:targetRole` |
+| `rs:Element` | as in `#scene` | |
+
+An element is described in every graph that cites it, so an element used by a
+fact and by an arc appears in both `#scene` and `#projection`, the same
+description each time.
+
+No fact, report or information block belongs here, and no calculation arc.
+
+### `#boundary`
+
+Calculation arcs and nothing else.
+
+| Node | Requires |
+| --- | --- |
+| `rs:Association`, also typed `rs:RollUpRelationship` | `xlink:from` (the total) and `xlink:to` (the component); `rs:associationType` = `calculation`; `link:weight` |
+| a structure, by IRI only | nothing but `rs:hasAssociation` → the arcs here. The structure is described in `#projection` |
+
+### `#lineage` (optional)
+
+Written by a producer that holds the books. The chain runs from a fact down
+to the events behind it:
+
+```
+rs:Fact ─prov:wasDerivedFrom─▶ rs:Contribution      one per entity and account
+                                 └─prov:hadMember─▶ rs:LineItem …
+rs:LineItem ─rs:entry─▶ rs:Entry ─rs:transaction─▶ rs:Transaction
+     └─prov:wasGeneratedBy─▶ rs:Event ─prov:wasAssociatedWith─▶ rs:Agent
+```
+
+| Node | Requires | May carry |
+| --- | --- | --- |
+| `rs:Contribution` (also `prov:Collection`) | `rs:substantiates` → one fact, by IRI; `rs:lineCount` | `prov:hadMember`… → ledger lines, by IRI; `rs:account`, `rs:entity`, `rs:amount`, the window |
+| `rs:LineItem` | `rs:internalId`; `rs:entry` → an `rs:Entry` here; `rs:account` → an `rs:Account` here | `rs:debit` or `rs:credit`; `prov:wasGeneratedBy` → an `rs:Event` here |
+| `rs:Entry` | `rs:internalId`; `rs:transaction` → an `rs:Transaction` here; `rs:postingDate` | `prov:wasGeneratedBy` |
+| `rs:Transaction` | `rs:internalId`; `rs:transactionDate` | `prov:wasGeneratedBy` |
+| `rs:Event` (also `prov:Activity`) | `rs:internalId`; `rs:eventType`; `rs:occurredAt` | `prov:wasAssociatedWith` → an `rs:Agent` here |
+| `rs:Account` | `rs:internalId`; `skos:prefLabel` | |
+| `rs:Agent`, `rs:LedgerEntity` | `rs:internalId` | |
+
+**A contribution may list no members.** That is the form the graph takes when
+the ledger lines are withheld: the contribution, its count and its amount say
+what stands behind the fact without disclosing it.
+
+The report's own classes stay out of this graph. A member entity is an
+`rs:LedgerEntity`, not an `rs:Entity`, and a chart account an `rs:Account`,
+not an `rs:Element`, because a reader takes an `rs:Entity` or an `rs:Element`
+to be the report's.
+
+### The graphs together
+
+What no single graph can show, checked over their union:
+
+- a fact's or an information block's `rs:structure` is an `rs:Structure` that
+  `#projection` describes;
+- every arc under a structure is an `rs:Association` some graph describes, and
+  both its ends are elements `#projection` describes (this is where a
+  `#boundary` arc to an undescribed element is caught);
+- a fact's `prov:wasDerivedFrom` is a contribution `#lineage` describes, and a
+  contribution substantiates a fact `#scene` describes;
+- none of the retired ways of writing a report appears anywhere:
+  `xbrli:contextRef` (a fact carries its period, entity and unit directly),
+  `rs:arcFrom` / `rs:arcTo`, or a direct predicate between two elements
+  (`rs:summationOf`, `rs:parent`, `rs:generalOf`, `rs:dimensionOf`).
+
+## Two checks, two layers
+
+`validate_holon` answers two different questions and keeps the answers apart.
+
+**Does the file meet the format?** (`conforms`) The shapes above, graph by
+graph, then together. This looks at the file as written, so it sees what a
+tolerant reader would quietly skip or repair.
+
+**Does the report hold together?** (`check`) The file is read back into the
+model and [`check_report`](../check.py) asks whether it is whole (an
+identity, every fact pointing at a concept, period and unit that exist) and
+agrees with itself (duplicate facts match, every calculation foots, the
+balance sheet balances).
+
+A filing as filed regularly conforms and does not foot everywhere, which is a
+fact about the filing. So `xbrlkit validate` exits `1` only when the file does
+not meet the format, and `--strict` adds the report check for a report that is
+about to be loaded somewhere and must be right. `--no-check` skips the second
+question; `--json` prints the whole verdict.
+
+Neither check proves the report is true or complete. They say the file is
+what it claims to be and that the report is consistent with itself.
+
+## How the format changes
+
+Additively. A property may be added and a node type may be added; a term is
+never renamed and a graph is never repurposed, because holons already written
+are read by tools that will not be rewritten. A change that could make an
+existing conforming file stop conforming needs a new
+`rs:serializationVersion`.
+
+The shapes are deliberately a floor, not a census: they require what
+xbrlkit's writer has always written and what a reader cannot do without. A
+property a writer adds is not a violation. A holon written before the format
+had a writer of its own (no `rs:Report` node, elements without an
+`rs:itemType`) does not conform, and says so.
+
+## Files
+
+| | |
+| --- | --- |
+| [`__init__.py`](__init__.py) | `validate_holon`, `validate_holon_file`, `render`, the verdict types |
+| [`shapes/scene.ttl`](shapes/scene.ttl), [`projection.ttl`](shapes/projection.ttl), [`boundary.ttl`](shapes/boundary.ttl), [`lineage.ttl`](shapes/lineage.ttl) | one shapes graph per named graph |
+| [`shapes/common.ttl`](shapes/common.ttl) | `rs:Element`, read into both `#scene` and `#projection` |
+| [`shapes/dataset.ttl`](shapes/dataset.ttl) | the graphs together |

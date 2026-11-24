@@ -7,6 +7,7 @@
     xbrlkit build --cik 320193 --accno … --format icebug     # -> output/<accno>.icebug/
     xbrlkit fetch --ticker NVDA --form 10-K --n 1            # -> output/
     xbrlkit view NVDA                                        # -> the browser
+    xbrlkit validate output/<accno>.holon.jsonld             # -> a verdict per named graph
 
 Wires the three layers: ``edgar`` (fetch) -> ``parse`` (Arelle -> XbrlModel) ->
 ``serialize`` (XbrlModel -> a ClawDog document, a holon, a TAVI compiled
@@ -261,6 +262,21 @@ def _cmd_query(args: argparse.Namespace) -> int:
     print(f"{r.end_date or '':<12} {r.qname:<55} {r.value:>20,.4f}  {r.measure or ''}")
   print(f"({len(rows)} consolidated facts)", file=sys.stderr)
   return 0
+
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+  import json
+
+  from .deserialize.holon import HolonError
+  from .holon import render, validate_holon_file
+
+  try:
+    result = validate_holon_file(args.infile, check=not args.no_check)
+  except (OSError, HolonError) as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    return 2
+  print(json.dumps(result.to_dict(), indent=2) if args.json else render(result))
+  return 0 if (result.ok if args.strict else result.conforms) else 1
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
@@ -577,6 +593,31 @@ def build_parser() -> argparse.ArgumentParser:
     help="Restrict to instant / annual-duration / quarterly-duration facts.",
   )
   q.set_defaults(func=_cmd_query)
+
+  va = sub.add_parser(
+    "validate",
+    help="Check a holon.jsonld against the format, one verdict per named graph.",
+    description=(
+      "Validate a holon: each named graph (#scene, #projection, #boundary, "
+      "#lineage) against its own SHACL shapes, then the graphs together. The "
+      "report is also read back and checked (it is whole, its calculations "
+      "foot, its balance sheet balances). Exits 1 when the file does not meet "
+      "the format; with --strict, also when the report check fails."
+    ),
+  )
+  va.add_argument("infile", help="Path to a holon.jsonld.")
+  va.add_argument(
+    "--no-check",
+    action="store_true",
+    help="Check the file's shape only; skip reading the report back.",
+  )
+  va.add_argument(
+    "--strict",
+    action="store_true",
+    help="Also exit 1 when the report check fails (a filing rarely foots everywhere).",
+  )
+  va.add_argument("--json", action="store_true", help="Print the verdict as JSON.")
+  va.set_defaults(func=_cmd_validate)
 
   c = sub.add_parser(
     "cache",

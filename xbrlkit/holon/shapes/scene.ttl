@@ -1,0 +1,165 @@
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rs:    <https://robosystems.ai/vocab/> .
+@prefix hs:    <https://robosystems.ai/vocab/shapes/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xbrli: <http://www.xbrl.org/2003/instance#> .
+@prefix xlink: <http://www.w3.org/1999/xlink#> .
+@prefix link:  <http://www.xbrl.org/2003/linkbase#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# #scene: what the report states. The report and its entity, the facts, and
+# what each fact points at (its element, period, unit, dimensions), with the
+# information blocks that group the facts into sections.
+
+hs:ReportShape a sh:NodeShape ;
+  sh:targetClass rs:Report ;
+  sh:property [
+    sh:path rs:entity ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Entity ;
+    sh:message "A report names exactly one rs:Entity, described in this graph." ] ;
+  sh:property [
+    sh:path rs:serializationVersion ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A report states the version of the format it is written in, once." ] ;
+  sh:property [
+    sh:path rs:accessionNumber ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A report carries its identifier as rs:accessionNumber, once." ] ;
+  sh:property [
+    sh:path rs:reportingStyle ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A report says how it was composed (as-filed, or a reporting style), once." ] ;
+  sh:property [ sh:path rs:mode ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:form ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:filingDate ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:periodEndDate ; sh:maxCount 1 ] .
+
+hs:EntityShape a sh:NodeShape ;
+  sh:targetClass rs:Entity ;
+  sh:property [
+    sh:path rs:internalId ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "An entity carries its identifier as rs:internalId, once." ] ;
+  sh:property [
+    sh:path rs:scheme ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "An entity names the scheme its identifier belongs to (an IRI), once." ] ;
+  sh:property [
+    sh:path skos:prefLabel ; sh:minCount 1 ;
+    sh:message "An entity has a name." ] .
+
+hs:FactShape a sh:NodeShape ;
+  sh:targetClass rs:Fact ;
+  sh:property [
+    sh:path rs:element ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Element ;
+    sh:message "A fact cites exactly one rs:Element, described in this graph." ] ;
+  sh:property [
+    sh:path rs:period ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Period ;
+    sh:message "A fact cites exactly one rs:Period, described in this graph." ] ;
+  sh:property [
+    sh:path rs:entity ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Entity ;
+    sh:message "A fact cites exactly one rs:Entity, described in this graph." ] ;
+  sh:property [
+    sh:path rs:unit ; sh:maxCount 1 ; sh:class rs:Unit ;
+    sh:message "A fact cites at most one rs:Unit, described in this graph." ] ;
+  sh:property [
+    sh:path rs:dimension ; sh:class rs:Dimension ;
+    sh:message "A fact's dimensions are rs:Dimension nodes described in this graph." ] ;
+  sh:property [
+    sh:path rs:factType ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:in ( "numeric" "nonnumeric" ) ;
+    sh:message "A fact is numeric or nonnumeric, and says which once." ] ;
+  sh:property [
+    sh:path rs:numericValue ; sh:maxCount 1 ; sh:datatype xsd:decimal ;
+    sh:message "A fact carries at most one rs:numericValue, an xsd:decimal." ] ;
+  sh:property [
+    sh:path rs:stringValue ; sh:maxCount 1 ;
+    sh:message "A fact carries at most one rs:stringValue." ] ;
+  sh:property [
+    sh:path rs:internalId ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "A fact carries its identifier as rs:internalId, once." ] ;
+  sh:property [
+    sh:path rs:factSet ; sh:nodeKind sh:IRI ;
+    sh:message "A fact joins a fact set by its IRI." ] ;
+  sh:property [
+    sh:path rs:structure ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "A fact is pinned to at most one structure, by IRI." ] ;
+  sh:property [
+    sh:path rs:contentHash ; sh:maxCount 1 ;
+    sh:message "A fact carries at most one rs:contentHash." ] .
+
+# The value arm agrees with the fact type: a numeric fact has its number, and
+# a fact that is not numeric has none.
+hs:FactValueShape a sh:NodeShape ;
+  sh:targetClass rs:Fact ;
+  sh:or (
+    [ sh:property [ sh:path rs:factType ; sh:hasValue "numeric" ] ;
+      sh:property [ sh:path rs:numericValue ; sh:minCount 1 ] ]
+    [ sh:property [ sh:path rs:factType ; sh:hasValue "nonnumeric" ] ;
+      sh:property [ sh:path rs:numericValue ; sh:maxCount 0 ] ]
+  ) ;
+  sh:message "A numeric fact carries rs:numericValue; a nonnumeric fact carries none." .
+
+hs:PeriodShape a sh:NodeShape ;
+  sh:targetClass rs:Period ;
+  sh:property [
+    sh:path xbrli:periodType ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:in ( "instant" "duration" "forever" ) ;
+    sh:message "A period is an instant, a duration or forever, and says which once." ] ;
+  sh:property [ sh:path xbrli:instant ; sh:maxCount 1 ] ;
+  sh:property [ sh:path xbrli:startDate ; sh:maxCount 1 ] ;
+  sh:property [ sh:path xbrli:endDate ; sh:maxCount 1 ] .
+
+# The dates agree with the period type. A warning: a period with no date is
+# unusual, and a reader can still place its facts.
+hs:PeriodDatesShape a sh:NodeShape ;
+  sh:targetClass rs:Period ;
+  sh:severity sh:Warning ;
+  sh:or (
+    [ sh:property [ sh:path xbrli:periodType ; sh:hasValue "instant" ] ;
+      sh:property [ sh:path xbrli:instant ; sh:minCount 1 ] ]
+    [ sh:property [ sh:path xbrli:periodType ; sh:hasValue "duration" ] ;
+      sh:property [ sh:path xbrli:endDate ; sh:minCount 1 ] ]
+    [ sh:property [ sh:path xbrli:periodType ; sh:hasValue "forever" ] ]
+  ) ;
+  sh:message "An instant period states its instant and a duration its end date." .
+
+hs:UnitShape a sh:NodeShape ;
+  sh:targetClass rs:Unit ;
+  sh:property [
+    sh:path xbrli:measure ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "A unit names exactly one measure (an IRI)." ] .
+
+hs:DimensionShape a sh:NodeShape ;
+  sh:targetClass rs:Dimension ;
+  sh:property [
+    sh:path rs:axis ; sh:minCount 1 ; sh:maxCount 1 ; sh:class rs:Element ;
+    sh:message "A dimension names exactly one axis, an rs:Element described in this graph." ] ;
+  sh:property [
+    sh:path rs:member ; sh:maxCount 1 ; sh:class rs:Element ;
+    sh:message "A dimension names at most one member, an rs:Element described in this graph." ] ;
+  sh:property [ sh:path rs:typedValue ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:isExplicit ; sh:maxCount 1 ] ;
+  sh:property [ sh:path rs:isTyped ; sh:maxCount 1 ] .
+
+hs:InformationBlockShape a sh:NodeShape ;
+  sh:targetClass rs:InformationBlock ;
+  sh:property [
+    sh:path rs:structure ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "An information block names exactly one structure, by IRI." ] ;
+  sh:property [
+    sh:path rs:factSet ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+    sh:message "An information block names exactly one fact set, by IRI." ] ;
+  sh:property [
+    sh:path rs:internalId ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:message "The node carries its identifier as rs:internalId, once." ] ;
+  sh:property [
+    sh:path skos:prefLabel ; sh:minCount 1 ;
+    sh:message "An information block has a name." ] .
+
+# What does not belong here: the arrangement and the roll-ups have their own graphs.
+hs:NoAssociationInScene a sh:NodeShape ;
+  sh:targetClass rs:Association ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:Association belongs in #projection or #boundary, not #scene." ] .
+
+hs:NoStructureInScene a sh:NodeShape ;
+  sh:targetClass rs:Structure ;
+  sh:property [ sh:path rdf:type ; sh:maxCount 0 ;
+    sh:message "An rs:Structure belongs in #projection, not #scene." ] .

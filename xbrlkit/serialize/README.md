@@ -33,7 +33,9 @@ tavi, gaps = to_tavi_report(model)  # the document, and what it could not expres
 Arelle's `saveLoadableOIM` writes the same document from the same filing. A
 second writer is redundant as a feature — its value is that **every difference
 is a fidelity bug in the parse or the model**, and those same bugs are
-otherwise silent in the holon output, which has nothing to check it. Current
+otherwise silent in the holon output: its own check
+([`holon/`](../holon/README.md)) says a file is well formed, not that the
+parse behind it was faithful. Current
 parity is every fact on 3M FY2024 (3,150) and Boeing FY2024 (2,688), and all
 but one on Microsoft FY2024 (1,855 of 1,856); footnotes are the one construct
 the model does not carry.
@@ -64,6 +66,10 @@ in the set (see [`namespaces.py`](../namespaces.py)). It is a dataset of three
 named graphs — **scene** (report, entity, facts, periods, units, dimensions),
 **projection** (elements, structures, associations) and **boundary** (the
 calculation roll-ups).
+
+The format is written down, graph by graph, in
+[`holon/README.md`](../holon/README.md), and `xbrlkit validate` checks a file
+against it.
 
 It is **lossless against `XbrlModel`**, and the round trip is the gate: model →
 holon → model is identical on all 26 filings of the Filing Ladder corpus across
