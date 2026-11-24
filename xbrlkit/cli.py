@@ -8,6 +8,7 @@
     xbrlkit fetch --ticker NVDA --form 10-K --n 1            # -> output/
     xbrlkit view NVDA                                        # -> the browser
     xbrlkit validate output/<accno>.holon.jsonld             # -> a verdict per named graph
+    xbrlkit databook output/<accno>.holon.jsonld             # -> output/<accno>.databook.md
 
 Wires the three layers: ``edgar`` (fetch) -> ``parse`` (Arelle -> XbrlModel) ->
 ``serialize`` (XbrlModel -> a ClawDog document, a holon, a TAVI compiled
@@ -277,6 +278,34 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 2
   print(json.dumps(result.to_dict(), indent=2) if args.json else render(result))
   return 0 if (result.ok if args.strict else result.conforms) else 1
+
+
+def _cmd_databook(args: argparse.Namespace) -> int:
+  from .deserialize.holon import HolonError
+  from .holon.databook import databook_from_holon
+
+  source = Path(args.infile)
+  name = source.name
+  for suffix in (".holon.jsonld", ".jsonld", ".json"):
+    if name.endswith(suffix):
+      name = name[: -len(suffix)]
+      break
+  out = Path(args.out) if args.out else source.with_name(f"{name}.databook.md")
+  try:
+    text = databook_from_holon(
+      source.read_text(encoding="utf-8"),
+      href=source.name,
+      inline_rdf=not args.no_rdf,
+      details=args.details,
+      validate=not args.no_validate,
+    )
+  except (OSError, HolonError) as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    return 2
+  out.parent.mkdir(parents=True, exist_ok=True)
+  out.write_text(text, encoding="utf-8")
+  print(f"wrote {out} ({len(text):,} bytes)")
+  return 0
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
@@ -618,6 +647,35 @@ def build_parser() -> argparse.ArgumentParser:
   )
   va.add_argument("--json", action="store_true", help="Print the verdict as JSON.")
   va.set_defaults(func=_cmd_validate)
+
+  db = sub.add_parser(
+    "databook",
+    help="Write a holon.jsonld as a DataBook: the report as a document to read.",
+    description=(
+      "Project a holon into a DataBook (.databook.md): each section of the "
+      "report as a table of its consolidated values, the same facts beside it "
+      "as RDF, the validation verdict, and a pointer to the holon, which holds "
+      "everything the document leaves out."
+    ),
+  )
+  db.add_argument("infile", help="Path to a holon.jsonld.")
+  db.add_argument(
+    "-o", "--out", help="Output path (default: <name>.databook.md beside the holon)."
+  )
+  db.add_argument(
+    "--details",
+    action="store_true",
+    help='Also draw a filing\'s "(Tables)" and "(Details)" sections.',
+  )
+  db.add_argument(
+    "--no-rdf", action="store_true", help="Tables only; leave every fact to the holon."
+  )
+  db.add_argument(
+    "--no-validate",
+    action="store_true",
+    help="Skip validating the holon; the document then carries no verdict.",
+  )
+  db.set_defaults(func=_cmd_databook)
 
   c = sub.add_parser(
     "cache",
