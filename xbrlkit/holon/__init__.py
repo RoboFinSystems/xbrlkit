@@ -161,30 +161,8 @@ def validate_holon(
   (:func:`~xbrlkit.check.check_report`). ``max_findings`` bounds the findings
   kept per graph; the counts are always complete.
   """
-  dataset = Dataset()
-  try:
-    dataset.parse(data=text, format="json-ld")
-  except Exception as exc:  # rdflib raises several unrelated types here
-    raise HolonError(f"not JSON-LD: {exc}") from exc
-
   result = HolonValidation()
-  found: dict[str, Graph] = {}
-  roots: set[str] = set()
-  for graph in dataset.graphs():
-    if not len(graph) or not isinstance(graph.identifier, URIRef):
-      continue
-    root, sep, name = str(graph.identifier).rpartition("#")
-    if not sep or name not in GRAPHS:
-      result.problems.append(
-        f"<{graph.identifier}> is not a graph the format names "
-        f"({', '.join('#' + g for g in GRAPHS)})."
-      )
-      continue
-    roots.add(root)
-    found[name] = graph
-  if not found:
-    raise HolonError("no named graph of a holon (#scene, #projection, #boundary)")
-  result.problems.sort()
+  found, roots = read_graphs(text, result.problems)
 
   if len(roots) > 1:
     result.problems.append(
@@ -222,6 +200,43 @@ def validate_holon(
     except HolonError as exc:
       result.unreadable = str(exc)
   return result
+
+
+def read_graphs(
+  text: str, problems: list[str] | None = None
+) -> tuple[dict[str, Graph], set[str]]:
+  """The holon's named graphs by name, and the report IRIs they hang off.
+
+  A graph the format does not name is left out and, when ``problems`` is
+  given, noted there. Raises :class:`~xbrlkit.deserialize.holon.HolonError`
+  when the text holds no graph of a holon at all.
+  """
+  dataset = Dataset()
+  try:
+    dataset.parse(data=text, format="json-ld")
+  except Exception as exc:  # rdflib raises several unrelated types here
+    raise HolonError(f"not JSON-LD: {exc}") from exc
+
+  found: dict[str, Graph] = {}
+  roots: set[str] = set()
+  unnamed: list[str] = []
+  for graph in dataset.graphs():
+    if not len(graph) or not isinstance(graph.identifier, URIRef):
+      continue
+    root, sep, name = str(graph.identifier).rpartition("#")
+    if not sep or name not in GRAPHS:
+      unnamed.append(
+        f"<{graph.identifier}> is not a graph the format names "
+        f"({', '.join('#' + g for g in GRAPHS)})."
+      )
+      continue
+    roots.add(root)
+    found[name] = graph
+  if not found:
+    raise HolonError("no named graph of a holon (#scene, #projection, #boundary)")
+  if problems is not None:
+    problems.extend(sorted(unnamed))
+  return found, roots
 
 
 def validate_holon_file(path: str | Path, **kwargs: Any) -> HolonValidation:
@@ -309,6 +324,7 @@ __all__ = [
   "Finding",
   "GraphVerdict",
   "HolonValidation",
+  "read_graphs",
   "render",
   "shapes_graph",
   "validate_holon",

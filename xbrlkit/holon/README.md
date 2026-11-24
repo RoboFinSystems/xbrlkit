@@ -230,6 +230,59 @@ question; `--json` prints the whole verdict.
 Neither check proves the report is true or complete. They say the file is
 what it claims to be and that the report is consistent with itself.
 
+## The DataBook: a holon as a document to read
+
+A holon is complete, and nobody reads one raw. `xbrlkit databook` writes the
+report as a [DataBook](https://github.com/kurtcagle/databook): a Markdown
+file that is at once a document a person reads, a container of typed data
+blocks, and a self-describing artefact whose YAML frontmatter says what it is
+and how it was made.
+
+```bash
+xbrlkit databook report.holon.jsonld        # -> report.databook.md
+```
+
+```python
+from xbrlkit.holon.databook import databook_from_holon, to_databook
+
+markdown = databook_from_holon(text, href="report.holon.jsonld")
+```
+
+**It is a projection of the holon, not a copy of it**, and it says which part
+of each graph it carries:
+
+| Graph | In the DataBook |
+| --- | --- |
+| `#scene` | *projected*: each section as a table of its consolidated values, and the same facts beneath it as a Turtle block |
+| `#projection`, `#boundary`, `#lineage` | *referenced*: named by IRI, with their size; the content is in the holon |
+
+So the two go together and neither contains the other. The DataBook's process
+stamp names the holon as its primary input, by IRI and by SHA-256, and the
+document ends by pointing at it. Whoever wants the breakdown by segment, the
+roll-ups or the ledger goes to the holon.
+
+What a DataBook holds:
+
+- **Frontmatter** that keeps to the DataBook core keys (`id`, `title`,
+  `type`, `version`, `created`, `graph`, `shapes`, `process`). What is
+  particular to a report sits under one key, `xbrl_holon`: the report, the
+  holon and its digest, the four graphs with their disposition, the sections,
+  and the validation verdict.
+- **A section per information block**, in the report's order: the table, any
+  narrative too long for a cell as a short passage, and a note of how many
+  facts break the values out by which axes.
+- **A reference block per section** (`mode=reference`, folded): the facts in
+  the table as Turtle, addressed by `databook:id` and bound for the holon's
+  `#scene` graph. Every triple in a block is a triple of the holon.
+- **The verdict**: each graph against its shapes, and the report read back.
+- **The holon**: where it is, its digest, and what each graph holds.
+
+It is meant to stay a document. A filing's "(Tables)" and "(Details)" roles,
+the workings behind its notes, are named in the contents and left to the
+holon unless `--details` asks for them; a section stops at 400 rows and the
+document at about 1,500; and the Turtle stops at about 3,000 triples, after
+which sections point at the holon instead. `--no-rdf` writes the tables alone.
+
 ## How the format changes
 
 Additively. A property may be added and a node type may be added; a term is
@@ -249,6 +302,7 @@ had a writer of its own (no `rs:Report` node, elements without an
 | | |
 | --- | --- |
 | [`__init__.py`](__init__.py) | `validate_holon`, `validate_holon_file`, `render`, the verdict types |
+| [`databook.py`](databook.py) | `databook_from_holon`, `to_databook` |
 | [`shapes/scene.ttl`](shapes/scene.ttl), [`projection.ttl`](shapes/projection.ttl), [`boundary.ttl`](shapes/boundary.ttl), [`lineage.ttl`](shapes/lineage.ttl) | one shapes graph per named graph |
 | [`shapes/common.ttl`](shapes/common.ttl) | `rs:Element`, read into both `#scene` and `#projection` |
 | [`shapes/dataset.ttl`](shapes/dataset.ttl) | the graphs together |
