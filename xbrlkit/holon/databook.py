@@ -122,6 +122,7 @@ def databook_from_holon(
   validate: bool = True,
   inline_rdf: bool = True,
   details: bool = False,
+  links: bool = True,
 ) -> str:
   """The DataBook for the holon in ``text``.
 
@@ -130,7 +131,8 @@ def databook_from_holon(
   The verdicts in the DataBook come from ``validation``, or from validating
   ``text`` here unless ``validate`` is false. ``inline_rdf`` controls the
   Turtle block under each section, and ``details`` draws a filing's "(Tables)"
-  and "(Details)" sections too, which are otherwise only named. ``created`` and ``timestamp`` default to the
+  and "(Details)" sections too, which are otherwise only named. With ``links``
+  every value in a table is a link to its fact in the holon. ``created`` and ``timestamp`` default to the
   report's own date and to now.
   """
   model, _ = from_holon_report(text)
@@ -186,6 +188,7 @@ def databook_from_holon(
     graphs=graphs,
     validation=validation,
     blocks=blocks,
+    fact_nodes=fact_nodes if links else {},
   )
   return f"---\n{front}---\n\n{body}"
 
@@ -418,6 +421,32 @@ def _cell(fact: XbrlFact | None) -> str:
   if len(text) > TEXT_PREVIEW:
     return f"*text, {len(text):,} characters*"
   return _escape(text)
+
+
+def _linked(
+  fact: XbrlFact | None,
+  fact_nodes: dict[str, URIRef],
+  labels: dict[str, str],
+  defined: list[str],
+) -> str:
+  """The cell, as a link to the fact it shows.
+
+  A reference-style link: the row stays as short as its value, and the fact's
+  IRI is written once beneath the table. This is the DataBook's form of
+  inline tagging: the number a person reads *is* the fact in the holon.
+  """
+  text = _cell(fact)
+  if fact is None or not text:
+    return text
+  node = fact_nodes.get(fact.id)
+  if node is None:
+    return text
+  label = labels.get(fact.id)
+  if label is None:
+    label = f"f{len(labels) + 1}"
+    labels[fact.id] = label
+    defined.append(f"[{label}]: <{node}>")
+  return f"[{text}][{label}]"
 
 
 def _number(fact: XbrlFact) -> str:
@@ -722,6 +751,7 @@ def _body(
   graphs: dict[str, Graph],
   validation: HolonValidation | None,
   blocks: list[tuple[_Section, str | None, int]],
+  fact_nodes: dict[str, URIRef],
 ) -> str:
   where = f"[`{href}`]({href})" if href else f"`{root}`"
   out: list[str] = [
@@ -766,9 +796,12 @@ def _body(
   else:
     out += ["The report has no section with facts to show.", ""]
 
+  # One label per fact across the document, so a fact shown in two sections
+  # is the same link in both.
+  labels: dict[str, str] = {}
   for section, turtle, count in blocks:
     if not section.listed_only:
-      out += _section_markdown(section, turtle, count, root)
+      out += _section_markdown(section, turtle, count, root, fact_nodes, labels)
 
   out += _validation_markdown(validation)
   out += _holon_markdown(root, href, digest, graphs)
@@ -776,7 +809,12 @@ def _body(
 
 
 def _section_markdown(
-  section: _Section, turtle: str | None, count: int, root: str
+  section: _Section,
+  turtle: str | None,
+  count: int,
+  root: str,
+  fact_nodes: dict[str, URIRef],
+  labels: dict[str, str],
 ) -> list[str]:
   out = [f'<a id="{section.slug}"></a>', "", f"## {section.title}", ""]
   if section.rows and section.columns:
@@ -785,13 +823,21 @@ def _section_markdown(
       f"| | {header} |",
       "|---|" + "---:|" * len(section.columns),
     ]
+    # Where each value's link goes. Written once, under the first table that
+    # shows the fact; a renderer hides these lines and resolves the links.
+    defined: list[str] = []
     for row in section.rows:
       label = "&nbsp;&nbsp;" * row.depth + _escape(row.label)
       if row.abstract or row.total:
         label = "&nbsp;&nbsp;" * row.depth + f"**{_escape(row.label)}**"
-      cells = " | ".join(_cell(row.values.get(p.id)) for p in section.columns)
+      cells = " | ".join(
+        _linked(row.values.get(p.id), fact_nodes, labels, defined)
+        for p in section.columns
+      )
       out.append(f"| {label} | {cells} |")
     out.append("")
+    if defined:
+      out += [*defined, ""]
   else:
     out += ["No consolidated value in this section; see the holon.", ""]
 

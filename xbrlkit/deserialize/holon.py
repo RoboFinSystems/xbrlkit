@@ -743,7 +743,8 @@ def _mark_text_facts(concepts: dict[str, Concept], facts: Sequence[XbrlFact]) ->
   has one says what its type could not.
   """
   for fact in facts:
-    if not fact.language:
+    # A number is never a text fact, whatever language its element carried.
+    if not fact.language or fact.value_kind == "numeric":
       continue
     concept = concepts.get(fact.concept_qname)
     if concept is not None:

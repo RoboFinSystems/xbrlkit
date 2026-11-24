@@ -248,6 +248,11 @@ from xbrlkit.holon.databook import databook_from_holon, to_databook
 markdown = databook_from_holon(text, href="report.holon.jsonld")
 ```
 
+The relationship is the one iXBRL has to XBRL. An inline XBRL document is a
+rendering with the facts embedded in it; the linkbases are elsewhere, and a
+reader who wants them goes to the XBRL. A DataBook is the rendering with the
+facts; the holon is the complete document.
+
 **It is a projection of the holon, not a copy of it**, and it says which part
 of each graph it carries:
 
@@ -271,6 +276,10 @@ What a DataBook holds:
 - **A section per information block**, in the report's order: the table, any
   narrative too long for a cell as a short passage, and a note of how many
   facts break the values out by which axes.
+- **Every value is a link to its fact.** A number in a table is a
+  reference-style link whose target, written once beneath the table, is the
+  fact's IRI in the holon. It is the DataBook's form of inline tagging: what a
+  person reads *is* the fact. `--no-links` writes plain values.
 - **A reference block per section** (`mode=reference`, folded): the facts in
   the table as Turtle, addressed by `databook:id` and bound for the holon's
   `#scene` graph. Every triple in a block is a triple of the holon.
