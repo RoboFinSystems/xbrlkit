@@ -297,6 +297,7 @@ def _cmd_databook(args: argparse.Namespace) -> int:
       href=source.name,
       inline_rdf=not args.no_rdf,
       details=args.details,
+      links=not args.no_links,
       validate=not args.no_validate,
     )
   except (OSError, HolonError) as exc:
@@ -669,6 +670,11 @@ def build_parser() -> argparse.ArgumentParser:
   )
   db.add_argument(
     "--no-rdf", action="store_true", help="Tables only; leave every fact to the holon."
+  )
+  db.add_argument(
+    "--no-links",
+    action="store_true",
+    help="Plain values; do not link each one to its fact in the holon.",
   )
   db.add_argument(
     "--no-validate",

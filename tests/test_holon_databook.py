@@ -154,11 +154,11 @@ def test_a_section_is_a_table_of_its_consolidated_values(book: str) -> None:
   assert "## Balance Sheet" in book
   assert "| | 2024-12-31 |" in book
   # The total is the row its calculation hangs from, and reads as one.
-  assert "| **Assets** | 1,000 |" in book
-  assert "| &nbsp;&nbsp;Cash | 250 |" in book
-  assert "| &nbsp;&nbsp;Inventory | 750 |" in book
+  assert "| **Assets** | [1,000][f1] |" in book
+  assert "| &nbsp;&nbsp;Cash | [250][f2] |" in book
+  assert "| &nbsp;&nbsp;Inventory | [750][f3] |" in book
   # The segment's 100 is a breakdown, and a breakdown is the holon's.
-  assert "| 100 |" not in book
+  assert "[100]" not in book
   assert (
     "1 further fact breaks these values out by `us-gaap:StatementBusinessSegmentsAxis`"
     in book
@@ -171,14 +171,13 @@ def test_a_value_reads_to_the_places_it_is_stated_to() -> None:
   model.facts[0].numeric_value, model.facts[0].value_str = 1000.5, "1000.5"
   model.facts[0].decimals = "2"
   model.facts[1].numeric_value, model.facts[1].value_str = -250.0, "-250"
-  book = to_databook(model, validate=False, **WHEN)
+  book = to_databook(model, validate=False, links=False, **WHEN)
   assert "| **Assets** | 1,000.50 |" in book
   assert "| &nbsp;&nbsp;Cash | (250) |" in book
   # Past the stated places, the digits reported are kept.
   model.facts[2].numeric_value, model.facts[2].value_str = 750.125, "750.125"
-  assert "| &nbsp;&nbsp;Inventory | 750.125 |" in to_databook(
-    model, validate=False, **WHEN
-  )
+  plain = to_databook(model, validate=False, links=False, **WHEN)
+  assert "| &nbsp;&nbsp;Inventory | 750.125 |" in plain
 
 
 def test_narrative_too_long_for_a_cell_is_shown_beneath_the_table() -> None:
@@ -205,10 +204,49 @@ def test_narrative_too_long_for_a_cell_is_shown_beneath_the_table() -> None:
     Arc(from_qname="us-gaap:Assets", to_qname="us-gaap:Policy", order=3.0)
   )
   book = to_databook(model, validate=False, **WHEN)
-  assert "| &nbsp;&nbsp;Inventory policy | *text, " in book
+  assert "| &nbsp;&nbsp;Inventory policy | [*text, " in book
   assert "**Inventory policy**\n\n> Inventory is carried at cost" in book
   assert "*[continues in the holon]*" in book
   assert "<p>" not in book
+
+
+# -- a value is a link to its fact ----------------------------------------------
+
+
+def test_each_value_links_to_the_fact_it_shows(book: str, holon_text: str) -> None:
+  definitions = dict(re.findall(r"^\[(f\d+)\]: <(\S+)>$", book, re.M))
+  used = set(re.findall(r"\]\[(f\d+)\]", book))
+  assert used and used == set(definitions)
+  doc = json.loads(holon_text)
+  facts = {n["@id"]: n for n in _typed(_graph(doc, "scene"), "rs:Fact")}
+  # The link beside "1,000" is the fact whose value is 1000.
+  label = re.search(r"\| \*\*Assets\*\* \| \[1,000\]\[(f\d+)\]", book)
+  assert label is not None
+  assert facts[definitions[label.group(1)]]["numericValue"] == "1000"
+  assert set(definitions.values()) <= set(facts)
+
+
+def test_a_fact_shown_in_two_sections_is_one_link() -> None:
+  model = _book_model()
+  # A second section that presents the same total.
+  model.networks.append(
+    Network(
+      role_uri="http://acme.com/role/Summary",
+      definition="Summary",
+      kind="presentation",
+      arcs=[Arc(from_qname="us-gaap:Assets", to_qname="us-gaap:Cash", order=1.0)],
+    )
+  )
+  book = to_databook(model, validate=False, **WHEN)
+  assert "## Summary" in book
+  assert book.count("[1,000][f1]") == 2
+  assert len(re.findall(r"^\[f1\]: ", book, re.M)) == 1
+
+
+def test_links_can_be_left_out(holon_text: str) -> None:
+  book = databook_from_holon(holon_text, links=False, **WHEN)
+  assert "| **Assets** | 1,000 |" in book
+  assert not re.search(r"^\[f\d+\]: ", book, re.M)
 
 
 # -- the RDF beside a table is a true slice of #scene ---------------------------
@@ -243,7 +281,7 @@ def test_without_rdf_there_are_tables_and_no_graph_metadata(holon_text: str) -> 
   book = databook_from_holon(holon_text, inline_rdf=False, **WHEN)
   assert "```turtle" not in book and "<details>" not in book
   assert "graph" not in _top_keys(_front(book))
-  assert "| **Assets** | 1,000 |" in book
+  assert "| **Assets** | [1,000][f1] |" in book
   assert "*These facts are in the holon's `#scene` graph, not repeated here.*" in book
 
 
@@ -342,13 +380,13 @@ def test_a_filings_detail_sections_are_named_and_left_to_the_holon() -> None:
   assert "| Debt (Details) | 1 | in the holon |" in book
   assert "1 section is named above and not drawn here" in book
   assert '{id: "debt-details", name: "Debt (Details)", facts: 1, drawn: false}' in book
-  assert "| 400 |" not in book
+  assert "[400]" not in book
 
 
 def test_details_can_be_asked_for() -> None:
   book = to_databook(_with_details(), validate=False, details=True, **WHEN)
   assert "## Debt (Details)" in book
-  assert "| Debt | 400 |" in book
+  assert "| Debt | [400][" in book
   assert "not drawn here" not in book
 
 
@@ -393,7 +431,18 @@ def test_the_command_writes_the_databook_beside_the_holon(
 
   named = tmp_path / "deep" / "report.md"
   assert (
-    main(["databook", str(source), "-o", str(named), "--no-rdf", "--no-validate"]) == 0
+    main(
+      [
+        "databook",
+        str(source),
+        "-o",
+        str(named),
+        "--no-rdf",
+        "--no-validate",
+        "--no-links",
+      ]
+    )
+    == 0
   )
   text = named.read_text()
   assert "```turtle" not in text and "## Validation" not in text
