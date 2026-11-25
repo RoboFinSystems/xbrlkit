@@ -186,6 +186,11 @@ def pivot_section(
 
   used = {pid for by_dims in series.values() for s in by_dims.values() for pid in s}
   durations, instants = _candidate_columns([periods[pid] for pid in used])
+  # Every balance date, sparse or not: a date too thin for a column of its own
+  # still holds the balance a period opens or closes with.
+  instant_ids: dict[date, tuple[str, ...]] = {
+    c.end: c.period_ids for c in instants if c.end is not None
+  }
   if drop_sparse_periods:
     density: dict[str, int] = defaultdict(int)
     for by_dims in series.values():
@@ -204,10 +209,6 @@ def pivot_section(
       dropped_ends = {c.end for c in durations if not dense(c)}
       durations = [c for c in durations if dense(c)]
       instants = [c for c in instants if dense(c) and c.end not in dropped_ends]
-  instant_ids: dict[date, tuple[str, ...]] = {
-    c.end: c.period_ids for c in instants if c.end is not None
-  }
-
   skeleton = _walk(model, block, series)
   placed: set[str] = set()
 
