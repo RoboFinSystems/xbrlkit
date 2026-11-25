@@ -893,6 +893,31 @@ def test_export_filing_writes_projection(
     tools.export_filing(loaded, "pdf", tmp_path)
 
 
+def test_export_filing_writes_a_databook_and_a_workbook_beside_their_holon(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  import hashlib
+
+  import openpyxl
+
+  book = tools.export_filing(loaded, "databook", tmp_path)
+  holon = tmp_path / Path(book["files"][1]).name
+  assert holon.name.endswith(".holon.jsonld") and holon.is_file()
+  digest = hashlib.sha256(holon.read_bytes()).hexdigest()
+  text = Path(book["path"]).read_text()
+  assert book["path"].endswith(".databook.md") and text.startswith("---\n")
+  assert digest in text and holon.name in text
+
+  out = tools.export_filing(loaded, "workbook", tmp_path)
+  assert out["path"].endswith(".xlsx") and out["bytes"] > 0
+  assert out["files"] == [out["path"], str(holon)]
+  contents = openpyxl.load_workbook(out["path"])["Contents"]
+  stated = {row[0].value: row[1].value for row in contents.iter_rows(max_row=12)}
+  # Both name the same holon, the one written beside them.
+  assert stated["Holon SHA-256"] == digest
+  assert stated["Holon file"] == holon.name
+
+
 def test_an_unwritable_export_folder_says_to_set_out_dir(
   loaded: LoadedFiling, tmp_path: Path
 ) -> None:

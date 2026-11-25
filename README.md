@@ -88,7 +88,8 @@ library. Four optional extras: `xbrlkit[lpg]` for the property graph as a
 LadybugDB database and for querying it (pyarrow, LadybugDB), `xbrlkit[icebug]`
 for the same graph as an experimental icebug-disk tree (pyarrow only), `xbrlkit[mcp]` for
 the MCP server and `xbrlkit[xlsx]` for a holon as an Excel workbook (openpyxl).
-Install `xbrlkit[mcp,lpg]` for the server's graph tools.
+Install `xbrlkit[mcp,lpg]` for the server's graph tools, and add `xlsx` for
+its workbook export.
 
 From a source checkout:
 
@@ -267,6 +268,10 @@ SEC_GOV_USER_AGENT="Your Name you@example.com" \
 # with the graph tools: stacked lpg / icebug exports and run_cypher
 SEC_GOV_USER_AGENT="Your Name you@example.com" \
   uvx --from "xbrlkit[mcp,lpg]@latest" xbrlkit serve
+
+# with the Excel workbook export as well
+SEC_GOV_USER_AGENT="Your Name you@example.com" \
+  uvx --from "xbrlkit[mcp,lpg,xlsx]@latest" xbrlkit serve
 ```
 
 ```json
@@ -329,12 +334,15 @@ answer's `read_from` says which one you have; `--pure` or
 - **Find filings worth reading.** EDGAR full-text search across the corpus by
   phrase, form, date and filer, where every hit carries the id that loads it.
 - **Export or render it.** Write the filing as holon, TAVI, xBRL-JSON, ClawDog,
-  a LadybugDB graph or icebug-disk tree, or the parse itself; or open it as a
-  rendered report in the browser and hand back the link.
+  a LadybugDB graph or icebug-disk tree, or the parse itself; as a document a
+  person opens, a DataBook (Markdown) or an Excel workbook with a sheet per
+  section (the `xlsx` extra); or open it as a rendered report in the browser
+  and hand back the link.
 - **Stack filings and query across them** (with the `lpg` extra). Export several
   loaded filings as one graph (a company's years, or peers) and run read-only
   Cypher over it with `run_cypher`: revenue by report and period, or a figure
-  that one year's comparative restates.
+  that one year's comparative restates. A holon or a TAVI model loads the same
+  way as a filing, so reports that were never filed with the SEC stack too.
 
 No graph and no database sits behind any of it: every answer about a filing is
 read from that filing, and the only graph `run_cypher` reads is one you asked
