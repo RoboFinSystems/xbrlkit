@@ -32,9 +32,12 @@ from rdflib import RDF, XSD, Graph, Namespace, URIRef
 from .. import __version__
 from ..deserialize.holon import from_holon_report
 from ..information_block import InformationBlock, fact_membership, plan_blocks
-from ..model import Arc, Concept, Period, XbrlFact, XbrlModel
+from ..model import Arc, Period, XbrlFact, XbrlModel
 from ..namespaces import HOLON_VOCAB
 from . import DATASET, GRAPHS, HolonValidation, read_graphs, validate_holon
+from .pivot import label_for as _label
+from .pivot import period_label as _period_label
+from .pivot import precision as _precision
 
 RS = Namespace(HOLON_VOCAB)
 SHAPES_BASE = f"{HOLON_VOCAB}shapes/"
@@ -263,17 +266,6 @@ def _sections(model: XbrlModel, *, details: bool = False) -> list[_Section]:
   return sections
 
 
-def _precision(decimals: str | None) -> float:
-  if decimals is None:
-    return float("-inf")
-  if decimals.upper() == "INF":
-    return float("inf")
-  try:
-    return float(decimals)
-  except ValueError:
-    return float("-inf")
-
-
 def _most_precise(facts: list[XbrlFact]) -> list[XbrlFact]:
   """One fact per concept, period and unit: the one stated most precisely."""
   best: dict[tuple[Any, ...], XbrlFact] = {}
@@ -387,27 +379,7 @@ def _rows(
   return pruned, truncated
 
 
-def _label(concept: Concept | None, qname: str, role: str | None) -> str:
-  if concept is None:
-    return qname.split(":")[-1]
-  if role:
-    for label in concept.labels:
-      if label.role == role and label.value:
-        return label.value
-  return concept.pref_label or concept.name
-
-
 # -- values --------------------------------------------------------------------
-
-
-def _period_label(period: Period) -> str:
-  if period.period_type == "instant":
-    return period.end.isoformat() if period.end else period.id
-  if period.period_type == "forever":
-    return "forever"
-  start = period.start.isoformat() if period.start else "?"
-  end = period.end.isoformat() if period.end else "?"
-  return f"{start} to {end}"
 
 
 def _cell(fact: XbrlFact | None) -> str:

@@ -9,6 +9,7 @@
     xbrlkit view NVDA                                        # -> the browser
     xbrlkit validate output/<accno>.holon.jsonld             # -> a verdict per named graph
     xbrlkit databook output/<accno>.holon.jsonld             # -> output/<accno>.databook.md
+    xbrlkit workbook output/<accno>.holon.jsonld             # -> output/<accno>.xlsx
 
 Wires the three layers: ``edgar`` (fetch) -> ``parse`` (Arelle -> XbrlModel) ->
 ``serialize`` (XbrlModel -> a ClawDog document, a holon, a TAVI compiled
@@ -306,6 +307,28 @@ def _cmd_databook(args: argparse.Namespace) -> int:
   out.parent.mkdir(parents=True, exist_ok=True)
   out.write_text(text, encoding="utf-8")
   print(f"wrote {out} ({len(text):,} bytes)")
+  return 0
+
+
+def _cmd_workbook(args: argparse.Namespace) -> int:
+  from .deserialize.holon import HolonError
+  from .holon.workbook import EXTENSION, workbook_from_holon
+
+  source = Path(args.infile)
+  name = source.name
+  for suffix in (".holon.jsonld", ".jsonld", ".json"):
+    if name.endswith(suffix):
+      name = name[: -len(suffix)]
+      break
+  out = Path(args.out) if args.out else source.with_name(f"{name}{EXTENSION}")
+  try:
+    data = workbook_from_holon(source.read_text(encoding="utf-8"), href=source.name)
+  except (OSError, HolonError, RuntimeError) as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    return 2
+  out.parent.mkdir(parents=True, exist_ok=True)
+  out.write_bytes(data)
+  print(f"wrote {out} ({len(data):,} bytes)")
   return 0
 
 
@@ -682,6 +705,22 @@ def build_parser() -> argparse.ArgumentParser:
     help="Skip validating the holon; the document then carries no verdict.",
   )
   db.set_defaults(func=_cmd_databook)
+
+  wb = sub.add_parser(
+    "workbook",
+    help="Write a holon.jsonld as an Excel workbook: a sheet per section.",
+    description=(
+      "Project a holon into a workbook (.xlsx): one sheet per section of the "
+      "report, a row per line and a column per period, each line's breakdowns "
+      "beneath it. Every number is the reported fact; no cell is a formula. "
+      'Needs the xlsx extra: pip install "xbrlkit[xlsx]".'
+    ),
+  )
+  wb.add_argument("infile", help="Path to a holon.jsonld.")
+  wb.add_argument(
+    "-o", "--out", help="Output path (default: <name>.xlsx beside the holon)."
+  )
+  wb.set_defaults(func=_cmd_workbook)
 
   c = sub.add_parser(
     "cache",
