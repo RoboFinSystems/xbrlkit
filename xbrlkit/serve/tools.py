@@ -804,6 +804,42 @@ def _describe_parse_report(report: ParseReport) -> dict[str, Any]:
       "its period was read from the filing's own reporting-period facts, and "
       "it carries no dimensions"
     )
+  if report.corrected_contexts:
+    out["facts_in_corrected_contexts"] = report.corrected_facts
+    out["corrected_contexts"] = [
+      {
+        "context": c.context_id,
+        "start": c.start.isoformat(),
+        "end": c.end.isoformat(),
+        "filed_start": c.filed_start.isoformat(),
+        "filed_end": c.filed_end.isoformat(),
+        "facts": c.facts,
+        "sibling": c.sibling_id,
+      }
+      for c in report.corrected_contexts
+    ]
+    notes.append(
+      "a corrected context was declared with its One…D sibling's quarter dates "
+      "and holds the year-to-date figure; it was re-dated to the FourD period "
+      "because its members sum to the FourD total of each concept it reports"
+    )
+  if report.unverified_contexts:
+    out["unverified_contexts"] = [
+      {
+        "context": u.context_id,
+        "start": u.start.isoformat(),
+        "end": u.end.isoformat(),
+        "facts": u.facts,
+        "reason": u.reason,
+        "concepts": u.concepts,
+      }
+      for u in report.unverified_contexts
+    ]
+    notes.append(
+      "an unverified context is dated as its One…D sibling although the FourD "
+      "period is longer; its members could not be checked against the FourD "
+      "total of the same concept, so it is left as filed"
+    )
   out["note"] = "; ".join(notes) + "."
   return out
 

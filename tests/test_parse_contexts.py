@@ -301,3 +301,168 @@ def test_the_load_receipt_and_describe_filing_say_what_the_parse_did(tmp_path: P
     assert report["facts_in_recovered_contexts"] == 3
     assert report["recovered_contexts"][0]["context"] == "OneD"
     assert report["recovered_contexts"][0]["end"] == "2022-12-31"
+
+
+# A Four…D context that carries its One…D sibling's quarter dates while holding
+# the year-to-date figure (xbrlkit #60). The quarter and the year are stated,
+# not declared, as in the real filings.
+QUARTER = ("2022-10-01", "2022-12-31")
+YEAR = ("2022-04-01", "2022-12-31")
+
+
+def _segments(four: tuple[str, str] = QUARTER) -> str:
+  return (
+    _context("OneSeg01D", "ACME", *QUARTER)
+    + _context("OneSeg02D", "ACME", *QUARTER)
+    + _context("FourSeg01D", "ACME", *four)
+    + _context("FourSeg02D", "ACME", *four)
+    + _fact("Revenue", "OneSeg01D", 40)
+    + _fact("Revenue", "OneSeg02D", 60)
+    + _fact("Revenue", "FourSeg01D", 120)
+    + _fact("Revenue", "FourSeg02D", 180)
+  )
+
+
+def _quarter_and_year(four_total: int | None = 300) -> str:
+  body = (
+    _dates("OneD", *QUARTER) + _dates("FourD", *YEAR) + _fact("Revenue", "OneD", 100)
+  )
+  if four_total is not None:
+    body += _fact("Revenue", "FourD", four_total)
+  return body
+
+
+def _revenue(
+  model: XbrlModel,
+) -> dict[str, tuple[date | None, date | None, str | None]]:
+  periods = {p.id: p for p in model.periods}
+  return {
+    f.value_str or "": (
+      periods[f.period_id].start,
+      periods[f.period_id].end,
+      f.provenance.kind if f.provenance else None,
+    )
+    for f in model.facts
+    if f.concept_qname == "t:Revenue"
+  }
+
+
+def test_a_four_d_context_with_the_quarters_dates_is_redated_when_it_ties(
+  tmp_path: Path,
+):
+  from xbrlkit.model import CORRECTED_CONTEXT
+
+  model = _parse(tmp_path, _quarter_and_year() + _segments())
+
+  revenue = _revenue(model)
+  year = (date(2022, 4, 1), date(2022, 12, 31))
+  quarter = (date(2022, 10, 1), date(2022, 12, 31))
+  assert revenue["120"] == (*year, CORRECTED_CONTEXT)
+  assert revenue["180"] == (*year, CORRECTED_CONTEXT)
+  # The quarter's own contexts and the declared total are not touched.
+  assert revenue["40"] == (*quarter, None) and revenue["60"] == (*quarter, None)
+  report = model.parse_report
+  assert report is not None
+  assert [
+    (c.context_id, c.start, c.end, c.filed_start, c.filed_end, c.facts)
+    for c in report.corrected_contexts
+  ] == [
+    ("FourSeg01D", *year, *quarter, 1),
+    ("FourSeg02D", *year, *quarter, 1),
+  ]
+  assert report.unverified_contexts == []
+  assert report.corrected_facts == 2
+  # Only the facts of the corrected contexts carry the mark; dims stay.
+  marked = [
+    f for f in model.facts if f.provenance and f.provenance.kind == CORRECTED_CONTEXT
+  ]
+  assert len(marked) == 2 and all(f.entity_identifier == "ACME" for f in marked)
+  assert len({f.id for f in model.facts}) == len(model.facts)
+
+
+def test_a_sum_that_does_not_tie_leaves_the_context_as_filed_and_unverified(
+  tmp_path: Path,
+):
+  model = _parse(tmp_path, _quarter_and_year(four_total=301) + _segments())
+
+  revenue = _revenue(model)
+  quarter = (date(2022, 10, 1), date(2022, 12, 31))
+  assert revenue["120"] == (*quarter, None) and revenue["180"] == (*quarter, None)
+  report = model.parse_report
+  assert report is not None and report.corrected_contexts == []
+  assert [
+    (u.context_id, u.reason, u.start, u.end, u.facts, u.concepts)
+    for u in report.unverified_contexts
+  ] == [
+    ("FourSeg01D", "sum_mismatch", *quarter, 1, ["t:Revenue"]),
+    ("FourSeg02D", "sum_mismatch", *quarter, 1, ["t:Revenue"]),
+  ]
+
+
+def test_no_four_d_total_leaves_the_context_as_filed_and_unverified(tmp_path: Path):
+  model = _parse(tmp_path, _quarter_and_year(four_total=None) + _segments())
+
+  quarter = (date(2022, 10, 1), date(2022, 12, 31))
+  revenue = _revenue(model)
+  assert revenue["120"] == (*quarter, None) and revenue["180"] == (*quarter, None)
+  report = model.parse_report
+  assert report is not None and report.corrected_contexts == []
+  assert {(u.context_id, u.reason) for u in report.unverified_contexts} == {
+    ("FourSeg01D", "no_total"),
+    ("FourSeg02D", "no_total"),
+  }
+
+
+def test_a_four_d_context_already_dated_as_the_year_is_untouched(tmp_path: Path):
+  model = _parse(tmp_path, _quarter_and_year() + _segments(four=YEAR))
+
+  revenue = _revenue(model)
+  year = (date(2022, 4, 1), date(2022, 12, 31))
+  assert revenue["120"] == (*year, None) and revenue["180"] == (*year, None)
+  report = model.parse_report
+  assert report is not None
+  assert report.corrected_contexts == [] and report.unverified_contexts == []
+
+
+def test_a_first_quarter_filing_has_no_four_d_and_nothing_changes(tmp_path: Path):
+  body = _dates("OneD", *QUARTER) + _fact("Revenue", "OneD", 100) + _segments()
+  model = _parse(tmp_path, body)
+
+  quarter = (date(2022, 10, 1), date(2022, 12, 31))
+  revenue = _revenue(model)
+  assert revenue["120"] == (*quarter, None) and revenue["180"] == (*quarter, None)
+  report = model.parse_report
+  assert report is not None
+  assert report.corrected_contexts == [] and report.unverified_contexts == []
+
+
+def test_the_corrected_mark_travels_and_describe_filing_lists_both(tmp_path: Path):
+  from xbrlkit.deserialize.holon import from_holon_json
+  from xbrlkit.model import CORRECTED_CONTEXT
+  from xbrlkit.serialize import to_holon
+  from xbrlkit.serve import tools
+  from xbrlkit.serve.session import FilingSession
+
+  model = _parse(tmp_path, _quarter_and_year() + _segments())
+  back = from_holon_json(to_holon(model))
+  kinds = [f.provenance.kind for f in back.facts if f.provenance]
+  assert kinds.count(CORRECTED_CONTEXT) == 2
+
+  (tmp_path / "t.xsd").write_text(SCHEMA)
+  instance = tmp_path / "j.xml"
+  instance.write_text(
+    HEAD + _quarter_and_year(four_total=301) + _segments() + "</xbrli:xbrl>\n"
+  )
+  loaded = FilingSession().load(str(instance))
+  report = tools.describe_filing(loaded)["parse_report"]
+  assert report["unverified_contexts"][0]["context"] == "FourSeg01D"
+  assert report["unverified_contexts"][0]["reason"] == "sum_mismatch"
+  assert "corrected_contexts" not in report
+
+  instance2 = tmp_path / "k.xml"
+  instance2.write_text(HEAD + _quarter_and_year() + _segments() + "</xbrli:xbrl>\n")
+  report = tools.describe_filing(FilingSession().load(str(instance2)))["parse_report"]
+  assert report["facts_in_corrected_contexts"] == 2
+  assert report["corrected_contexts"][0]["context"] == "FourSeg01D"
+  assert report["corrected_contexts"][0]["start"] == "2022-04-01"
+  assert report["corrected_contexts"][0]["filed_end"] == "2022-12-31"

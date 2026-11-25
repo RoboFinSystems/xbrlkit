@@ -16,23 +16,31 @@ Key conventions carried over from the adapter:
 A fact the walk cannot place is never dropped silently: it is counted on the
 model's ``parse_report`` by reason, and a fact under a context the instance
 references but never declares is kept when the filing states that context's
-period itself (see :func:`_recoverable_contexts`).
+period itself (see :func:`_recoverable_contexts`). A declared ``Four…D``
+context that carries its ``One…D`` sibling's quarter dates while holding the
+year-to-date figure is re-dated to the ``FourD`` period when its members sum to
+the ``FourD`` total (see :func:`_misdated_contexts`).
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 from arelle import XbrlConst
 
 from xbrlkit.model import (
+  CORRECTED_CONTEXT,
   RECOVERED_CONTEXT,
   Arc,
   Concept,
+  CorrectedContext,
   DimQualifier,
   DroppedFacts,
   DropReason,
@@ -47,6 +55,8 @@ from xbrlkit.model import (
   RecoveredContext,
   Reference,
   Unit,
+  UnverifiedContext,
+  UnverifiedReason,
   XbrlFact,
   XbrlModel,
 )
@@ -77,6 +87,9 @@ _DEI_FISCAL_YEAR_END = "dei:CurrentFiscalYearEndDate"
 _REPORTING_PERIOD_FACTS = (
   ("DateOfStartOfReportingPeriod", "DateOfEndOfReportingPeriod"),
 )
+
+# A context id ``Four<X>D``; its quarter sibling is ``One<X>D``.
+_FOUR_D_CONTEXT = re.compile(r"^Four(.+)D$")
 
 # Concepts sampled per dropped group on the parse report.
 _DROPPED_CONCEPT_SAMPLE = 5
@@ -115,12 +128,14 @@ def to_xbrl_model(
 
   tally = _ParseTally()
   rebuilt_contexts = _recoverable_contexts(mx, main_cik)
+  redated_contexts, unverified_contexts = _misdated_contexts(mx, rebuilt_contexts)
 
   for f in mx.facts:
     context = f.context
     context_id = getattr(f, "contextID", None)
     concept = f.concept
     rebuilt: _RebuiltContext | None = None
+    redated = redated_contexts.get(context_id or "") if context is not None else None
     if context is None:
       # A rebuilt context is a duration; an instant concept cannot sit in it.
       if getattr(concept, "periodType", None) == "duration":
@@ -151,7 +166,13 @@ def to_xbrl_model(
     _ensure_concept(mx, concepts, namespaces, concept)
 
     # Period (deduped by content-derived id). Skip facts with invalid dates.
-    period = rebuilt.period if rebuilt else _make_period(context)
+    period = (
+      rebuilt.period
+      if rebuilt
+      else redated.period
+      if redated
+      else _make_period(context)
+    )
     if period is None:
       tally.drop("invalid_period", context_id, f)
       continue
@@ -172,6 +193,8 @@ def to_xbrl_model(
       scheme, raw_cik = rebuilt.scheme, rebuilt.identifier
       rebuilt.facts += 1
     else:
+      if redated:
+        redated.facts += 1
       scheme, raw_cik = context.entityIdentifier
     norm_cik = _normalize_cik(raw_cik)
     if entity_scheme is None or norm_cik == main_cik:
@@ -210,12 +233,14 @@ def to_xbrl_model(
         provenance=(
           FactProvenance(kind=RECOVERED_CONTEXT, attributed_to="xbrlkit")
           if rebuilt
+          else FactProvenance(kind=CORRECTED_CONTEXT, attributed_to="xbrlkit")
+          if redated
           else None
         ),
       )
     )
 
-  parse_report = tally.report(rebuilt_contexts)
+  parse_report = tally.report(rebuilt_contexts, redated_contexts, unverified_contexts)
   if parse_report is not None:
     logger.warning("%s: %s", report_uri, _describe_report(parse_report))
 
@@ -279,6 +304,19 @@ class _RebuiltContext:
 
 
 @dataclass
+class _RedatedContext:
+  """A declared context re-dated to the ``FourD`` period."""
+
+  period: Period
+  start: date
+  end: date
+  filed_start: date
+  filed_end: date
+  sibling_id: str
+  facts: int = 0
+
+
+@dataclass
 class _ParseTally:
   """Counts the facts the walk leaves out, by reason and context id."""
 
@@ -299,7 +337,12 @@ class _ParseTally:
     ):
       group.concepts.append(qname)
 
-  def report(self, rebuilt: dict[str, _RebuiltContext]) -> ParseReport | None:
+  def report(
+    self,
+    rebuilt: dict[str, _RebuiltContext],
+    redated: dict[str, _RedatedContext],
+    unverified: list[UnverifiedContext],
+  ) -> ParseReport | None:
     recovered = [
       RecoveredContext(
         context_id=context_id,
@@ -313,9 +356,28 @@ class _ParseTally:
       for context_id, ctx in rebuilt.items()
       if ctx.facts
     ]
-    if not self.groups and not recovered:
+    corrected = [
+      CorrectedContext(
+        context_id=context_id,
+        start=ctx.start,
+        end=ctx.end,
+        filed_start=ctx.filed_start,
+        filed_end=ctx.filed_end,
+        period_id=ctx.period.id,
+        facts=ctx.facts,
+        sibling_id=ctx.sibling_id,
+      )
+      for context_id, ctx in redated.items()
+      if ctx.facts
+    ]
+    if not self.groups and not recovered and not corrected and not unverified:
       return None
-    return ParseReport(dropped=list(self.groups.values()), recovered_contexts=recovered)
+    return ParseReport(
+      dropped=list(self.groups.values()),
+      recovered_contexts=recovered,
+      corrected_contexts=corrected,
+      unverified_contexts=unverified,
+    )
 
 
 def _describe_report(report: ParseReport) -> str:
@@ -334,6 +396,16 @@ def _describe_report(report: ParseReport) -> str:
     parts.append(
       f"{report.recovered_facts} fact(s) placed in rebuilt context(s) "
       + ", ".join(r.context_id for r in report.recovered_contexts)
+    )
+  if report.corrected_contexts:
+    parts.append(
+      f"{report.corrected_facts} fact(s) re-dated to the FourD period in context(s) "
+      + ", ".join(c.context_id for c in report.corrected_contexts)
+    )
+  if report.unverified_contexts:
+    parts.append(
+      "context(s) dated as their One…D sibling and left as filed, unverified: "
+      + ", ".join(u.context_id for u in report.unverified_contexts)
     )
   return "; ".join(parts)
 
@@ -399,6 +471,114 @@ def _recoverable_contexts(mx: ModelXbrl, filing_id: str) -> dict[str, _RebuiltCo
       )
       break
   return rebuilt
+
+
+def _misdated_contexts(
+  mx: ModelXbrl, rebuilt: dict[str, _RebuiltContext]
+) -> tuple[dict[str, _RedatedContext], list[UnverifiedContext]]:
+  """Find the ``Four…D`` contexts that carry their ``One…D`` sibling's dates.
+
+  Some filings date a ``Four<X>D`` context (the year-to-date breakdown) exactly
+  as ``One<X>D`` (the quarter) while it holds the year-to-date figure. Such a
+  context is re-dated to the ``FourD`` period when (a) it carries exactly its
+  sibling's dates, (b) the ``FourD`` period is longer than ``OneD``'s, and
+  (c) for every numeric concept it reports, the facts of all such contexts sum
+  to the ``FourD`` total of that same concept. When (a) and (b) hold and (c)
+  does not, the context is left as filed and listed as unverified. Contexts
+  that no fact references are ignored. The ``OneD`` and ``FourD`` periods are
+  the declared contexts', else the rebuilt ones; with either missing (a first
+  quarter has no ``FourD``) nothing is changed.
+  """
+  declared = mx.contexts or {}
+
+  def span(context_id: str) -> tuple[date, date] | None:
+    context = declared.get(context_id)
+    if context is not None:
+      period = _make_period(context)
+      if period is not None and period.start and period.end:
+        return period.start, period.end
+      return None
+    stated = rebuilt.get(context_id)
+    return (stated.start, stated.end) if stated else None
+
+  quarter, year = span("OneD"), span("FourD")
+  if quarter is None or year is None or year[1] - year[0] <= quarter[1] - quarter[0]:
+    return {}, []
+
+  by_context: dict[str, list[Any]] = defaultdict(list)
+  for f in mx.facts:
+    by_context[getattr(f, "contextID", None) or ""].append(f)
+
+  candidates: dict[str, tuple[str, date, date]] = {}
+  for context_id in declared:
+    match = _FOUR_D_CONTEXT.match(context_id)
+    if match is None or context_id == "FourD" or not by_context.get(context_id):
+      continue
+    sibling_id = f"One{match.group(1)}D"
+    filed = span(context_id)
+    if filed is not None and filed == span(sibling_id):
+      candidates[context_id] = (sibling_id, *filed)
+
+  totals: dict[str, set[Decimal]] = defaultdict(set)
+  for f in by_context.get("FourD", []):
+    value = _decimal(f)
+    if value is not None:
+      totals[str(f.qname)].add(value)
+  members: dict[str, dict[str, Decimal]] = {}
+  sums: dict[str, Decimal] = defaultdict(Decimal)
+  for context_id in candidates:
+    by_concept: dict[str, Decimal] = defaultdict(Decimal)
+    for f in by_context[context_id]:
+      value = _decimal(f)
+      if value is not None:
+        by_concept[str(f.qname)] += value
+        sums[str(f.qname)] += value
+    members[context_id] = by_concept
+
+  redated: dict[str, _RedatedContext] = {}
+  unverified: list[UnverifiedContext] = []
+  for context_id, (sibling_id, filed_start, filed_end) in candidates.items():
+    concepts = members[context_id]
+    missing = [q for q in concepts if not totals.get(q)]
+    differing = [q for q in concepts if totals.get(q) and sums[q] not in totals[q]]
+    if concepts and not missing and not differing:
+      redated[context_id] = _RedatedContext(
+        period=duration_period(*year),
+        start=year[0],
+        end=year[1],
+        filed_start=filed_start,
+        filed_end=filed_end,
+        sibling_id=sibling_id,
+      )
+      continue
+    reason: UnverifiedReason = (
+      "no_numeric_facts"
+      if not concepts
+      else "sum_mismatch"
+      if differing
+      else "no_total"
+    )
+    unverified.append(
+      UnverifiedContext(
+        context_id=context_id,
+        start=filed_start,
+        end=filed_end,
+        facts=len(by_context[context_id]),
+        reason=reason,
+        concepts=differing + missing,
+      )
+    )
+  return redated, unverified
+
+
+def _decimal(fact: Any) -> Decimal | None:
+  """A numeric fact's value as a ``Decimal``, or ``None``."""
+  if getattr(fact, "unit", None) is None or getattr(fact, "isNil", False):
+    return None
+  try:
+    return Decimal(str(fact.value).strip())
+  except (InvalidOperation, ValueError):
+    return None
 
 
 def _orphan_hash(

@@ -391,6 +391,8 @@ class Network(BaseModel):
 
 # ``FactProvenance.kind`` of a fact whose context the parse rebuilt.
 RECOVERED_CONTEXT = "recovered_context"
+# ``FactProvenance.kind`` of a fact whose declared context the parse re-dated.
+CORRECTED_CONTEXT = "corrected_context"
 
 DropReason = Literal["undeclared_context", "undefined_concept", "invalid_period"]
 
@@ -427,6 +429,48 @@ class RecoveredContext(BaseModel):
   entity_from: Literal["declared_contexts", "filing"]
 
 
+class CorrectedContext(BaseModel):
+  """A declared ``Four…D`` context the parse re-dated to the ``FourD`` period.
+
+  The filing dated it exactly as its ``One…D`` sibling (the quarter) while it
+  holds the year-to-date figure; its members sum to the ``FourD`` total of
+  each concept it reports. ``start`` / ``end`` are the period now used,
+  ``filed_start`` / ``filed_end`` the ones the filing declared. The facts
+  placed in it carry ``provenance.kind == "corrected_context"``.
+  """
+
+  context_id: str
+  start: date
+  end: date
+  filed_start: date
+  filed_end: date
+  period_id: str
+  facts: int = 0
+  # The ``One…D`` context whose dates it carried.
+  sibling_id: str
+
+
+UnverifiedReason = Literal["no_total", "sum_mismatch", "no_numeric_facts"]
+
+
+class UnverifiedContext(BaseModel):
+  """A ``Four…D`` context dated as its ``One…D`` sibling that the parse left as filed.
+
+  The ``FourD`` period is longer, so the dates may be wrong, but the members
+  could not be checked against the ``FourD`` total of the same concept:
+  ``no_total`` (there is none), ``sum_mismatch`` (the members do not sum to
+  it) or ``no_numeric_facts`` (nothing to sum). ``concepts`` names the
+  numeric concepts that failed the check.
+  """
+
+  context_id: str
+  start: date
+  end: date
+  facts: int = 0
+  reason: UnverifiedReason
+  concepts: list[str] = Field(default_factory=list)
+
+
 class ParseReport(BaseModel):
   """What the parse could not place as the instance wrote it.
 
@@ -436,6 +480,8 @@ class ParseReport(BaseModel):
 
   dropped: list[DroppedFacts] = Field(default_factory=list)
   recovered_contexts: list[RecoveredContext] = Field(default_factory=list)
+  corrected_contexts: list[CorrectedContext] = Field(default_factory=list)
+  unverified_contexts: list[UnverifiedContext] = Field(default_factory=list)
 
   @property
   def dropped_facts(self) -> int:
@@ -444,6 +490,10 @@ class ParseReport(BaseModel):
   @property
   def recovered_facts(self) -> int:
     return sum(r.facts for r in self.recovered_contexts)
+
+  @property
+  def corrected_facts(self) -> int:
+    return sum(c.facts for c in self.corrected_contexts)
 
 
 class XbrlModel(BaseModel):
