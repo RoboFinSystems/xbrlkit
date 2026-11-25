@@ -4,11 +4,11 @@
 
 <!-- mcp-name: ai.robosystems/xbrlkit -->
 
-**The XBRL toolkit from [RoboSystems](https://github.com/RoboFinSystems/robosystems), the open-source knowledge graph for finance.**
+**The XBRL toolkit from [RoboSystems](https://github.com/RoboFinSystems/robosystems), the open-source knowledge graph for finance.** Read any XBRL financial report on your own machine: an SEC 10-K, a European ESEF filing, or a report that was never filed with anyone. No account, no database, nothing indexed.
 
-Read any XBRL financial report on your own machine: an SEC 10-K, a European
-ESEF filing, or a report that was never filed with anyone. No account, no
-database, nothing indexed.
+It is a command line, a Python library and a local MCP server. Reports render in the [xbrlkit viewer](https://github.com/RoboFinSystems/xbrlkit-viewer) at [xbrlkit.com](https://xbrlkit.com).
+
+## What it does
 
 | You want to | Run |
 | --- | --- |
@@ -18,11 +18,41 @@ database, nothing indexed.
 | Turn that file into Markdown or Excel | `xbrlkit databook <file>` · `xbrlkit workbook <file>` |
 | Build a report from your own numbers, and check it | `build_report` · `check_report` |
 
+## Quick Start
+
+Needs Python 3.12 or later.
+
 ```bash
 pip install xbrlkit
+xbrlkit view NVDA        # the latest 10-K, rendered in your browser
 ```
 
-## See a filing
+| Extra | Adds |
+| --- | --- |
+| `xbrlkit[mcp]` | The MCP server, `xbrlkit serve` |
+| `xbrlkit[lpg]` | The property graph as a LadybugDB database, and Cypher over it |
+| `xbrlkit[icebug]` | The same graph as an icebug-disk tree (experimental) |
+| `xbrlkit[xlsx]` | A holon as an Excel workbook |
+
+Combine them for the server: `xbrlkit[mcp,lpg,xlsx]` adds the graph tools and
+the workbook export.
+
+### SEC User-Agent
+
+Optional. EDGAR works under a default that names the project, saying so once;
+identifying yourself is a courtesy the SEC asks for.
+
+```bash
+export SEC_GOV_USER_AGENT="Your Name your@email.com"
+```
+
+- **Where to set it**: the environment, `--user-agent` before the command, or an MCP client's `env` block
+- **A `.env` file**: read only inside a checkout of this repo, never by a `pip` or `uvx` install
+- **When it matters**: only for EDGAR; a local file, a JSON report and filings.xbrl.org need none
+
+## Usage
+
+### See a filing
 
 `xbrlkit view` opens a filing as a rendered report in your browser.
 
@@ -40,7 +70,7 @@ The report renders in the [xbrlkit viewer](https://xbrlkit.com/)
 document entirely in the browser. Your machine serves it on a loopback port
 that only the viewer's origin can read, until you press Ctrl-C.
 
-## Ask a filing questions
+### Ask a filing questions
 
 `xbrlkit serve` is a local MCP server: it holds filings in memory and answers
 from them.
@@ -96,7 +126,7 @@ the answer's `read_from` says which copy you have; `--pure` parses from EDGAR
 instead. The tool table, the switches and where exports go are in
 [`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
 
-## Convert a filing
+### Convert a filing
 
 `build` and `fetch` write a filing as a file; `--format` picks which.
 
@@ -129,7 +159,7 @@ Each format is described in
 and the holon itself in
 [`holon/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/holon/README.md).
 
-## Use it as a library
+### Use it as a library
 
 A `FilingSession` loads a filing the way `view` and `serve` do, with no extra
 installed.
@@ -151,7 +181,7 @@ A host running its own Arelle goes a level down: `xbrlkit.parse.load_model`
 returns the `ModelXbrl`, and `to_xbrl_model(mx, filing)` walks it into the same
 model.
 
-## Author a report
+### Author a report
 
 `build_report` turns rows into a report, and `check_report` gives one verdict
 on it.
@@ -200,43 +230,19 @@ result.ok, result.to_dict()["problems"]  # (True, [])
 The model that comes back is the same one a filing parses into, so it
 serializes, serves and renders like one.
 
-## Install
-
-```bash
-pip install xbrlkit
-```
-
-| Extra | Adds |
-| --- | --- |
-| `xbrlkit[mcp]` | The MCP server, `xbrlkit serve` |
-| `xbrlkit[lpg]` | The property graph as a LadybugDB database, and Cypher over it |
-| `xbrlkit[icebug]` | The same graph as an icebug-disk tree (experimental) |
-| `xbrlkit[xlsx]` | A holon as an Excel workbook |
-
-Combine them for the server: `xbrlkit[mcp,lpg,xlsx]` adds the graph tools and
-the workbook export.
-
-From a source checkout:
+## Development
 
 ```bash
 brew install uv just
-just install     # dependencies, and .env from the template
+just install             # dependencies, and .env from the template
+just test                # pytest suite
+just test-all            # tests, then format, lint and typecheck
+just lint                # Ruff (just format to write)
+just typecheck           # basedpyright
+just build 320193 0000320193-23-000106    # the CLI from the checkout; just fetch NVDA
 ```
 
-### SEC User-Agent
-
-Optional. EDGAR works under a default that names the project, saying so once;
-identifying yourself is a courtesy the SEC asks for.
-
-```bash
-export SEC_GOV_USER_AGENT="Your Name your@email.com"
-```
-
-- **Where to set it**: the environment, `--user-agent` before the command, or an MCP client's `env` block
-- **A `.env` file**: read only inside a checkout of this repo, never by a `pip` or `uvx` install
-- **When it matters**: only for EDGAR; a local file, a JSON report and filings.xbrl.org need none
-
-## How it's built
+## Architecture
 
 A filing is parsed once into a neutral model, and everything else reads that
 model.
@@ -275,7 +281,7 @@ that reaches into Arelle's `ModelXbrl` directly is bypassing it.
 SPARQL over a holon, `cypher.py` runs read-only Cypher over a built graph, and
 `view.py` is the loopback server behind `xbrlkit view`.
 
-## Where it runs
+**Where it runs:**
 
 - **RoboSystems**: the [platform's](https://github.com/RoboFinSystems/robosystems) SEC pipeline parses, projects and indexes every filing with this package, and the shared `sec` graph is declared from `xbrlkit.schema`
 - **Filing Ladder**: the [benchmark](https://github.com/HarbingerFinLab/filing-ladder) built its 26-filing corpus with this package, each format is a rung, and since protocol v0.2 `xbrlkit serve` is a rung of its own in the [published table](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/README.md)
