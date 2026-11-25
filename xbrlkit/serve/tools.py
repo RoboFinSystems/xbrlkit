@@ -123,7 +123,11 @@ EXPORT_FORMATS = {
   "lpg": "lbdb",
   "icebug": "icebug",
   "model": "model.json",
+  "databook": "databook.md",
+  "workbook": "xlsx",
 }
+# Written from a holon and naming it by digest, so the holon is written beside.
+HOLON_PROJECTIONS = ("databook", "workbook")
 PURE_MAX_READ = 4000
 BUCKET_PERIOD_TYPES = ("annual", "quarterly", "semi_annual", "nine_months")
 
@@ -2512,6 +2516,26 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
   elif fmt == "model":
     # The parse itself: reloadable by load_filing without Arelle.
     target.write_text(model.model_dump_json(indent=2))
+  elif fmt in HOLON_PROJECTIONS:
+    from xbrlkit.serialize import to_holon
+
+    holon = to_holon(model)
+    holon_path = out_dir / f"{stem}.{EXPORT_FORMATS['holon']}"
+    holon_path.write_text(holon)
+    written.append(holon_path)
+    if fmt == "databook":
+      from xbrlkit.holon.databook import databook_from_holon
+
+      target.write_text(databook_from_holon(holon, href=holon_path.name))
+    else:
+      from xbrlkit.holon.workbook import workbook_from_holon
+
+      try:
+        target.write_bytes(workbook_from_holon(holon, href=holon_path.name))
+      except RuntimeError as exc:  # pragma: no cover - depends on the extra
+        raise ToolError(
+          "the workbook format needs `pip install 'xbrlkit[xlsx]'`"
+        ) from exc
   elif fmt == "icebug":
     try:
       from xbrlkit.serialize import to_graph_tables, write_icebug

@@ -878,8 +878,14 @@ def build_server(
       "one to query; needs the lpg extra), `icebug` (experimental: the same "
       "graph as an icebug-disk directory any LadybugDB reads in place; "
       "portable, but slow for multi-relationship queries on a large stack; "
-      "needs pyarrow), or `model` (the parse itself as JSON — "
-      "load_filing reloads it without Arelle). For `lpg` and `icebug`, "
+      "needs pyarrow), `model` (the parse itself as JSON — "
+      "load_filing reloads it without Arelle), `databook` (the report as a "
+      "Markdown document to read: a table per section, each value linked to "
+      "its fact) or `workbook` (an Excel file: a sheet per section, a row per "
+      "line, a column per period, breakdowns beneath each line, every number "
+      "the reported fact and no formulas; needs the xlsx extra). Those two "
+      "are written from the holon, which is written beside them. For `lpg` "
+      "and `icebug`, "
       "`filings` stacks several loaded filings into one graph: what they share "
       "(the entity, periods, units, labels) is stored once and every fact stays "
       "on its own report." + (" run_cypher queries the result." if graph_tools else "")
@@ -888,7 +894,17 @@ def build_server(
   )
   def export_filing(
     format: Annotated[
-      Literal["clawdog", "holon", "tavi", "oim", "lpg", "icebug", "model"],
+      Literal[
+        "clawdog",
+        "holon",
+        "tavi",
+        "oim",
+        "lpg",
+        "icebug",
+        "model",
+        "databook",
+        "workbook",
+      ],
       Field(description="The projection to write."),
     ],
     filing: Filing = None,
