@@ -4,165 +4,135 @@
 
 <!-- mcp-name: ai.robosystems/xbrlkit -->
 
-Work with XBRL filings above [Arelle](https://arelle.org): fetch a filing, parse
-it **once** into a neutral typed model, and project that model into whichever
-portable representation you need, or hand it one of those representations and
-get the model back.
+**The XBRL toolkit from [RoboSystems](https://github.com/RoboFinSystems/robosystems), the open-source knowledge graph for finance.**
 
-From RoboSystems, the open-source knowledge graph for finance.
+Read any XBRL financial report on your own machine: an SEC 10-K, a European
+ESEF filing, or a report that was never filed with anyone. No account, no
+database, nothing indexed.
 
-```
-  EDGAR ───────────┐
-  filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld    (RDF / JSON-LD)
-  XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI            (compiled model)
-                                     │         ├──▶ xBRL-JSON       (OIM)
-                                     │         ├──▶ ClawDog         (authored-report JSON-LD)
-          holon, TAVI, ClawDog ──────┘         └──▶ property graph  (parquet, .lbdb, icebug-disk)
-
-                   primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
-
-                   holon, TAVI ──▶ xbrlkit view ──▶ the report, rendered in a browser
-
-                   any of the above ──▶ xbrlkit serve ──▶ MCP client (18 shaped tools, + Cypher with [lpg])
-```
-
-Three ways in: the SEC, everyone else through
-[filings.xbrl.org](https://filings.xbrl.org), and **the filing itself**: an
-XBRL package or archive (`.zip`), an iXBRL document (`.htm`), a bare instance
-(`.xml`), a filing directory, or an `http(s)` URL to any of them. Nothing about
-the middle of this requires EDGAR, or a regulator at all: a report that was
-never filed with anybody parses like one that was.
-
-Five projections out, and three of those read back, so a report that was never an
-SEC filing gets the same treatment. Another surface, the filing's text, reads
-the primary HTML directly and needs neither Arelle nor the network. And
-`xbrlkit view` puts a filing on screen.
-
-**It is also a local MCP server.** The package stands alone (a library and a
-CLI), but `xbrlkit serve` holds filings in memory and exposes them to Claude,
-ChatGPT or any MCP client through eighteen shaped tools, which makes reading a
-filing a conversation instead of a script: ask for a statement, the concepts
-behind a phrase, what foots to a subtotal, a segment breakdown, an exhibit, or
-a regex across the prose. Nothing is indexed and no database sits behind it:
-every answer is read from the filing in memory, on your machine. With the `lpg`
-extra it also writes several filings as one property graph (a company's years,
-or its peers) and answers read-only Cypher over it.
-**[What you can ask it →](#what-you-can-ask-it)**
-
-Arelle stays the parser; nobody should reimplement DTS resolution. What it
-does not give you is anything ergonomic to *hold*: `ModelXbrl` is a large
-mutable object graph tied to a controller you have to close. `XbrlModel` is the
-answer to that: stateless, single-filing, lossless, and the waist every
-projection hangs off.
-
-**The one architectural rule:** everything goes through `XbrlModel`. A feature
-that reaches into Arelle's `ModelXbrl` directly is bypassing the waist, and
-that is the change that turns a kit into a junk drawer.
-
-## What's in the box
-
-| | | |
-| --- | --- | --- |
-| [**`parse`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out | the load, the DTS cache policy, taxonomy packages |
-| [**`serialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | the five projections | holon, TAVI (+ its gap report), xBRL-JSON, ClawDog (+ its gap report), the property graph |
-| [**`deserialize`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | the importers | a holon, a TAVI or a ClawDog report read back into the model, no Arelle |
-| [**`holon`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/holon/README.md) | the holon format | what each named graph holds; `xbrlkit validate`, a file checked against it graph by graph; `xbrlkit databook`, a holon as a document to read |
-| [**`edgar`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | the SEC | discovery, download, full-text search, 1994 onward |
-| [**`filings_org`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | everyone else | ESEF and the national regimes, by LEI |
-| [**`text`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | the filing as prose | inline text blocks, 10-K/10-Q Items, the XML forms |
-| [**`serve`**](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | the local MCP server | eighteen shaped tools over a filing in memory; Cypher over exported graphs with `[lpg]` |
-
-`model.py` is the waist itself, `schema/` declares the property graph's tables,
-`query.py` runs SPARQL over a built holon, `cypher.py` runs read-only Cypher over
-a built `.lbdb` or icebug-disk tree, and `view.py` is the loopback server
-behind `xbrlkit view` and the `view_filing` tool.
-
-## Install
+| You want to | Run |
+| --- | --- |
+| See a filing as a rendered report | `uvx xbrlkit view NVDA` |
+| Ask questions of a filing from an MCP client | `uvx --from "xbrlkit[mcp]@latest" xbrlkit serve` |
+| Save a filing as one portable file | `xbrlkit fetch --ticker NVDA` |
+| Turn that file into Markdown or Excel | `xbrlkit databook <file>` · `xbrlkit workbook <file>` |
+| Build a report from your own numbers, and check it | `build_report` · `check_report` |
 
 ```bash
 pip install xbrlkit
 ```
 
-Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `view`, `cache`, `serve`) and the
-library. Four optional extras: `xbrlkit[lpg]` for the property graph as a
-LadybugDB database and for querying it (pyarrow, LadybugDB), `xbrlkit[icebug]`
-for the same graph as an experimental icebug-disk tree (pyarrow only), `xbrlkit[mcp]` for
-the MCP server and `xbrlkit[xlsx]` for a holon as an Excel workbook (openpyxl).
-Install `xbrlkit[mcp,lpg]` for the server's graph tools, and add `xlsx` for
-its workbook export.
+## See a filing
 
-From a source checkout:
+`xbrlkit view` opens a filing as a rendered report in your browser.
 
 ```bash
-brew install uv just
-just install     # dependencies, and .env from the template
+xbrlkit view NVDA                       # the latest 10-K
+xbrlkit view "NVDA 10-Q" --as tavi      # a different form, a different serialization
+xbrlkit view 320193:0000320193-23-000106
+xbrlkit view lei:549300E9PC51EN656011   # a filer outside EDGAR
+xbrlkit view ./report.zip               # a file you already have, no network
+xbrlkit view NVDA --no-open             # print the link instead of opening it
 ```
 
-### SEC User-Agent
+The report renders in the [xbrlkit viewer](https://xbrlkit.com/)
+([source](https://github.com/RoboFinSystems/xbrlkit-viewer)), which reads the
+document entirely in the browser. Your machine serves it on a loopback port
+that only the viewer's origin can read, until you press Ctrl-C.
 
-SEC fair access asks for a `User-Agent` identifying you with contact info.
-EDGAR works out of the box under a default that names the project, and the
-first unattributed fetch says so once; SEC rate limits per IP, so the shared
-default costs nobody else their budget. Identifying yourself is a courtesy,
-and one worth extending. `just install` already created your `.env`:
+## Ask a filing questions
+
+`xbrlkit serve` is a local MCP server: it holds filings in memory and answers
+from them.
 
 ```bash
-# .env
-SEC_GOV_USER_AGENT="Your Name your@email.com"
+uvx --from "xbrlkit[mcp]@latest" xbrlkit serve
+# → MCP at http://127.0.0.1:8765/mcp
 ```
 
-`.env` is loaded automatically by every command **run from a checkout of this
-repo**: the lookup is relative to the installed code, not your working
-directory, so a `uvx` or `pip` install never picks one up. There, use
-`export SEC_GOV_USER_AGENT=…`, `--user-agent` (before the command), or an MCP
-`env` block (see
-[Serve to an MCP client](#serve-to-an-mcp-client)). Nothing outside EDGAR
-needs it: a local file, a JSON report and filings.xbrl.org all load without.
+Point a client at that URL:
 
-## Usage
+```json
+{
+  "mcpServers": {
+    "xbrlkit": { "type": "http", "url": "http://127.0.0.1:8765/mcp" }
+  }
+}
+```
+
+Or let the client launch the server itself, over stdio:
+
+```json
+{
+  "mcpServers": {
+    "xbrlkit": {
+      "command": "uvx",
+      "args": ["--from", "xbrlkit[mcp]@latest", "xbrlkit", "serve", "--transport", "stdio"],
+      "env": { "SEC_GOV_USER_AGENT": "Your Name you@example.com" }
+    }
+  }
+}
+```
+
+Then load a filing from the chat (*"load NVDA's latest 10-K"*) and ask:
+
+- **A statement as a table**: the income statement, balance sheet, cash flow or any disclosure, in the filer's own order and labels
+- **The concept behind a phrase**: "revenue" → the element names this filer reports, its own extensions included
+- **Values by concept and period**: consolidated totals, or broken out by segment, product or any other axis
+- **Whether a subtotal foots**: the parts, their weights, and the computed sum against the reported total
+- **One disclosure whole**: a note's rows, its breakdowns, its roll-up and its text together
+- **A search of the prose**: regex over the whole document, tagged or not
+- **The other documents**: exhibits, an 8-K's earnings release, a 13F's holdings
+- **Forms with no XBRL**: a Form 4's transactions, a 13F's positions, as rows
+- **Filings worth reading**: EDGAR full-text search, where every hit carries the id that loads it
+- **An export**: the filing as any format below, or opened in the browser
+- **Several filings at once** (the `lpg` extra): a company's years or its peers as one graph, with read-only Cypher over it
+
+Every answer is read from the filing in memory. The one graph it can query is
+one you asked it to write.
+
+A ticker loads RoboSystems' published parse of the filing when one exists, and
+the answer's `read_from` says which copy you have; `--pure` parses from EDGAR
+instead. The tool table, the switches and where exports go are in
+[`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
+
+## Convert a filing
+
+`build` and `fetch` write a filing as a file; `--format` picks which.
 
 ```bash
-# Build a holon.jsonld from a specific filing (-> ./output/)
-xbrlkit build --cik 320193 --accno 0000320193-23-000106
-
-# The other projections: TAVI (plus its .tavi.gaps.json sidecar), xBRL-JSON,
-# ClawDog, the property graph (lpg: a .lbdb to query, needs the lpg extra; icebug:
-# an experimental directory any LadybugDB reads in place), or `all` for every one
-# of them but the graph
-xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format tavi
-xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format lpg
+xbrlkit fetch --ticker NVDA                                        # latest 10-K -> ./output/
+xbrlkit fetch --ticker NVDA --form 10-Q --n 4 --format tavi
 xbrlkit build --cik 320193 --accno 0000320193-23-000106 --format all
-
-# Fetch the latest 10-K for a ticker (-> ./output/); --form and --n filter
-xbrlkit fetch --ticker NVDA
-
-# Query consolidated facts in a built holon (in-memory SPARQL)
-xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:Assets
-
-# Check a holon against the format, one verdict per named graph
-xbrlkit validate output/0000320193-23-000106.holon.jsonld
-
-# Write a holon as a DataBook: the report as Markdown tables, with its facts as RDF
-xbrlkit databook output/0000320193-23-000106.holon.jsonld
-
-# Write a holon as an Excel workbook: a sheet per section (needs the xlsx extra)
-xbrlkit workbook output/0000320193-23-000106.holon.jsonld
-
-# Open a filing as a rendered report in the browser — no account, no download
-xbrlkit view NVDA
-
-# The filing itself needs no EDGAR and no network — an XBRL .zip, an iXBRL
-# .htm, a bare instance .xml, a filing directory. `serve` and `view` take any
-# source; `build` and `fetch` are the EDGAR path
-xbrlkit view ./report.zip
-xbrlkit serve ./mmm-20241231.htm
 ```
 
-From a source checkout, `just` wraps the same CLI: `just build 320193
-0000320193-23-000106` and `just fetch NVDA`.
+| Format | What it is | Reads back |
+| --- | --- | --- |
+| `holon` (default) | The whole report as one RDF / JSON-LD file, lossless | yes |
+| `tavi` | A compiled model, with a sidecar listing what it could not carry | yes |
+| `clawdog` | Authored-report JSON-LD, with the same kind of sidecar | yes |
+| `oim` | xBRL-JSON, the standard's own JSON | no |
+| `lpg` | A property graph as a LadybugDB database you can query (the `lpg` extra) | no |
+| `icebug` | The same graph as a directory any LadybugDB reads in place (experimental) | no |
 
-As a library, a `FilingSession` resolves a filing the way `view` and `serve`
-do, with no extra installed:
+A holon is the file the other commands take:
+
+```bash
+xbrlkit validate output/0000320193-23-000106.holon.jsonld   # checked against the format, graph by graph
+xbrlkit databook output/0000320193-23-000106.holon.jsonld   # Markdown tables, with the facts as RDF
+xbrlkit workbook output/0000320193-23-000106.holon.jsonld   # Excel, a sheet per section (the xlsx extra)
+xbrlkit query --in output/0000320193-23-000106.holon.jsonld --element us-gaap:Assets
+```
+
+Each format is described in
+[`serialize/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md),
+and the holon itself in
+[`holon/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/holon/README.md).
+
+## Use it as a library
+
+A `FilingSession` loads a filing the way `view` and `serve` do, with no extra
+installed.
 
 ```python
 from xbrlkit.deserialize import from_holon_json
@@ -177,11 +147,14 @@ model = from_holon_json(holon)      # and back again
 session.close()
 ```
 
-A report that never was a filing is authored from rows. `build_report` mints
-the periods, units, fact ids and the presentation and calculation networks, so
-nobody writes a holon or a TAVI by hand, and `check_report` gives one verdict
-on any model before something trusts it: every fact resolves, duplicate facts
-agree, every calculation foots, the balance sheet balances.
+A host running its own Arelle goes a level down: `xbrlkit.parse.load_model`
+returns the `ModelXbrl`, and `to_xbrl_model(mx, filing)` walks it into the same
+model.
+
+## Author a report
+
+`build_report` turns rows into a report, and `check_report` gives one verdict
+on it.
 
 ```python
 from datetime import date
@@ -219,215 +192,106 @@ result = check_report(model, require_source=True)
 result.ok, result.to_dict()["problems"]  # (True, [])
 ```
 
-A row the builder cannot place raises `AuthoringError` naming every row at
-fault. A fact's `source` is one string, the place in the document the value
-was read from: the document's name or URL, then a fragment of `key=value`
-pairs. Use `page=3` for a PDF, `sheet=BS&cell=B10` for a workbook, and add
-`label=` with the line's own wording when the next reader will need to match
-the line again. Both serializations carry it and both readers return it.
+- **What the builder does**: mints the periods, units, fact ids and the presentation and calculation networks, so nobody writes a holon or a TAVI by hand
+- **What the check covers**: every fact resolves, duplicate facts agree, every calculation foots, the balance sheet balances
+- **When a row is wrong**: `AuthoringError` names every row at fault
+- **A fact's `source`**: the document's name or URL, then `key=value` pairs saying where the value was read (`page=3` for a PDF, `sheet=BS&cell=B10` for a workbook, `label=` for the line's own wording)
 
-A host running its own Arelle goes a level down: `xbrlkit.parse.load_model`
-returns the `ModelXbrl`, and `to_xbrl_model(mx, filing)` walks it into the
-same model, given the filing's `FilingMeta` (CIK and accession).
+The model that comes back is the same one a filing parses into, so it
+serializes, serves and renders like one.
 
-## Serve to an MCP client
-
-Two ways to run it. They differ in which process does the fetching, and so in
-where your SEC identity goes.
-
-**stdio: the client launches the server.** The identity belongs in the
-server's own `env` block:
-
-```json
-{
-  "mcpServers": {
-    "xbrlkit": {
-      "command": "uvx",
-      "args": [
-        "--from", "xbrlkit[mcp]@latest",
-        "xbrlkit", "serve", "--transport", "stdio"
-      ],
-      "env": { "SEC_GOV_USER_AGENT": "Your Name you@example.com" }
-    }
-  }
-}
-```
-
-**HTTP: you start the server, the client only points at a URL.** An `env`
-block in the client config would reach nothing here; set it on the command:
+## Install
 
 ```bash
-pip install "xbrlkit[mcp]"
-SEC_GOV_USER_AGENT="Your Name you@example.com" xbrlkit serve
-# → MCP at http://127.0.0.1:8765/mcp
-
-# or without installing anything
-SEC_GOV_USER_AGENT="Your Name you@example.com" \
-  uvx --from "xbrlkit[mcp]@latest" xbrlkit serve
-
-# with the graph tools: stacked lpg / icebug exports and run_cypher
-SEC_GOV_USER_AGENT="Your Name you@example.com" \
-  uvx --from "xbrlkit[mcp,lpg]@latest" xbrlkit serve
-
-# with the Excel workbook export as well
-SEC_GOV_USER_AGENT="Your Name you@example.com" \
-  uvx --from "xbrlkit[mcp,lpg,xlsx]@latest" xbrlkit serve
+pip install xbrlkit
 ```
 
-```json
-{
-  "mcpServers": {
-    "xbrlkit": { "type": "http", "url": "http://127.0.0.1:8765/mcp" }
-  }
-}
-```
+| Extra | Adds |
+| --- | --- |
+| `xbrlkit[mcp]` | The MCP server, `xbrlkit serve` |
+| `xbrlkit[lpg]` | The property graph as a LadybugDB database, and Cypher over it |
+| `xbrlkit[icebug]` | The same graph as an icebug-disk tree (experimental) |
+| `xbrlkit[xlsx]` | A holon as an Excel workbook |
 
-or, equivalently:
+Combine them for the server: `xbrlkit[mcp,lpg,xlsx]` adds the graph tools and
+the workbook export.
+
+From a source checkout:
 
 ```bash
-claude mcp add --transport http xbrlkit http://127.0.0.1:8765/mcp
+brew install uv just
+just install     # dependencies, and .env from the template
 ```
 
-A `.env` file is **not** a channel for either of these. The lookup is relative
-to the installed code rather than your working directory, so it resolves only
-inside a checkout of this repo; a `uvx` or `pip` install never sees one. Use
-the environment, the `env` block, or `--user-agent` before the command.
+### SEC User-Agent
 
-Both are optional: EDGAR works unattributed under the default, saying so once.
-And filings.xbrl.org, local packages and TAVI/holon JSON need no identity at all.
+Optional. EDGAR works under a default that names the project, saying so once;
+identifying yourself is a courtesy the SEC asks for.
 
-### What you can ask it
+```bash
+export SEC_GOV_USER_AGENT="Your Name your@email.com"
+```
 
-Load a filing from the chat: a ticker, an EDGAR `cik:accession`, a `lei:` for
-ESEF and the national regimes, a local package, or a holon or TAVI by path or
-URL. A ticker or `cik:accession` loads the filing's published holon (or its
-TAVI model) first when the RoboSystems CDN has one, falling back to EDGAR. That
-copy is RoboSystems' parse of the filing, not the filing as filed, and the
-answer's `read_from` says which one you have; `--pure` or
-`XBRLKIT_ARTIFACTS_URL=""` parses it from EDGAR instead. Exports go to
-`~/xbrlkit/output` unless `--out-dir` says otherwise. Then:
+- **Where to set it**: the environment, `--user-agent` before the command, or an MCP client's `env` block
+- **A `.env` file**: read only inside a checkout of this repo, never by a `pip` or `uvx` install
+- **When it matters**: only for EDGAR; a local file, a JSON report and filings.xbrl.org need none
 
-- **Pull a statement as a table.** The income statement, balance sheet, cash
-  flow or equity statement (or any disclosure network) as rows in the filer's
-  own order and labels, values per period column.
-- **Find the concept behind a phrase.** "Revenue", "operating lease liability"
-  → the qnames *this* filer actually reports, its own extension concepts
-  included, ranked with fact counts and where each appears. You never have to
-  guess a US-GAAP name.
-- **Get values by concept and period.** Consolidated totals by default (no
-  dimensional qualifier, the most precise of duplicate tags) or broken out by
-  any axis the filing carries: segment, product, debt instrument, acquisition.
-- **Check whether a subtotal foots.** The calculation children with their
-  weights, the reported total against the sum computed from them, per period,
-  with the difference.
-- **Read one disclosure whole.** A note's rows with values, the same rows by
-  its own axes, its calculation arcs footed, and its tagged text beside the
-  numbers. The `disclosures` index finds the right block first, cheaply.
-- **Search the prose.** Regex over the whole primary document: Items, the
-  notes, the cover, the signatures, tagged or not. A pattern that matches more
-  than fits in the answer says which sections the rest fall in, busiest first.
-- **Read the other documents.** Exhibits, an 8-K's EX-99.1 earnings release
-  (where the non-GAAP measures and guidance live, since no XBRL holds them), or
-  a 13F's holdings table.
-- **Read the forms with no XBRL at all.** A Form 4's transactions and holdings,
-  a 13F's positions, as rows with the document's header fields beside them.
-- **Find filings worth reading.** EDGAR full-text search across the corpus by
-  phrase, form, date and filer, where every hit carries the id that loads it.
-- **Export or render it.** Write the filing as holon, TAVI, xBRL-JSON, ClawDog,
-  a LadybugDB graph or icebug-disk tree, or the parse itself; as a document a
-  person opens, a DataBook (Markdown) or an Excel workbook with a sheet per
-  section (the `xlsx` extra); or open it as a rendered report in the browser
-  and hand back the link.
-- **Stack filings and query across them** (with the `lpg` extra). Export several
-  loaded filings as one graph (a company's years, or peers) and run read-only
-  Cypher over it with `run_cypher`: revenue by report and period, or a figure
-  that one year's comparative restates. A holon or a TAVI model loads the same
-  way as a filing, so reports that were never filed with the SEC stack too.
+## How it's built
 
-No graph and no database sits behind any of it: every answer about a filing is
-read from that filing, and the only graph `run_cypher` reads is one you asked
-`export_filing` to write. Beyond fetching a filing and its documents, the one
-outward call is `search_filings`, which asks EDGAR's own full-text index which
-filings to go and read. Full detail,
-including the tool table and the `--pure` profile, in
-[`serve/`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md).
+A filing is parsed once into a neutral model, and everything else reads that
+model.
+
+```
+  EDGAR ───────────┐
+  filings.xbrl.org ├──▶ Arelle ──▶ XbrlModel ──┬──▶ holon.jsonld ──▶ DataBook, workbook
+  XBRL zip / iXBRL ┘                 ▲         ├──▶ TAVI
+                                     │         ├──▶ xBRL-JSON
+     holon, TAVI, ClawDog ───────────┤         ├──▶ ClawDog
+     your own rows (author) ─────────┘         └──▶ property graph
+
+                   primary HTML ──▶ xbrlkit.text ──▶ sections (text blocks, Items, tables)
+```
+
+[Arelle](https://arelle.org) stays the parser; nobody should reimplement DTS
+resolution. What it does not give you is anything ergonomic to hold:
+`ModelXbrl` is a large mutable object graph tied to a controller you have to
+close. `XbrlModel` is stateless, single-filing and lossless.
+
+**The one architectural rule:** everything goes through `XbrlModel`. A feature
+that reaches into Arelle's `ModelXbrl` directly is bypassing it.
+
+| Module | What it does |
+| --- | --- |
+| [`parse`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/parse/README.md) | Arelle in, `XbrlModel` out: the load, the DTS cache policy, taxonomy packages |
+| [`serialize`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serialize/README.md) | The formats out, and the gap reports |
+| [`deserialize`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/deserialize/README.md) | A holon, a TAVI or a ClawDog report read back into the model, no Arelle |
+| [`holon`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/holon/README.md) | The holon format, `validate`, `databook` and `workbook` |
+| [`edgar`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/edgar/README.md) | The SEC: discovery, download, full-text search, 1994 onward |
+| [`filings_org`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/filings_org/README.md) | ESEF and the national regimes, by LEI |
+| [`text`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/text/README.md) | The filing as prose: text blocks, 10-K/10-Q Items, the XML forms; needs neither Arelle nor the network |
+| [`serve`](https://github.com/RoboFinSystems/xbrlkit/blob/main/xbrlkit/serve/README.md) | The local MCP server |
+
+`author.py` and `check.py` build and check a report from rows, `query.py` runs
+SPARQL over a holon, `cypher.py` runs read-only Cypher over a built graph, and
+`view.py` is the loopback server behind `xbrlkit view`.
 
 ## Where it runs
 
-**RoboSystems.** The
-[RoboSystems](https://github.com/RoboFinSystems/robosystems) platform's SEC
-pipeline is built on this package: filings are parsed with `xbrlkit.parse`
-(`load_model` on the platform's own cache directory, then `to_xbrl_model`),
-projected with `to_holon`, `to_tavi_report` and the
-property-graph tables, the shared `sec` graph is declared from
-`xbrlkit.schema`, and the full-text index behind its document search is built
-from `xbrlkit.text`.
+- **RoboSystems**: the [platform's](https://github.com/RoboFinSystems/robosystems) SEC pipeline parses, projects and indexes every filing with this package, and the shared `sec` graph is declared from `xbrlkit.schema`
+- **Filing Ladder**: the [benchmark](https://github.com/HarbingerFinLab/filing-ladder) built its 26-filing corpus with this package, each format is a rung, and since protocol v0.2 `xbrlkit serve` is a rung of its own in the [published table](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/README.md)
 
-**Filing Ladder.** The
-[Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder) benchmark
-(one SEC filing handed to the same language model in every representation, the
-same questions, scored with cost) built its 26-filing corpus of 2024–2025 10-Ks
-and 10-Qs with this package, and each projection is a rung of the ladder. Since
-protocol v0.2 (November 2026) the package is a rung of its own: `xbrlkit serve`
-over one filing on the reader's machine, under the product profile with the
-document on, answered the same questions as the hosted knowledge graph's tools
-at the same accuracy, and the
-[published table](https://github.com/HarbingerFinLab/filing-ladder/blob/main/results/README.md)
-carries its cost per correct answer beside every other row of every version.
-What the transcripts showed about the tools fed straight back into the package
-(the `concepts` and `phrase` argument aliases in 0.21.5; the orientation
-payload is the next item). That corpus is this package's test bench too: the
-text sections were checked against the filing's own text-block facts on all 26
-filings, the property graph row for row against the platform's processor, and
-the JSON importers by round trip.
+## Documentation
 
-## View & explore
+- **Modules**: the table above links each module's own README
+- **Technical docs**: [robosystems.ai/docs/technical](https://robosystems.ai/docs/technical)
+- **Related**: [RoboSystems](https://github.com/RoboFinSystems/robosystems) · [xbrlkit viewer](https://github.com/RoboFinSystems/xbrlkit-viewer) · [Filing Ladder](https://github.com/HarbingerFinLab/filing-ladder)
 
-Built holons and TAVI models render in the **xbrlkit viewer**, the browser
-side of the toolkit, a reader that renders the financial statements and lets
-you ask questions of the report with AI:
+## Support
 
-- **Hosted:** <https://xbrlkit.com/>: open a `holon.jsonld` or a `tavi.json`
-  and explore the statements, notes and dimensional facts, or chat with the
-  report.
-- **Source:** <https://github.com/RoboFinSystems/xbrlkit-viewer>
-
-The viewer reads a holon entirely client-side, so a single `holon.jsonld` is a
-complete, portable, self-describing report. Its chat asks the report raw
-questions (jq over a TAVI model, SPARQL over a holon); `xbrlkit serve` is the
-other side of that pair: the same filing behind shaped tools, on your own
-machine.
-
-**`xbrlkit view` joins the two.** It resolves a filing the way `serve` does,
-serializes it, and hands that one document to the viewer:
-
-```bash
-xbrlkit view NVDA                       # the latest 10-K, rendered in a browser tab
-xbrlkit view "NVDA 10-Q" --as tavi      # a different form, a different serialization
-xbrlkit view 320193:0000320193-23-000106
-xbrlkit view lei:549300E9PC51EN656011   # a filer outside EDGAR
-xbrlkit view output/x.holon.jsonld      # a document you already have, verbatim
-xbrlkit view NVDA --no-open             # print the link instead of opening it
-```
-
-Without installing anything:
-
-```bash
-uvx xbrlkit view NVDA
-```
-
-A browser cannot be handed a local path (`file://` is unreachable from an
-https page, and a file input cannot be pre-populated), so this serves the
-document instead, on an ephemeral loopback port with an unguessable path, and
-opens `xbrlkit.com/view?url=…` pointing at it (earlier releases open
-`xbrlkit.com/?url=…`, which keeps working). `http://127.0.0.1` is a
-potentially trustworthy origin, so the https page may read it; the CORS header
-names the viewer's origin and no other. The document is readable there, by that
-origin, until you press Ctrl-C. `--viewer` points at a different build.
-
-From an MCP client the same thing is the `view_filing` tool: *"load NVDA"*,
-then *"show me it"*.
+- [Issues](https://github.com/RoboFinSystems/xbrlkit/issues) · [Discussions](https://github.com/orgs/RoboFinSystems/discussions) · [Projects](https://github.com/orgs/RoboFinSystems/projects)
 
 ## License
 
-MIT © 2026 RFS LLC. See [LICENSE](LICENSE).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+MIT © 2026 RFS LLC
