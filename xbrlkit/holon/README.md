@@ -306,12 +306,56 @@ property a writer adds is not a violation. A holon written before the format
 had a writer of its own (no `rs:Report` node, elements without an
 `rs:itemType`) does not conform, and says so.
 
+## The workbook: a holon as an Excel file
+
+`xbrlkit workbook` writes the report as an `.xlsx`, for the reader who opens a
+spreadsheet. It needs the `xlsx` extra (`pip install "xbrlkit[xlsx]"`).
+
+```bash
+xbrlkit workbook report.holon.jsonld        # -> report.xlsx
+```
+
+```python
+from xbrlkit.holon.workbook import workbook_from_holon, to_workbook
+
+data = workbook_from_holon(text, href="report.holon.jsonld")  # bytes
+```
+
+One sheet per section of the report, in the report's order, behind a contents
+sheet that names the holon by IRI and by SHA-256 and lists every sheet with
+its counts. On a section's sheet a row is a line the section presents and a
+column is a period; under a line sit its breakdowns, one row per member of the
+section's own axes. Unlike the DataBook it draws every section, the detail
+tables and their breakdowns included.
+
+What it does to the facts, all of it said on the contents sheet:
+
+- **Every number is the reported fact, written as a number.** No cell holds a
+  formula, so a total is the reported total and nothing is recomputed. A label
+  or a text value that begins with `=` is written as text.
+- **A balance is read into the period it opens or closes.** A duration column
+  shows the balance dated at its end, and a line presented with a
+  `periodStart` label shows the balance dated the day before its start, so a
+  roll-forward reads as it prints. A date gets a column of its own only when a
+  fact on it is shown nowhere else.
+- **A line presented with a negated label shows its value reversed,** as the
+  statement prints it, and the sheet's `Sign` column marks the line.
+- **A period only a stray fact or two is dated on has no column.** The
+  contents sheet counts the facts each section holds beside those it shows.
+
+The rows and columns come from [`pivot.py`](pivot.py) (`pivot_sections`), which
+caps nothing and writes no file. It follows the rules
+[report-components](https://github.com/RoboFinSystems/robosystems-report-components)
+uses on screen for balances, signs and sparse periods.
+
 ## Files
 
 | | |
 | --- | --- |
 | [`__init__.py`](__init__.py) | `validate_holon`, `validate_holon_file`, `render`, the verdict types |
 | [`databook.py`](databook.py) | `databook_from_holon`, `to_databook` |
+| [`pivot.py`](pivot.py) | `pivot_sections`: a section as lines by periods, with its breakdowns |
+| [`workbook.py`](workbook.py) | `workbook_from_holon`, `to_workbook` |
 | [`shapes/scene.ttl`](shapes/scene.ttl), [`projection.ttl`](shapes/projection.ttl), [`boundary.ttl`](shapes/boundary.ttl), [`lineage.ttl`](shapes/lineage.ttl) | one shapes graph per named graph |
 | [`shapes/common.ttl`](shapes/common.ttl) | `rs:Element`, read into both `#scene` and `#projection` |
 | [`shapes/dataset.ttl`](shapes/dataset.ttl) | the graphs together |

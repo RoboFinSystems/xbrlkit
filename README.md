@@ -84,10 +84,11 @@ pip install xbrlkit
 ```
 
 Exposes the `xbrlkit` CLI (`build`, `fetch`, `query`, `view`, `cache`, `serve`) and the
-library. Three optional extras: `xbrlkit[lpg]` for the property graph as a
+library. Four optional extras: `xbrlkit[lpg]` for the property graph as a
 LadybugDB database and for querying it (pyarrow, LadybugDB), `xbrlkit[icebug]`
-for the same graph as an experimental icebug-disk tree (pyarrow only) and `xbrlkit[mcp]` for
-the MCP server. Install `xbrlkit[mcp,lpg]` for the server's graph tools.
+for the same graph as an experimental icebug-disk tree (pyarrow only), `xbrlkit[mcp]` for
+the MCP server and `xbrlkit[xlsx]` for a holon as an Excel workbook (openpyxl).
+Install `xbrlkit[mcp,lpg]` for the server's graph tools.
 
 From a source checkout:
 
@@ -142,6 +143,9 @@ xbrlkit validate output/0000320193-23-000106.holon.jsonld
 
 # Write a holon as a DataBook: the report as Markdown tables, with its facts as RDF
 xbrlkit databook output/0000320193-23-000106.holon.jsonld
+
+# Write a holon as an Excel workbook: a sheet per section (needs the xlsx extra)
+xbrlkit workbook output/0000320193-23-000106.holon.jsonld
 
 # Open a filing as a rendered report in the browser — no account, no download
 xbrlkit view NVDA
