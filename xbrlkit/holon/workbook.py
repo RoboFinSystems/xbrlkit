@@ -24,7 +24,7 @@ from typing import Any
 
 from .. import __version__
 from ..deserialize.holon import from_holon_report
-from ..model import XbrlFact, XbrlModel
+from ..model import Unit, XbrlFact, XbrlModel
 from . import read_graphs
 from .pivot import PivotSection, pivot_sections
 
@@ -239,7 +239,7 @@ def _write_section(sheet: Any, model: XbrlModel, section: PivotSection) -> str |
   from openpyxl.styles import Alignment, Border, Font, Side
   from openpyxl.utils import get_column_letter
 
-  units = {u.id: _UNIT_PREFIX.sub("", u.measure) for u in model.units}
+  units = {u.id: _unit_label(u) for u in model.units}
   places = _unstated_places(section)
   columns = section.columns[: MAX_SHEET_COLUMNS - 3]
   value_columns = {column.key: index for index, column in enumerate(columns, start=2)}
@@ -353,6 +353,20 @@ def _write_section(sheet: Any, model: XbrlModel, section: PivotSection) -> str |
   if len(columns) < len(section.columns):
     left.append(f"{len(section.columns) - len(columns):,} periods past its last column")
   return "; ".join(left) or None
+
+
+def _unit_label(unit: Unit) -> str:
+  """The unit's local name, read from its URI: a filer that binds its own
+  prefix to the xbrli namespace (``i:shares``) still prints ``shares``."""
+  if unit.numerator_uri and unit.denominator_uri:
+    return f"{_local_name(unit.numerator_uri)}/{_local_name(unit.denominator_uri)}"
+  if unit.uri:
+    return _local_name(unit.uri)
+  return _UNIT_PREFIX.sub("", unit.measure)
+
+
+def _local_name(uri: str) -> str:
+  return uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
 
 
 def _value(

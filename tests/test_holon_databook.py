@@ -447,3 +447,26 @@ def test_the_command_writes_the_databook_beside_the_holon(
   text = named.read_text()
   assert "```turtle" not in text and "## Validation" not in text
   assert main(["databook", str(tmp_path / "absent.holon.jsonld")]) == 2
+
+
+# -- the pivot's layout --------------------------------------------------------
+
+
+def test_a_roll_forward_reads_as_the_workbook_draws_it() -> None:
+  """One column for the year: the opening balance under the period it opens,
+  and a line presented with a negated label printed with its sign reversed.
+  The DataBook used to put the opening balance under its own date and print
+  the dividends as stated."""
+  from tests.test_holon_workbook import WHEN, _roll_forward
+
+  text = to_databook(
+    _roll_forward(), timestamp=WHEN, links=False, inline_rdf=False, validate=False
+  )
+  lines = text.splitlines()
+  start = lines.index("| | 2024-01-01 to 2024-12-31 |")
+  assert lines[start + 2 : start + 6] == [
+    "| Equity, beginning | 100 |",
+    "| NetIncomeLoss | 50 |",
+    "| Dividends | (20) |",
+    "| **Equity, ending** | 130 |",
+  ]
