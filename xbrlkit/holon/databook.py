@@ -23,7 +23,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -32,12 +32,10 @@ from rdflib import RDF, XSD, Graph, Namespace, URIRef
 from .. import __version__
 from ..deserialize.holon import from_holon_report
 from ..information_block import InformationBlock, fact_membership, plan_blocks
-from ..model import Arc, Period, XbrlFact, XbrlModel
+from ..model import XbrlFact, XbrlModel
 from ..namespaces import HOLON_VOCAB
 from . import DATASET, GRAPHS, HolonValidation, read_graphs, validate_holon
-from .pivot import label_for as _label
-from .pivot import period_label as _period_label
-from .pivot import precision as _precision
+from .pivot import PivotColumn, PivotRow, pivot_section
 
 RS = Namespace(HOLON_VOCAB)
 SHAPES_BASE = f"{HOLON_VOCAB}shapes/"
@@ -59,9 +57,6 @@ MAX_DOCUMENT_ROWS = 1500
 # They are most of a filing's sections and the least read, so they are named
 # in the contents and left to the holon unless asked for.
 DETAIL_LEVELS = ("tables", "details")
-# A column fewer than this share of the fullest column's rows use is a stray
-# comparative (one prior-year balance in a note), and is left to the holon.
-MIN_COLUMN_SHARE = 0.2
 # Narrative shown under a section: how many passages, and how much of each.
 MAX_PASSAGES = 3
 PASSAGE_LENGTH = 900
@@ -86,17 +81,6 @@ _FACT_PREDICATES = (
 _TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 _SLUG = re.compile(r"[^a-z0-9]+")
-_TOTAL_ROLES = ("totalLabel", "periodEndLabel", "netLabel")
-
-
-@dataclass
-class _Row:
-  depth: int
-  label: str
-  qname: str
-  abstract: bool = False
-  total: bool = False
-  values: dict[str, XbrlFact] = field(default_factory=dict)
 
 
 @dataclass
@@ -104,8 +88,8 @@ class _Section:
   block: InformationBlock
   slug: str
   title: str
-  rows: list[_Row]
-  columns: list[Period]
+  rows: list[PivotRow]
+  columns: list[PivotColumn]
   shown: list[XbrlFact]
   facts: int
   dimensional: int
@@ -227,16 +211,22 @@ def _sections(model: XbrlModel, *, details: bool = False) -> list[_Section]:
     facts = membership.get(block.role_uri, [])
     if not facts:
       continue
-    consolidated = _most_precise([f for f in facts if not f.dims])
-    by_concept: dict[str, list[XbrlFact]] = defaultdict(list)
-    for fact in consolidated:
-      by_concept[fact.concept_qname].append(fact)
-    columns = _columns(consolidated, periods)
-    keep = {p.id for p in columns}
-    rows, truncated = _rows(model, block, by_concept, keep)
+    # The layout the workbook draws: a roll-forward's opening balance in the
+    # column it opens, a negated line marked for the writer to reverse.
+    pivot = pivot_section(model, block, facts, periods)
+    rows = pivot.rows[:MAX_ROWS]
+    truncated = len(pivot.rows) > MAX_ROWS
+    columns = pivot.columns[:MAX_COLUMNS]
     # A concept presented twice (cash at the start and at the end of a
     # period) is one fact shown twice.
-    shown = list({f.id: f for row in rows for f in row.values.values()}.values())
+    shown = list(
+      {
+        f.id: f
+        for row in rows
+        for key, f in row.values.items()
+        if key in {c.key for c in columns}
+      }.values()
+    )
     base = _SLUG.sub("-", block.name.lower()).strip("-")[:48] or "section"
     slugs[base] += 1
     slug = base if slugs[base] == 1 else f"{base}-{slugs[base]}"
@@ -266,129 +256,16 @@ def _sections(model: XbrlModel, *, details: bool = False) -> list[_Section]:
   return sections
 
 
-def _most_precise(facts: list[XbrlFact]) -> list[XbrlFact]:
-  """One fact per concept, period and unit: the one stated most precisely."""
-  best: dict[tuple[Any, ...], XbrlFact] = {}
-  for fact in facts:
-    key = (fact.concept_qname, fact.period_id, fact.unit_id, fact.language)
-    current = best.get(key)
-    if current is None or _precision(fact.decimals) > _precision(current.decimals):
-      best[key] = fact
-  return list(best.values())
-
-
-def _columns(facts: list[XbrlFact], periods: dict[str, Period]) -> list[Period]:
-  """The section's periods, newest first, the longer span ahead at one end date."""
-  used: dict[str, int] = defaultdict(int)
-  for fact in facts:
-    if fact.period_id in periods:
-      used[fact.period_id] += 1
-
-  def key(period_id: str) -> tuple[date, int, int]:
-    period = periods[period_id]
-    span = (
-      (period.end - period.start).days
-      if period.period_type == "duration" and period.start and period.end
-      else 0
-    )
-    return (period.end or date.min, span, used[period_id])
-
-  fullest = max(used.values(), default=0)
-  wanted = [i for i in used if used[i] >= fullest * MIN_COLUMN_SHARE]
-  return [periods[i] for i in sorted(wanted, key=key, reverse=True)[:MAX_COLUMNS]]
-
-
-def _rows(
-  model: XbrlModel,
-  block: InformationBlock,
-  by_concept: dict[str, list[XbrlFact]],
-  keep: set[str],
-) -> tuple[list[_Row], bool]:
-  """The presentation trees walked in order, one row per concept shown."""
-  children: dict[str, list[Arc]] = defaultdict(list)
-  targets: set[str] = set()
-  for network in block.presentation:
-    for arc in network.arcs:
-      children[arc.from_qname].append(arc)
-      targets.add(arc.to_qname)
-  for arcs in children.values():
-    arcs.sort(key=lambda a: a.order if a.order is not None else 0.0)
-  roots = [q for q in children if q not in targets] or list(children)[:1]
-  # A lone abstract root only repeats the section's name: start beneath it.
-  top = model.concepts.get(roots[0]) if len(roots) == 1 else None
-  skip_root = top is not None and top.is_abstract
-  totals = {arc.from_qname for n in block.calculation for arc in n.arcs}
-
-  rows: list[_Row] = []
-  truncated = False
-
-  def visit(qname: str, depth: int, role: str | None, trail: tuple[str, ...]) -> None:
-    nonlocal truncated
-    if len(rows) >= MAX_ROWS:
-      truncated = True
-      return
-    concept = model.concepts.get(qname)
-    # A table and its axes are the breakdown's scaffolding, not rows. A
-    # member needs no test: it has no consolidated value and is not abstract.
-    structural = concept is not None and (
-      concept.is_hypercube_item or concept.is_dimension_item
-    )
-    if not structural:
-      values = {
-        f.period_id: f for f in by_concept.get(qname, []) if f.period_id in keep
-      }
-      abstract = concept is not None and concept.is_abstract
-      if values or abstract:
-        rows.append(
-          _Row(
-            depth=depth,
-            label=_label(concept, qname, role),
-            qname=qname,
-            abstract=abstract,
-            total=qname in totals or bool(role and role.endswith(_TOTAL_ROLES)),
-            values=values,
-          )
-        )
-    # An axis heads its domain and members: the breakdown, which is the holon's.
-    if concept is not None and concept.is_dimension_item:
-      return
-    if qname in trail or depth > 14:
-      return
-    for arc in children.get(qname, []):
-      visit(arc.to_qname, depth + 1, arc.preferred_label, (*trail, qname))
-
-  for root in roots:
-    if skip_root:
-      for arc in children.get(root, []):
-        visit(arc.to_qname, 0, arc.preferred_label, (root,))
-    else:
-      visit(root, 0, None, ())
-  # An abstract heading with nothing beneath it says nothing. Dropping one can
-  # leave its own heading bare, so repeat until none is.
-  pruned = rows
-  while True:
-    kept = [
-      row
-      for index, row in enumerate(pruned)
-      if not row.abstract
-      or (index + 1 < len(pruned) and pruned[index + 1].depth > row.depth)
-    ]
-    if len(kept) == len(pruned):
-      break
-    pruned = kept
-  return pruned, truncated
-
-
 # -- values --------------------------------------------------------------------
 
 
-def _cell(fact: XbrlFact | None) -> str:
+def _cell(fact: XbrlFact | None, *, negated: bool = False) -> str:
   if fact is None:
     return ""
   if fact.is_nil:
     return "nil"
   if fact.value_kind == "numeric" and fact.numeric_value is not None:
-    return _number(fact)
+    return _number(fact, negated=negated)
   text = _SPACE.sub(" ", _TAG.sub(" ", fact.value_str or "")).strip()
   if len(text) > TEXT_PREVIEW:
     return f"*text, {len(text):,} characters*"
@@ -400,6 +277,8 @@ def _linked(
   fact_nodes: dict[str, URIRef],
   labels: dict[str, str],
   defined: list[str],
+  *,
+  negated: bool = False,
 ) -> str:
   """The cell, as a link to the fact it shows.
 
@@ -407,7 +286,7 @@ def _linked(
   IRI is written once beneath the table. This is the DataBook's form of
   inline tagging: the number a person reads *is* the fact in the holon.
   """
-  text = _cell(fact)
+  text = _cell(fact, negated=negated)
   if fact is None or not text:
     return text
   node = fact_nodes.get(fact.id)
@@ -421,13 +300,15 @@ def _linked(
   return f"[{text}][{label}]"
 
 
-def _number(fact: XbrlFact) -> str:
-  """The number as the report states it, with separators; a negative in parentheses."""
+def _number(fact: XbrlFact, *, negated: bool = False) -> str:
+  """The number as the report states it, with separators; a negative in
+  parentheses. A line presented with a negated label reads with its sign
+  reversed, as the statement prints it; the fact it links to is as stated."""
   lexical = fact.value_str if fact.value_str and _is_plain(fact.value_str) else None
   if lexical is None:
     value = fact.numeric_value or 0.0
     lexical = f"{value:.2f}" if value != int(value) else str(int(value))
-  negative = lexical.startswith("-")
+  negative = lexical.startswith("-") != negated
   whole, _, fraction = lexical.lstrip("+-").partition(".")
   # A value reads to the places it is stated to: 204,844.90 at two places,
   # 1,000 at none. Digits past the stated places are kept; they were reported.
@@ -790,7 +671,7 @@ def _section_markdown(
 ) -> list[str]:
   out = [f'<a id="{section.slug}"></a>', "", f"## {section.title}", ""]
   if section.rows and section.columns:
-    header = " | ".join(_period_label(p) for p in section.columns)
+    header = " | ".join(c.label for c in section.columns)
     out += [
       f"| | {header} |",
       "|---|" + "---:|" * len(section.columns),
@@ -803,8 +684,8 @@ def _section_markdown(
       if row.abstract or row.total:
         label = "&nbsp;&nbsp;" * row.depth + f"**{_escape(row.label)}**"
       cells = " | ".join(
-        _linked(row.values.get(p.id), fact_nodes, labels, defined)
-        for p in section.columns
+        _linked(row.values.get(c.key), fact_nodes, labels, defined, negated=row.negated)
+        for c in section.columns
       )
       out.append(f"| {label} | {cells} |")
     out.append("")
@@ -856,7 +737,7 @@ def _section_markdown(
 
 def _passages(section: _Section) -> list[str]:
   """The section's narrative, where its facts are text too long for a cell."""
-  newest = section.columns[0].id if section.columns else None
+  newest = section.columns[0].key if section.columns else None
   out: list[str] = []
   shown = 0
   for row in section.rows:

@@ -480,3 +480,27 @@ def test_the_cli_writes_the_workbook_beside_the_holon(
   assert book[CONTENTS_SHEET]["B4"].value is not None
 
   assert main(["workbook", str(tmp_path / "absent.holon.jsonld")]) == 2
+
+
+def test_the_unit_column_prints_the_units_own_name_whatever_its_prefix() -> None:
+  """A filer may bind `i:` to the xbrli namespace; the unit is still shares."""
+  from xbrlkit.holon.workbook import _unit_label
+
+  assert (
+    _unit_label(
+      Unit(id="sh", measure="i:shares", uri="http://www.xbrl.org/2003/instance#shares")
+    )
+    == "shares"
+  )
+  assert (
+    _unit_label(
+      Unit(
+        id="eps",
+        measure="iso4217:USD/xbrli:shares",
+        numerator_uri="http://www.xbrl.org/2003/iso4217#USD",
+        denominator_uri="http://www.xbrl.org/2003/instance#shares",
+      )
+    )
+    == "USD/shares"
+  )
+  assert _unit_label(Unit(id="usd", measure="iso4217:USD")) == "USD"
