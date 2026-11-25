@@ -270,6 +270,57 @@ def test_a_stray_comparative_gets_no_column_and_is_counted() -> None:
   assert kept.shown == kept.facts == 13
 
 
+def test_a_period_keeps_its_balances_when_their_dates_are_sparse() -> None:
+  """A cash flow statement: many movements in the year, and one balance on
+  each of two dates. Neither date earns a column; both balances are shown."""
+  money = {"is_numeric": True, "item_type": "monetaryItemType"}
+  cash = _concept("Cash", **money)
+  cash.labels = [
+    Label(value="Cash, beginning", role=START_LABEL),
+    Label(value="Cash, ending", role=END_LABEL),
+  ]
+  flows = [f"Flow{i}" for i in range(6)]
+  root = "us-gaap:StatementOfCashFlowsAbstract"
+  model = _report(
+    concepts=[
+      _concept("StatementOfCashFlowsAbstract", is_abstract=True),
+      cash,
+      *(_concept(name, **money) for name in flows),
+    ],
+    facts=[
+      _fact("c0", "Cash", 40.0, "I-2023"),
+      _fact("c1", "Cash", 55.0, "I-2024"),
+      *(_fact(f"m{i}", name, 1.0 + i, FY) for i, name in enumerate(flows)),
+    ],
+    arcs=[
+      Arc(
+        from_qname=root,
+        to_qname="us-gaap:Cash",
+        order=0.0,
+        preferred_label=START_LABEL,
+      ),
+      *(
+        Arc(from_qname=root, to_qname=f"us-gaap:{name}", order=1.0 + i)
+        for i, name in enumerate(flows)
+      ),
+      Arc(
+        from_qname=root,
+        to_qname="us-gaap:Cash",
+        order=9.0,
+        preferred_label=END_LABEL,
+      ),
+    ],
+    periods=_roll_forward().periods,
+    definition="Statement of Cash Flows",
+  )
+  section = _only(model)
+  assert [c.label for c in section.columns] == ["2024-01-01 to 2024-12-31"]
+  amounts = _amounts(section)
+  assert amounts[0] == ("Cash, beginning", [40.0])
+  assert amounts[-1] == ("Cash, ending", [55.0])
+  assert section.shown == section.facts == 8
+
+
 # -- the workbook ----------------------------------------------------------------
 
 
