@@ -31,3 +31,9 @@ INTERNAL
      NAME THE FILINGS you tested against (accession numbers). SEC XBRL varies enormously between
      filers and years, so a conversion change verified on one filing is barely verified.
      "Not run" is a valid answer. -->
+
+## Certification
+
+<!-- See .github/CONTRIBUTING.md, "Licensing and Certification". Asserts provenance, not a transfer of rights. -->
+
+- [ ] I have the right to submit this work under the MIT license, and do so. Where any part of it is owned by my employer, I have their permission.
