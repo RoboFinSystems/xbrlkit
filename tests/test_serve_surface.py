@@ -20,9 +20,19 @@ import sys
 import xbrlkit.serve as serve
 
 # Every name a host is entitled to import from ``xbrlkit.serve``, and what it
-# has to be. The six marked (RoboSystems) are the ones in use today —
-# ``robosystems/operations/roboledger/views/information_blocks.py``.
+# has to be. The ones marked (RoboSystems) are in use today —
+# ``robosystems/operations/roboledger/views/information_blocks.py`` and
+# ``filing_text.py``.
 DECLARED: dict[str, str] = {
+  "DEFAULT_HITS": "int",  # RoboSystems
+  "DEFAULT_READ": "int",  # RoboSystems
+  "DEFAULT_WINDOW": "int",  # RoboSystems
+  "MAX_HITS": "int",  # RoboSystems
+  "MAX_READ": "int",  # RoboSystems
+  "MAX_WINDOW": "int",  # RoboSystems
+  "describe_filing": "callable",  # RoboSystems
+  "search_text": "callable",  # RoboSystems
+  "read_text": "callable",  # RoboSystems
   "FORM_SECTION_ID": "str",
   "FilingSession": "class",
   "LoadedFiling": "class",  # RoboSystems
