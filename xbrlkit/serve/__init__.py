@@ -21,9 +21,10 @@ functions themselves live in :mod:`xbrlkit.serve.tools` and take a
 that serves these tools itself depends on them.** RoboSystems does exactly
 that: its ``information-block`` / ``disclosures`` endpoints build a
 :class:`LoadedFiling` over a report it already holds and call
-:func:`disclosures` and :func:`information_block` directly, so the two tools
-answer identically whether they are reached through this server or through
-the platform. Adding to this tuple is free; renaming or removing from it
+:func:`disclosures` and :func:`information_block` directly, and its filing-text
+tools call :func:`describe_filing`, :func:`search_text` and :func:`read_text`
+with their size limits, so the tools answer identically whether they are
+reached through this server or through the platform. Adding to this tuple is free; renaming or removing from it
 breaks that host with no signal until its next deploy, so treat it as an API
 and not as the inside of an MCP server. Everything else under
 :mod:`xbrlkit.serve` is internal.
@@ -44,17 +45,32 @@ from .session import (
   join_texts,
 )
 from .tools import (
+  DEFAULT_HITS,
+  DEFAULT_READ,
+  DEFAULT_WINDOW,
   MAX_BLOCK_MEMBERS_CAP,
   MAX_BLOCK_ROWS,
+  MAX_HITS,
+  MAX_READ,
+  MAX_WINDOW,
   ToolError,
+  describe_filing,
   disclosures,
   information_block,
+  read_text,
+  search_text,
 )
 
 __all__ = (
+  "DEFAULT_HITS",
+  "DEFAULT_READ",
+  "DEFAULT_WINDOW",
   "FORM_SECTION_ID",
   "MAX_BLOCK_MEMBERS_CAP",
   "MAX_BLOCK_ROWS",
+  "MAX_HITS",
+  "MAX_READ",
+  "MAX_WINDOW",
   "FilingSession",
   "LoadedFiling",
   "SourceError",
@@ -62,9 +78,12 @@ __all__ = (
   "ToolError",
   "build_server",
   "build_text",
+  "describe_filing",
   "disclosures",
   "information_block",
   "join_texts",
+  "read_text",
+  "search_text",
   "serve",
 )
 
