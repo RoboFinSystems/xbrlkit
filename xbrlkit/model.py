@@ -324,8 +324,10 @@ class XbrlFact(BaseModel):
   section_role: str | None = None
   # Where the fact came from, when the producer said. A filing leaves it
   # ``None``; an authored report may carry it, and both projections keep it.
-  # The parse sets it in one case: a fact whose context the instance never
-  # declared and the parse rebuilt carries ``kind="recovered_context"``.
+  # The parse sets it in two cases: a fact whose context the instance never
+  # declared and the parse rebuilt carries ``kind="recovered_context"``, and a
+  # fact whose declared context the parse re-dated carries
+  # ``kind="corrected_context"``.
   provenance: FactProvenance | None = None
 
 
@@ -432,11 +434,12 @@ class RecoveredContext(BaseModel):
 class CorrectedContext(BaseModel):
   """A declared ``Four…D`` context the parse re-dated to the ``FourD`` period.
 
-  The filing dated it exactly as its ``One…D`` sibling (the quarter) while it
-  holds the year-to-date figure; its members sum to the ``FourD`` total of
-  each concept it reports. ``start`` / ``end`` are the period now used,
-  ``filed_start`` / ``filed_end`` the ones the filing declared. The facts
-  placed in it carry ``provenance.kind == "corrected_context"``.
+  The filing dated it exactly as ``OneD`` (the quarter) while it holds the
+  year-to-date figure. It and every candidate sharing a concept with it, taken
+  together, sum to the ``FourD`` total of each concept they report. ``start`` /
+  ``end`` are the period now used, ``filed_start`` / ``filed_end`` the ones the
+  filing declared. The facts placed in it carry
+  ``provenance.kind == "corrected_context"``.
   """
 
   context_id: str
@@ -446,21 +449,26 @@ class CorrectedContext(BaseModel):
   filed_end: date
   period_id: str
   facts: int = 0
-  # The ``One…D`` context whose dates it carried.
-  sibling_id: str
+  # Its ``One<X>D`` sibling, when the instance has one.
+  sibling_id: str | None = None
 
 
-UnverifiedReason = Literal["no_total", "sum_mismatch", "no_numeric_facts"]
+UnverifiedReason = Literal[
+  "no_total", "sum_mismatch", "no_numeric_facts", "all_zero", "group_not_tied"
+]
 
 
 class UnverifiedContext(BaseModel):
-  """A ``Four…D`` context dated as its ``One…D`` sibling that the parse left as filed.
+  """A ``Four…D`` context dated as ``OneD`` that the parse left as filed.
 
   The ``FourD`` period is longer, so the dates may be wrong, but the members
   could not be checked against the ``FourD`` total of the same concept:
   ``no_total`` (there is none), ``sum_mismatch`` (the members do not sum to
-  it) or ``no_numeric_facts`` (nothing to sum). ``concepts`` names the
-  numeric concepts that failed the check.
+  it), ``all_zero`` (they sum to it only because every member is zero),
+  ``no_numeric_facts`` (nothing to sum) or ``group_not_tied`` (its own concepts
+  tie, but it is linked by shared concepts to a context that fails).
+  ``concepts`` names the numeric concepts that failed the check; for
+  ``group_not_tied``, those that failed elsewhere in its group.
   """
 
   context_id: str

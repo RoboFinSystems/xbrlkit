@@ -819,9 +819,9 @@ def _describe_parse_report(report: ParseReport) -> dict[str, Any]:
       for c in report.corrected_contexts
     ]
     notes.append(
-      "a corrected context was declared with its One…D sibling's quarter dates "
-      "and holds the year-to-date figure; it was re-dated to the FourD period "
-      "because its members sum to the FourD total of each concept it reports"
+      "a corrected context was declared with OneD's quarter dates and holds "
+      "the year-to-date figure; it was re-dated to the FourD period because it "
+      "and the contexts sharing its concepts sum to the FourD totals"
     )
   if report.unverified_contexts:
     out["unverified_contexts"] = [
@@ -836,9 +836,9 @@ def _describe_parse_report(report: ParseReport) -> dict[str, Any]:
       for u in report.unverified_contexts
     ]
     notes.append(
-      "an unverified context is dated as its One…D sibling although the FourD "
-      "period is longer; its members could not be checked against the FourD "
-      "total of the same concept, so it is left as filed"
+      "an unverified context is dated as OneD although the FourD period is "
+      "longer; it, or a context sharing a concept with it, could not be checked "
+      "against the FourD total of that concept, so it is left as filed"
     )
   out["note"] = "; ".join(notes) + "."
   return out

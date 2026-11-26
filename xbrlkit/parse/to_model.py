@@ -17,9 +17,10 @@ A fact the walk cannot place is never dropped silently: it is counted on the
 model's ``parse_report`` by reason, and a fact under a context the instance
 references but never declares is kept when the filing states that context's
 period itself (see :func:`_recoverable_contexts`). A declared ``Four…D``
-context that carries its ``One…D`` sibling's quarter dates while holding the
-year-to-date figure is re-dated to the ``FourD`` period when its members sum to
-the ``FourD`` total (see :func:`_misdated_contexts`).
+context that carries ``OneD``'s quarter dates while holding the year-to-date
+figure is re-dated to the ``FourD`` period, together with every such context
+that shares a concept with it, when their members sum to the ``FourD`` totals
+(see :func:`_misdated_contexts`).
 """
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ _REPORTING_PERIOD_FACTS = (
   ("DateOfStartOfReportingPeriod", "DateOfEndOfReportingPeriod"),
 )
 
-# A context id ``Four<X>D``; its quarter sibling is ``One<X>D``.
+# A context id ``Four<X>D``; its quarter sibling, if any, is ``One<X>D``.
 _FOUR_D_CONTEXT = re.compile(r"^Four(.+)D$")
 
 # Concepts sampled per dropped group on the parse report.
@@ -312,7 +313,7 @@ class _RedatedContext:
   end: date
   filed_start: date
   filed_end: date
-  sibling_id: str
+  sibling_id: str | None
   facts: int = 0
 
 
@@ -404,7 +405,7 @@ def _describe_report(report: ParseReport) -> str:
     )
   if report.unverified_contexts:
     parts.append(
-      "context(s) dated as their One…D sibling and left as filed, unverified: "
+      "context(s) dated as OneD and left as filed, unverified: "
       + ", ".join(u.context_id for u in report.unverified_contexts)
     )
   return "; ".join(parts)
@@ -476,18 +477,23 @@ def _recoverable_contexts(mx: ModelXbrl, filing_id: str) -> dict[str, _RebuiltCo
 def _misdated_contexts(
   mx: ModelXbrl, rebuilt: dict[str, _RebuiltContext]
 ) -> tuple[dict[str, _RedatedContext], list[UnverifiedContext]]:
-  """Find the ``Four…D`` contexts that carry their ``One…D`` sibling's dates.
+  """Find the ``Four…D`` contexts that carry ``OneD``'s quarter dates.
 
-  Some filings date a ``Four<X>D`` context (the year-to-date breakdown) exactly
-  as ``One<X>D`` (the quarter) while it holds the year-to-date figure. Such a
-  context is re-dated to the ``FourD`` period when (a) it carries exactly its
-  sibling's dates, (b) the ``FourD`` period is longer than ``OneD``'s, and
-  (c) for every numeric concept it reports, the facts of all such contexts sum
-  to the ``FourD`` total of that same concept. When (a) and (b) hold and (c)
-  does not, the context is left as filed and listed as unverified. Contexts
-  that no fact references are ignored. The ``OneD`` and ``FourD`` periods are
-  the declared contexts', else the rebuilt ones; with either missing (a first
-  quarter has no ``FourD``) nothing is changed.
+  Some filings date a ``Four<X>D`` context (the year-to-date breakdown) as the
+  quarter while it holds the year-to-date figure. A context is a candidate when
+  (a) it carries exactly the dates of ``OneD``, whether or not a ``One<X>D``
+  sibling exists, and (b) the ``FourD`` period is longer than ``OneD``'s.
+
+  Candidates that share a numeric concept, directly or through other
+  candidates, form one group, since one sum covers them. A group is re-dated to
+  the ``FourD`` period only as a whole: when (c) every context in it reports a
+  numeric concept and, for each such concept, the members sum to the ``FourD``
+  total of that same concept with at least one member that is not zero.
+  Otherwise the whole group is left as filed and listed as unverified.
+
+  Contexts that no fact references are ignored. The ``OneD`` and ``FourD``
+  periods are the declared contexts', else the rebuilt ones; with either
+  missing (a first quarter has no ``FourD``) nothing is changed.
   """
   declared = mx.contexts or {}
 
@@ -509,15 +515,15 @@ def _misdated_contexts(
   for f in mx.facts:
     by_context[getattr(f, "contextID", None) or ""].append(f)
 
-  candidates: dict[str, tuple[str, date, date]] = {}
+  candidates: dict[str, str | None] = {}  # context id -> its One<X>D sibling
   for context_id in declared:
     match = _FOUR_D_CONTEXT.match(context_id)
     if match is None or context_id == "FourD" or not by_context.get(context_id):
       continue
-    sibling_id = f"One{match.group(1)}D"
-    filed = span(context_id)
-    if filed is not None and filed == span(sibling_id):
-      candidates[context_id] = (sibling_id, *filed)
+    if span(context_id) == quarter:
+      sibling_id = f"One{match.group(1)}D"
+      exists = sibling_id in declared or sibling_id in rebuilt
+      candidates[context_id] = sibling_id if exists else None
 
   totals: dict[str, set[Decimal]] = defaultdict(set)
   for f in by_context.get("FourD", []):
@@ -526,6 +532,7 @@ def _misdated_contexts(
       totals[str(f.qname)].add(value)
   members: dict[str, dict[str, Decimal]] = {}
   sums: dict[str, Decimal] = defaultdict(Decimal)
+  nonzero: set[str] = set()  # concepts with a member that is not zero
   for context_id in candidates:
     by_concept: dict[str, Decimal] = defaultdict(Decimal)
     for f in by_context[context_id]:
@@ -533,42 +540,73 @@ def _misdated_contexts(
       if value is not None:
         by_concept[str(f.qname)] += value
         sums[str(f.qname)] += value
+        if value:
+          nonzero.add(str(f.qname))
     members[context_id] = by_concept
 
   redated: dict[str, _RedatedContext] = {}
   unverified: list[UnverifiedContext] = []
-  for context_id, (sibling_id, filed_start, filed_end) in candidates.items():
-    concepts = members[context_id]
+  failed: dict[str, list[str]] = {}  # context id -> its concepts that do not tie
+  reasons: dict[str, UnverifiedReason] = {}  # context id -> why it does not tie
+  for context_id, concepts in members.items():
     missing = [q for q in concepts if not totals.get(q)]
     differing = [q for q in concepts if totals.get(q) and sums[q] not in totals[q]]
-    if concepts and not missing and not differing:
+    zero = [q for q in concepts if q not in nonzero and sums[q] in totals.get(q, set())]
+    failed[context_id] = differing + missing + zero
+    if not concepts:
+      reasons[context_id] = "no_numeric_facts"
+    elif differing:
+      reasons[context_id] = "sum_mismatch"
+    elif missing:
+      reasons[context_id] = "no_total"
+    elif zero:
+      reasons[context_id] = "all_zero"
+
+  blocking: dict[str, list[str]] = {}  # context id -> what holds its group back
+  for group in _linked_by_concept(members):
+    if any(c in reasons for c in group):
+      held = list(dict.fromkeys(q for c in group for q in failed[c]))
+      blocking.update((c, held) for c in group)
+
+  # Both lists keep the order in which the instance declares the contexts.
+  for context_id, sibling_id in candidates.items():
+    if context_id not in blocking:
       redated[context_id] = _RedatedContext(
         period=duration_period(*year),
         start=year[0],
         end=year[1],
-        filed_start=filed_start,
-        filed_end=filed_end,
+        filed_start=quarter[0],
+        filed_end=quarter[1],
         sibling_id=sibling_id,
       )
       continue
-    reason: UnverifiedReason = (
-      "no_numeric_facts"
-      if not concepts
-      else "sum_mismatch"
-      if differing
-      else "no_total"
-    )
     unverified.append(
       UnverifiedContext(
         context_id=context_id,
-        start=filed_start,
-        end=filed_end,
+        start=quarter[0],
+        end=quarter[1],
         facts=len(by_context[context_id]),
-        reason=reason,
-        concepts=differing + missing,
+        reason=reasons.get(context_id, "group_not_tied"),
+        concepts=failed[context_id] or blocking[context_id],
       )
     )
   return redated, unverified
+
+
+def _linked_by_concept(members: dict[str, dict[str, Decimal]]) -> list[list[str]]:
+  """Group context ids that share a concept, directly or through one another."""
+  groups: list[tuple[list[str], set[str]]] = []
+  for context_id, by_concept in members.items():
+    ids, concepts = [context_id], set(by_concept)
+    apart: list[tuple[list[str], set[str]]] = []
+    for other_ids, other_concepts in groups:
+      if other_concepts.isdisjoint(by_concept):
+        apart.append((other_ids, other_concepts))
+      else:
+        ids += other_ids
+        concepts |= other_concepts
+    groups = [*apart, (ids, concepts)]
+  return [ids for ids, _ in groups]
 
 
 def _decimal(fact: Any) -> Decimal | None:

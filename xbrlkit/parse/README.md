@@ -68,6 +68,34 @@ the holon and TAVI projections write and their readers restore, and the
 context is listed in `parse_report.recovered_contexts`. Arelle hashes a fact
 with its context, so these facts' ids fold in the context id.
 
+### Contexts the filing dates wrongly
+
+Some of the same filings declare a `Four<X>D` context, a year-to-date
+breakdown, with the quarter's dates. These facts are in the model either way;
+what the parse may change is their period, never a value. A context is a
+candidate when its dates are exactly those of `OneD` and the `FourD` period is
+longer. It does not need a `One<X>D` sibling.
+
+Candidates that share a numeric concept, directly or through one another, are
+one group, and a group is re-dated to the `FourD` period or left as filed as a
+whole. It is re-dated only when every context in it reports a numeric concept
+and, for each concept, the members sum to the `FourD` total of that same concept
+with at least one member that is not zero. No sum is taken across concepts.
+
+A re-dated fact carries `provenance.kind == "corrected_context"`, which the
+holon and TAVI projections write and their readers restore.
+`parse_report.corrected_contexts` lists each context with the dates used, the
+dates filed and its `One<X>D` sibling if there is one. A group left as filed is
+listed in `parse_report.unverified_contexts`, each context with a reason:
+
+| Reason | Why it was left |
+| --- | --- |
+| `sum_mismatch` | Its members do not sum to the `FourD` total |
+| `no_total` | There is no `FourD` total of that concept |
+| `all_zero` | Every member is zero, so a zero total proves nothing |
+| `no_numeric_facts` | There is nothing to sum |
+| `group_not_tied` | Its own concepts tie, but it is linked by shared concepts to a context that fails |
+
 ## The Arelle cache
 
 Arelle resolves a filing's DTS by fetching every schema and linkbase it

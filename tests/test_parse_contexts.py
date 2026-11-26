@@ -26,6 +26,10 @@ SCHEMA = """<?xml version="1.0" encoding="UTF-8"?>
       schemaLocation="http://www.xbrl.org/2003/xbrl-instance-2003-12-31.xsd"/>
   <xs:element name="Revenue" id="t_Revenue" type="xbrli:monetaryItemType"
       substitutionGroup="xbrli:item" nillable="true" xbrli:periodType="duration"/>
+  <xs:element name="Costs" id="t_Costs" type="xbrli:monetaryItemType"
+      substitutionGroup="xbrli:item" nillable="true" xbrli:periodType="duration"/>
+  <xs:element name="Tax" id="t_Tax" type="xbrli:monetaryItemType"
+      substitutionGroup="xbrli:item" nillable="true" xbrli:periodType="duration"/>
   <xs:element name="Assets" id="t_Assets" type="xbrli:monetaryItemType"
       substitutionGroup="xbrli:item" nillable="true" xbrli:periodType="instant"/>
   <xs:element name="DateOfStartOfReportingPeriod" id="t_S" type="xbrli:dateItemType"
@@ -70,15 +74,15 @@ def _fact(name: str, context_id: str, value: int) -> str:
   )
 
 
-# The quarter and the year to date, neither declared; one declared context
-# that dates a year-to-date breakdown as the quarter, as the real filings do.
+# The quarter and the year to date, neither declared; one declared context,
+# outside the Four…D pattern, that keeps whatever dates the filing gave it.
 RESULTS = (
-  _context("FourDetailD", "ACME", "2022-10-01", "2022-12-31")
+  _context("DetailD", "ACME", "2022-10-01", "2022-12-31")
   + _dates("OneD", "2022-10-01", "2022-12-31")
   + _dates("FourD", "2022-04-01", "2022-12-31")
   + _fact("Revenue", "OneD", 100)
   + _fact("Revenue", "FourD", 300)
-  + _fact("Revenue", "FourDetailD", 300)
+  + _fact("Revenue", "DetailD", 300)
 )
 
 
@@ -466,3 +470,129 @@ def test_the_corrected_mark_travels_and_describe_filing_lists_both(tmp_path: Pat
   assert report["corrected_contexts"][0]["context"] == "FourSeg01D"
   assert report["corrected_contexts"][0]["start"] == "2022-04-01"
   assert report["corrected_contexts"][0]["filed_end"] == "2022-12-31"
+
+
+def test_contexts_linked_by_shared_concepts_are_redated_all_or_none(tmp_path: Path):
+  # 01 and 02 share Revenue (which ties), 02 and 03 share Costs (which does
+  # not), so all three stay as filed. FourTaxD shares nothing and ties.
+  body = (
+    _quarter_and_year()
+    + _fact("Costs", "FourD", 70)
+    + _fact("Tax", "FourD", 9)
+    + "".join(
+      _context(context_id, "ACME", *QUARTER)
+      for context_id in ("FourSeg01D", "FourSeg02D", "FourSeg03D", "FourTaxD")
+    )
+    + _fact("Revenue", "FourSeg01D", 120)
+    + _fact("Revenue", "FourSeg02D", 180)
+    + _fact("Costs", "FourSeg02D", 50)
+    + _fact("Costs", "FourSeg03D", 15)
+    + _fact("Tax", "FourTaxD", 9)
+  )
+  model = _parse(tmp_path, body)
+
+  quarter = (date(2022, 10, 1), date(2022, 12, 31))
+  revenue = _revenue(model)
+  assert revenue["120"] == (*quarter, None) and revenue["180"] == (*quarter, None)
+  report = model.parse_report
+  assert report is not None
+  assert [c.context_id for c in report.corrected_contexts] == ["FourTaxD"]
+  assert [(u.context_id, u.reason, u.concepts) for u in report.unverified_contexts] == [
+    ("FourSeg01D", "group_not_tied", ["t:Costs"]),
+    ("FourSeg02D", "sum_mismatch", ["t:Costs"]),
+    ("FourSeg03D", "sum_mismatch", ["t:Costs"]),
+  ]
+
+
+def test_a_four_d_context_dated_as_one_d_needs_no_sibling(tmp_path: Path):
+  from xbrlkit.model import CORRECTED_CONTEXT
+
+  body = (
+    _quarter_and_year()
+    + _context("FourSeg01D", "ACME", *QUARTER)
+    + _context("FourSeg02D", "ACME", *QUARTER)
+    + _context("OneSeg02D", "ACME", *QUARTER)
+    + _fact("Revenue", "FourSeg01D", 120)
+    + _fact("Revenue", "FourSeg02D", 180)
+    + _fact("Revenue", "OneSeg02D", 60)
+  )
+  model = _parse(tmp_path, body)
+
+  year = (date(2022, 4, 1), date(2022, 12, 31))
+  revenue = _revenue(model)
+  assert revenue["120"] == (*year, CORRECTED_CONTEXT)
+  assert revenue["180"] == (*year, CORRECTED_CONTEXT)
+  report = model.parse_report
+  assert report is not None
+  assert [(c.context_id, c.sibling_id) for c in report.corrected_contexts] == [
+    ("FourSeg01D", None),
+    ("FourSeg02D", "OneSeg02D"),
+  ]
+
+
+def test_a_pair_sharing_a_span_other_than_one_ds_is_not_redated(tmp_path: Path):
+  # The sums tie, but neither context carries the dates of OneD.
+  other = ("2022-07-01", "2022-09-30")
+  body = _quarter_and_year() + "".join(
+    _context(context_id, "ACME", *other) for context_id in ("OneSeg01D", "FourSeg01D")
+  )
+  body += _fact("Revenue", "OneSeg01D", 40) + _fact("Revenue", "FourSeg01D", 300)
+  model = _parse(tmp_path, body)
+
+  assert _revenue(model)["300"] == (date(2022, 7, 1), date(2022, 9, 30), None)
+  report = model.parse_report
+  assert report is not None
+  assert report.corrected_contexts == [] and report.unverified_contexts == []
+
+
+def test_members_that_are_all_zero_do_not_tie_a_zero_total(tmp_path: Path):
+  body = (
+    _quarter_and_year(four_total=0)
+    + _context("FourSeg01D", "ACME", *QUARTER)
+    + _context("FourSeg02D", "ACME", *QUARTER)
+    + _context("OneSeg01D", "ACME", *QUARTER)
+    + _context("OneSeg02D", "ACME", *QUARTER)
+    + _fact("Revenue", "FourSeg01D", 0)
+    + _fact("Revenue", "FourSeg02D", 0)
+  )
+  model = _parse(tmp_path, body)
+
+  report = model.parse_report
+  assert report is not None and report.corrected_contexts == []
+  assert [(u.context_id, u.reason, u.concepts) for u in report.unverified_contexts] == [
+    ("FourSeg01D", "all_zero", ["t:Revenue"]),
+    ("FourSeg02D", "all_zero", ["t:Revenue"]),
+  ]
+
+
+def test_a_zero_member_beside_a_non_zero_one_is_redated_with_it(tmp_path: Path):
+  body = (
+    _quarter_and_year()
+    + _context("FourSeg01D", "ACME", *QUARTER)
+    + _context("FourSeg02D", "ACME", *QUARTER)
+    + _context("OneSeg01D", "ACME", *QUARTER)
+    + _context("OneSeg02D", "ACME", *QUARTER)
+    + _fact("Revenue", "FourSeg01D", 0)
+    + _fact("Revenue", "FourSeg02D", 300)
+  )
+  model = _parse(tmp_path, body)
+
+  report = model.parse_report
+  assert report is not None and report.unverified_contexts == []
+  assert [c.context_id for c in report.corrected_contexts] == [
+    "FourSeg01D",
+    "FourSeg02D",
+  ]
+
+
+def test_the_corrected_mark_travels_through_holon_and_tavi(tmp_path: Path):
+  from xbrlkit.deserialize.holon import from_holon_json
+  from xbrlkit.deserialize.tavi import from_tavi_json
+  from xbrlkit.model import CORRECTED_CONTEXT
+  from xbrlkit.serialize import to_holon, to_tavi
+
+  model = _parse(tmp_path, _quarter_and_year() + _segments())
+
+  for back in (from_holon_json(to_holon(model)), from_tavi_json(to_tavi(model))):
+    kinds = [f.provenance.kind if f.provenance else None for f in back.facts]
+    assert kinds.count(CORRECTED_CONTEXT) == 2
