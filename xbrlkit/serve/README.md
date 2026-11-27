@@ -60,6 +60,10 @@ So does a filing whose facts the parse could not place as written:
 `parse_report` counts the facts dropped, by reason and context id, and names
 any context the instance never declared that was
 [rebuilt from the filing's own dates](../parse/README.md#facts-the-walk-cannot-place).
+It also lists any `Four…D` context dated as the quarter that was
+[re-dated to the year to date](../parse/README.md#contexts-the-filing-dates-wrongly)
+(`corrected_contexts`, with the dates as filed) or left as filed because it
+could not be checked (`unverified_contexts`, with the reason).
 
 To read the filing itself, parse it from EDGAR:
 
