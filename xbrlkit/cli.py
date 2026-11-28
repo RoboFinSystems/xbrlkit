@@ -110,16 +110,26 @@ def _write_outputs(model: XbrlModel, out_path: Path, fmt: str, named: bool) -> N
     target = exact or out_path.parent / f"{stem}{SUFFIXES[name]}"
     if name == "clawdog":
       document, gaps = to_clawdog_report(model)
-      target.write_text(json.dumps(document, indent=2, default=str))
+      target.write_text(
+        json.dumps(document, indent=2, default=str), encoding="utf-8", newline="\n"
+      )
       gaps_path = out_path.parent / f"{stem}.clawdog.gaps.json"
-      gaps_path.write_text(json.dumps(gaps.to_dict(), indent=2, default=str))
+      gaps_path.write_text(
+        json.dumps(gaps.to_dict(), indent=2, default=str),
+        encoding="utf-8",
+        newline="\n",
+      )
       print(f"wrote {target}")
       print(f"wrote {gaps_path}  ({len(gaps.missing)} gaps)")
     elif name == "holon":
-      target.write_text(to_holon(model))
+      target.write_text(to_holon(model), encoding="utf-8", newline="\n")
       print(f"wrote {target}")
     elif name == "oim":
-      target.write_text(json.dumps(to_oim_document(model), indent=2, default=str))
+      target.write_text(
+        json.dumps(to_oim_document(model), indent=2, default=str),
+        encoding="utf-8",
+        newline="\n",
+      )
       print(f"wrote {target}")
     elif name == "lpg":
       tables = to_graph_tables(model)
@@ -135,9 +145,15 @@ def _write_outputs(model: XbrlModel, out_path: Path, fmt: str, named: bool) -> N
       print(f"wrote {target}/  (icebug-disk; mount with {target / 'schema.cypher'})")
     else:
       document, gaps = to_tavi_report(model)
-      target.write_text(json.dumps(document, indent=2, default=str))
+      target.write_text(
+        json.dumps(document, indent=2, default=str), encoding="utf-8", newline="\n"
+      )
       gaps_path = out_path.parent / f"{stem}.tavi.gaps.json"
-      gaps_path.write_text(json.dumps(gaps.to_dict(), indent=2, default=str))
+      gaps_path.write_text(
+        json.dumps(gaps.to_dict(), indent=2, default=str),
+        encoding="utf-8",
+        newline="\n",
+      )
       print(f"wrote {target}")
       against_model = len(gaps.item_types_without_builtin) + len(
         gaps.dropped_period_semantics
@@ -305,7 +321,7 @@ def _cmd_databook(args: argparse.Namespace) -> int:
     print(f"error: {exc}", file=sys.stderr)
     return 2
   out.parent.mkdir(parents=True, exist_ok=True)
-  out.write_text(text, encoding="utf-8")
+  out.write_text(text, encoding="utf-8", newline="\n")
   print(f"wrote {out} ({len(text):,} bytes)")
   return 0
 

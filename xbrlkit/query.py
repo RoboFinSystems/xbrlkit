@@ -73,7 +73,7 @@ def parse_holon(text: str) -> Graph:
 
 def load_holon(path: str | Path) -> Graph:
   """Load a ``holon.jsonld`` file into one queryable graph."""
-  return parse_holon(Path(path).read_text())
+  return parse_holon(Path(path).read_text(encoding="utf-8"))
 
 
 def consolidated_facts(graph: Graph) -> list[FactRow]:
