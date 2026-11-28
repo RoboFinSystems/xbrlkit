@@ -19,11 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _listing() -> dict:
-  return json.loads((ROOT / "server.json").read_text())
+  return json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
 
 
 def _project() -> dict:
-  return tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+  return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
 
 def test_the_listing_pins_the_released_version() -> None:
@@ -38,7 +38,7 @@ def test_the_listing_names_this_package_and_its_readme_carries_the_token() -> No
   project = _project()
   assert [package["identifier"] for package in listing["packages"]] == [project["name"]]
   # The registry proves PyPI ownership by finding this line in the README.
-  readme = (ROOT / project["readme"]).read_text()
+  readme = (ROOT / project["readme"]).read_text(encoding="utf-8")
   assert f"mcp-name: {listing['name']}" in readme
 
 
