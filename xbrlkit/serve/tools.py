@@ -2529,40 +2529,52 @@ def export_filing(lf: LoadedFiling, format: str, out_dir: Path) -> dict[str, Any
     from xbrlkit.serialize import to_clawdog_report
 
     document, gaps = to_clawdog_report(model)
-    target.write_text(json.dumps(document, indent=2, default=str))
+    target.write_text(
+      json.dumps(document, indent=2, default=str), encoding="utf-8", newline="\n"
+    )
     gaps_path = out_dir / f"{stem}.clawdog.gaps.json"
-    gaps_path.write_text(json.dumps(gaps.to_dict(), indent=2, default=str))
+    gaps_path.write_text(
+      json.dumps(gaps.to_dict(), indent=2, default=str), encoding="utf-8", newline="\n"
+    )
     written.append(gaps_path)
   elif fmt == "holon":
     from xbrlkit.serialize import to_holon
 
-    target.write_text(to_holon(model))
+    target.write_text(to_holon(model), encoding="utf-8", newline="\n")
   elif fmt == "tavi":
     from xbrlkit.serialize import to_tavi_report
 
     document, gaps = to_tavi_report(model)
-    target.write_text(json.dumps(document, indent=2, default=str))
+    target.write_text(
+      json.dumps(document, indent=2, default=str), encoding="utf-8", newline="\n"
+    )
     gaps_path = out_dir / f"{stem}.tavi.gaps.json"
-    gaps_path.write_text(json.dumps(gaps.to_dict(), indent=2, default=str))
+    gaps_path.write_text(
+      json.dumps(gaps.to_dict(), indent=2, default=str), encoding="utf-8", newline="\n"
+    )
     written.append(gaps_path)
   elif fmt == "oim":
     from xbrlkit.serialize import to_oim
 
-    target.write_text(to_oim(model))
+    target.write_text(to_oim(model), encoding="utf-8", newline="\n")
   elif fmt == "model":
     # The parse itself: reloadable by load_filing without Arelle.
-    target.write_text(model.model_dump_json(indent=2))
+    target.write_text(model.model_dump_json(indent=2), encoding="utf-8", newline="\n")
   elif fmt in HOLON_PROJECTIONS:
     from xbrlkit.serialize import to_holon
 
     holon = to_holon(model)
     holon_path = out_dir / f"{stem}.{EXPORT_FORMATS['holon']}"
-    holon_path.write_text(holon)
+    holon_path.write_text(holon, encoding="utf-8", newline="\n")
     written.append(holon_path)
     if fmt == "databook":
       from xbrlkit.holon.databook import databook_from_holon
 
-      target.write_text(databook_from_holon(holon, href=holon_path.name))
+      target.write_text(
+        databook_from_holon(holon, href=holon_path.name),
+        encoding="utf-8",
+        newline="\n",
+      )
     else:
       from xbrlkit.holon.workbook import workbook_from_holon
 

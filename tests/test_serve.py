@@ -886,7 +886,7 @@ def test_export_filing_writes_projection(
   out = tools.export_filing(loaded, fmt, tmp_path)
   path = Path(out["path"])
   assert path.parent == tmp_path and path.is_file() and out["bytes"] > 0
-  json.loads(path.read_text())
+  json.loads(path.read_text(encoding="utf-8"))
   if fmt in ("clawdog", "tavi"):
     assert len(out["files"]) == 2
   with pytest.raises(tools.ToolError):
@@ -904,7 +904,7 @@ def test_export_filing_writes_a_databook_and_a_workbook_beside_their_holon(
   holon = tmp_path / Path(book["files"][1]).name
   assert holon.name.endswith(".holon.jsonld") and holon.is_file()
   digest = hashlib.sha256(holon.read_bytes()).hexdigest()
-  text = Path(book["path"]).read_text()
+  text = Path(book["path"]).read_text(encoding="utf-8")
   assert book["path"].endswith(".databook.md") and text.startswith("---\n")
   assert digest in text and holon.name in text
 
@@ -916,6 +916,27 @@ def test_export_filing_writes_a_databook_and_a_workbook_beside_their_holon(
   # Both name the same holon, the one written beside them.
   assert stated["Holon SHA-256"] == digest
   assert stated["Holon file"] == holon.name
+
+
+def test_an_exported_holon_is_utf8_with_lf_and_matches_its_digest(
+  loaded: LoadedFiling, tmp_path: Path
+) -> None:
+  import hashlib
+
+  from xbrlkit.query import load_holon
+
+  name = "Société Générale – Ünit"
+  loaded.model.entity.name = name
+  book = tools.export_filing(loaded, "databook", tmp_path)
+  holon = tmp_path / Path(book["files"][1]).name
+
+  written = holon.read_bytes()
+  assert b"\r" not in written
+  written.decode("utf-8")
+  databook = Path(book["path"]).read_bytes()
+  assert b"\r" not in databook
+  assert hashlib.sha256(written).hexdigest() in databook.decode("utf-8")
+  assert name in {str(value) for value in load_holon(holon).objects()}
 
 
 def test_an_unwritable_export_folder_says_to_set_out_dir(
@@ -1624,10 +1645,18 @@ _MANIFEST = "<tp:taxonomyPackage xmlns:tp='http://xbrl.org/2016/taxonomy-package
   "members",
   [
     # Zipped on Windows by a tool that wrote the separator as a backslash.
-    {
-      "acme-2020-12-31\\META-INF\\taxonomyPackage.xml": _MANIFEST,
-      "acme-2020-12-31\\reports\\acme-2020-12-31.xhtml": _REPORT,
-    },
+    # Windows' zipfile turns "\" into "/" when it writes a member name and
+    # again when it reads one, so there such an archive reads as conforming.
+    pytest.param(
+      {
+        "acme-2020-12-31\\META-INF\\taxonomyPackage.xml": _MANIFEST,
+        "acme-2020-12-31\\reports\\acme-2020-12-31.xhtml": _REPORT,
+      },
+      marks=pytest.mark.skipif(
+        os.sep == "\\",
+        reason="zipfile on Windows reads '\\' in a member name as '/'",
+      ),
+    ),
     # The package one directory deeper than a package sits.
     {
       "acme/acme-2020-12-31/META-INF/taxonomyPackage.xml": _MANIFEST,
@@ -2186,6 +2215,7 @@ async def test_exports_default_to_a_folder_in_home(
   from xbrlkit.serve import build_server
 
   monkeypatch.setenv("HOME", str(tmp_path))
+  monkeypatch.setenv("USERPROFILE", str(tmp_path))  # what Windows reads
   monkeypatch.chdir("/")  # as Claude Desktop starts a stdio server
   async with Client(build_server(session)) as client:
     listed = {t.name: t for t in (await client.list_tools()).tools}

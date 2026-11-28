@@ -1,6 +1,6 @@
 """Tests for the HTML table → markdown conversion (``xbrlkit.text.tables``)."""
 
-import signal
+import multiprocessing
 
 import pytest
 
@@ -320,19 +320,13 @@ class TestHtmlTablesToMarkdown:
     """An unclosed <TABLE> left the scan where it started, so the outer loop
     found the same opening tag again and appended forever — a 154 KB Apple
     10-Q from 1999 ran the process out of memory and was killed, which no
-    per-filing try/except can catch. The alarm is here so a regression fails
-    the suite rather than hanging it."""
+    per-filing try/except can catch. The call runs in a worker process with a
+    time limit, so a regression fails the suite rather than hanging it."""
     html = "<p>before</p><TABLE><TR><TD>cell</TD></TR>"
 
-    def _timeout(*_args):
-      raise AssertionError("html_tables_to_markdown did not terminate")
-
-    signal.signal(signal.SIGALRM, _timeout)
-    signal.alarm(10)
-    try:
-      result = html_tables_to_markdown(html)
-    finally:
-      signal.alarm(0)
+    # Leaving the block terminates the worker, including one still looping.
+    with multiprocessing.get_context("spawn").Pool(1) as pool:
+      result = pool.apply_async(html_tables_to_markdown, (html,)).get(timeout=60)
     assert "before" in result and "cell" in result
 
   def test_nested_tables(self):
